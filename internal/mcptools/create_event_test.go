@@ -3,6 +3,7 @@ package mcptools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -115,11 +116,15 @@ func TestCreateEventHandler_AuditLogged(t *testing.T) {
 	}
 
 	logLine := buf.String()
-	if !strings.Contains(logLine, "tool=create_event") || !strings.Contains(logLine, "status=success") {
-		t.Errorf("unexpected audit line: %s", logLine)
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(logLine)), &entry); err != nil {
+		t.Fatalf("audit line is not valid JSON: %v\n%s", err, logLine)
 	}
-	if !strings.Contains(logLine, "uid=audit-uid") {
-		t.Errorf("audit line should contain the uid: %s", logLine)
+	if entry["tool"] != "create_event" || entry["status"] != "success" {
+		t.Errorf("unexpected audit entry: %v", entry)
+	}
+	if entry["uid"] != "audit-uid" {
+		t.Errorf("audit entry should contain the uid: %v", entry)
 	}
 	if strings.Contains(logLine, "Secret title") {
 		t.Errorf("audit line must NEVER contain the title: %s", logLine)

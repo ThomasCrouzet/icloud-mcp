@@ -3,6 +3,8 @@ package icloud
 import (
 	"testing"
 	"time"
+
+	"github.com/emersion/go-ical"
 )
 
 func mustParse(t *testing.T, s string) time.Time {
@@ -286,4 +288,66 @@ func TestExpandOccurrences_InvalidRRule(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an invalid RRULE error")
 	}
+}
+
+func TestParseICalDateTimeValue_Forms(t *testing.T) {
+	// Date-only (8 chars): midnight UTC.
+	got, err := parseICalDateTimeValue("20260710", "")
+	if err != nil {
+		t.Fatalf("date-only: %v", err)
+	}
+	want := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("date-only = %v, want %v", got, want)
+	}
+	// UTC date-time (trailing Z): parsed as UTC.
+	got, err = parseICalDateTimeValue("20260706T090000Z", "")
+	if err != nil {
+		t.Fatalf("utc form: %v", err)
+	}
+	want = time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("utc form = %v, want %v", got, want)
+	}
+	// Local date-time with a TZID: parsed in that location, then .UTC().
+	paris, perr := time.LoadLocation("Europe/Paris")
+	if perr != nil {
+		t.Fatalf("LoadLocation Europe/Paris: %v", perr)
+	}
+	got, err = parseICalDateTimeValue("20260706T180000", "Europe/Paris")
+	if err != nil {
+		t.Fatalf("tzid form: %v", err)
+	}
+	want = time.Date(2026, 7, 6, 18, 0, 0, 0, paris).UTC()
+	if !got.Equal(want) {
+		t.Errorf("tzid form = %v, want %v (Paris)", got, want)
+	}
+	// Local date-time without TZID: parsed as UTC.
+	got, err = parseICalDateTimeValue("20260706T180000", "")
+	if err != nil {
+		t.Fatalf("no-tzid form: %v", err)
+	}
+	if !got.Equal(time.Date(2026, 7, 6, 18, 0, 0, 0, time.UTC)) {
+		t.Errorf("no-tzid form = %v, want 18:00Z", got)
+	}
+}
+
+func TestParseExDateProp_MultipleCommaSeparated(t *testing.T) {
+	prop := newIcalProp("20260713T180000Z,20260720T180000Z")
+	dates, err := parseExDateProp(prop)
+	if err != nil {
+		t.Fatalf("parseExDateProp: %v", err)
+	}
+	if len(dates) != 2 {
+		t.Fatalf("len = %d, want 2", len(dates))
+	}
+	if !dates[0].Equal(time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)) {
+		t.Errorf("dates[0] = %v", dates[0])
+	}
+}
+
+func newIcalProp(value string) *ical.Prop {
+	p := ical.NewProp(ical.PropExceptionDates)
+	p.Value = value
+	return p
 }

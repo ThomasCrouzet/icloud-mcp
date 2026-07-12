@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Go modules: security advisories + version bumps for direct dependencies.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    # group minor/patch bumps to keep the PR noise low; major bumps get
+    # individual PRs so they can be reviewed against the pinned dependency
+    # policy (README: 5 direct deps max, no addition without written
+    # justification).
+    groups:
+      go-patches:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions: keep action versions current (security + newer features).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"

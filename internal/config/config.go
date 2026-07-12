@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"os"
 	"strings"
@@ -23,6 +24,7 @@ type Config struct {
 	ReadOnly   bool          // ICLOUD_MCP_READ_ONLY=1
 	HealthAddr string        // -health flag (e.g. "127.0.0.1:8797"), "" = off
 	Timeout    time.Duration // 30s constant
+	LogLevel   slog.Level    // ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error), default info
 }
 
 // Load reads the configuration from the environment, resolves any file://
@@ -42,6 +44,7 @@ func Load() (*Config, error) {
 		Password: password,
 		ReadOnly: parseBool(os.Getenv("ICLOUD_MCP_READ_ONLY")),
 		Timeout:  icloudTimeout,
+		LogLevel: parseLogLevel(os.Getenv("ICLOUD_MCP_LOG_LEVEL")),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -84,4 +87,21 @@ func loadCredential(envVar string) (string, error) {
 func parseBool(v string) bool {
 	v = strings.ToLower(strings.TrimSpace(v))
 	return v == "1" || v == "true"
+}
+
+// parseLogLevel maps ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error, plus the
+// case variants and numeric aliases) to a slog.Level. Unset or unrecognized =
+// info (the production default: enough to see the start banner and audit
+// mutations, no chatter).
+func parseLogLevel(v string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "debug", "-4":
+		return slog.LevelDebug
+	case "warn", "warning", "2":
+		return slog.LevelWarn
+	case "error", "4":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

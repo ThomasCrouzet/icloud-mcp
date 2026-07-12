@@ -1,18 +1,21 @@
 // Package health provides a minimal HTTP healthcheck, optional and OFF by
 // default. This is not an application-level network service: the MCP server
 // speaks stdio; this endpoint only lets an external supervisor (e.g. a
-// Docker healthcheck) probe that the process is alive.
+// Docker healthcheck) probe that the process is alive and report its version
+// and current rate-limiter state.
 package health
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"time"
 )
 
-// Server exposes /healthz on the provided address.
+// Server exposes /healthz (liveness) and /status (version + rate limits) on
+// the provided address.
 type Server struct {
 	srv *http.Server
 }
@@ -22,11 +25,40 @@ type Server struct {
 // fails, the error is returned by this call; errors occurring afterwards
 // (ListenAndServe) are silent from the caller's perspective (the MCP server
 // must not die because of a healthcheck).
-func Start(addr string) (*Server, error) {
+//
+// version is the binary version (main.version, overridden at build time).
+// statusFn, if non-nil, returns the current rate-limiter state for /status;
+// pass nil when there is no guarded service to report on.
+func Start(addr, version string, statusFn func() any) (*Server, error) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		// GET/HEAD only: keep the endpoint strict, no side effects.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var rate any
+		if statusFn != nil {
+			rate = statusFn()
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		// A nil rate is serialized as a JSON null, not an error.
+		body, _ := json.Marshal(map[string]any{
+			"version":     version,
+			"rate_limits": rate,
+		})
+		_, _ = w.Write(body)
 	})
 
 	srv := &http.Server{

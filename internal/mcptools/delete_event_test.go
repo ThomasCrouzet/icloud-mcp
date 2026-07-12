@@ -3,6 +3,7 @@ package mcptools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -68,8 +69,12 @@ func TestDeleteEventHandler_AuditNeverContainsTitle(t *testing.T) {
 	}
 
 	logLine := buf.String()
-	if !strings.Contains(logLine, "tool=delete_event") || !strings.Contains(logLine, "status=success") || !strings.Contains(logLine, "uid=uid-1") {
-		t.Errorf("unexpected audit line: %s", logLine)
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(logLine)), &entry); err != nil {
+		t.Fatalf("audit line is not valid JSON: %v\n%s", err, logLine)
+	}
+	if entry["tool"] != "delete_event" || entry["status"] != "success" || entry["uid"] != "uid-1" {
+		t.Errorf("unexpected audit entry: %v", entry)
 	}
 	if strings.Contains(logLine, "Very private title") {
 		t.Fatalf("audit line must NEVER contain the deleted title: %s", logLine)

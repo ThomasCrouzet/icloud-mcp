@@ -41,14 +41,34 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
 
-      - name: go test
-        run: go test ./... -race -cover
-
-      - name: build arm64
+      - name: go test (race + coverprofile)
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-            go build -trimpath -ldflags='-s -w' -o dist/icloud-mcp ./cmd/icloud-mcp
-          ls -la dist/icloud-mcp
+          go test ./... -race -coverprofile=coverage.out -covermode=atomic
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: govulncheck (go.mod vulnerabilities)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: build (linux/amd64 + linux/arm64)
+        run: |
+          for arch in amd64 arm64; do
+            echo "::group::build linux/$arch"
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags='-s -w' -o dist/icloud-mcp-linux-$arch ./cmd/icloud-mcp
+            file dist/icloud-mcp-linux-$arch
+            echo "::endgroup::"
+          done
 
       - name: security guardrails
         run: |

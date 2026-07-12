@@ -1,6 +1,7 @@
 package icloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -193,10 +194,81 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	}
 	setSequence(vevent, seq+1)
 
-	if _, err := c.dav.PutCalendarObject(ctx, found.Path, found.Data); err != nil {
+	// Conditional PUT: send If-Match with the ETag read during the GET of
+	// the full object (findEventByUID -> GetCalendarObject populates
+	// found.ETag from the ETag response header). go-webdav v0.7.0
+	// PutCalendarObject does NOT support If-Match (explicit TODO upstream),
+	// so the PUT is hand-rolled here, consistent with the hand-rolled
+	// discovery and REPORT. An empty ETag (no header returned, or the
+	// event was located via the wide-scan fallback which does not capture
+	// getetag) degrades to an unconditional PUT: same last-writer-wins as
+	// before, never worse.
+	if err := c.putCalendarObjectIfMatch(ctx, found.Path, found.ETag, found.Data); err != nil {
 		return fmt.Errorf("updating event (uid=%s): %w", uid, err)
 	}
 	return nil
+}
+
+// putCalendarObjectIfMatch encodes cal and PUTs it to path, adding an
+// If-Match header when etag is non-empty. A 412 Precondition Failed is
+// mapped to a typed concurrent_modification error so the MCP layer can
+// advise the caller to re-read and retry. Other non-2xx statuses are
+// classified; a 2xx response is a success.
+func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string, cal *ical.Calendar) error {
+	if err := c.discover(ctx); err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
+		return fmt.Errorf("encoding event for update: %w", err)
+	}
+	target, err := resolveRef(c.shardBase, path)
+	if err != nil {
+		return fmt.Errorf("invalid event URL (%s): %w", path, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, &buf)
+	if err != nil {
+		return fmt.Errorf("building PUT request (%s): %w", path, err)
+	}
+	req.Header.Set("Content-Type", "text/calendar; charset=utf-8")
+	if etag != "" {
+		// go-webdav's GetCalendarObject stores the ETag UNQUOTED (it calls
+		// strconv.Unquote on the response header). RFC 7232 If-Match wants
+		// the entity-tag in its quoted form ("v1"), or W/"v1" for a weak
+		// validator, or "*". Re-quote a bare unquoted value.
+		req.Header.Set("If-Match", normalizeIfMatch(etag))
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		// With the retry/classify doer, err is already a typed *Error
+		// (e.g. concurrent_modification). With a plain test doer err is a
+		// transport error. Either way, propagate as-is.
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch {
+	case resp.StatusCode == http.StatusPreconditionFailed:
+		return classifyStatus(resp.StatusCode)
+	case resp.StatusCode/100 == 2:
+		return nil
+	default:
+		return classifyStatus(resp.StatusCode)
+	}
+}
+
+// normalizeIfMatch turns a bare, unquoted ETag (as stored by go-webdav after
+// strconv.Unquote) into a valid RFC 7232 entity-tag for an If-Match header:
+// "*" and already-quoted values (including weak W/"...") are passed through.
+func normalizeIfMatch(etag string) string {
+	if etag == "" || etag == "*" {
+		return etag
+	}
+	if strings.HasPrefix(etag, "W/") || strings.HasPrefix(etag, `"`) {
+		return etag
+	}
+	return `"` + etag + `"`
 }
 
 // DeleteEvent deletes an event located by UID and returns its title (echo

@@ -65,7 +65,11 @@ func main() {
 		url.QueryEscape(cfg.Password), // URL-encoded form
 	)
 	stderr := security.NewRedactingWriter(os.Stderr, red)
-	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	// Structured JSON logs (one object per line): the MCP host can parse them
+	// and route to a log indexer. The level is configurable via
+	// ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error); default info. Everything
+	// still flows through the redacting writer so secrets never leak.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: cfg.LogLevel})))
 	// The default stdlib `log` logger (log.Fatalf/log.Printf, used before
 	// this point for the config, and by any dependency calling log.Print*
 	// directly) writes to RAW os.Stderr by default, which is not covered by
@@ -77,10 +81,16 @@ func main() {
 	// 3. Hardened HTTP client (network allowlist + verified TLS) + Basic Auth.
 	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
 	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, cfg.Email, cfg.Password)
+	// Retry (429/502/503/504 with Retry-After + backoff + jitter) and error
+	// classification (stable codes + Apple-aware messages) sit ON TOP of the
+	// allowlist+auth doer, so every CalDAV request, whether hand-rolled
+	// (discovery, REPORT, conditional PUT) or via go-webdav, goes through
+	// both. See internal/icloud/retry.go.
+	doer := icloud.NewRetryClassifier(authHTTP)
 
 	// 4. iCloud service + boot-time discovery (validates the credentials
 	// before starting the MCP server).
-	ic := icloud.NewClient(authHTTP, security.ICloudBaseURL, security.IsICloudHost)
+	ic := icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
 	discoverCtx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
 	err = ic.Discover(discoverCtx)
 	cancel()
@@ -107,7 +117,7 @@ func main() {
 
 	// 6. Optional healthcheck (off by default).
 	if *healthAddr != "" {
-		h, err := health.Start(*healthAddr)
+		h, err := health.Start(*healthAddr, version, func() any { return svc.RateLimitStatus() })
 		if err != nil {
 			slog.Error("healthcheck startup failed", "err", err)
 			os.Exit(1)

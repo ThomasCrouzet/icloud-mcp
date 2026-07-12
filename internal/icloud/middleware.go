@@ -36,6 +36,30 @@ func NewGuardedService(inner Service, maxRetries int, baseDelay time.Duration) *
 	}
 }
 
+// LimitStatus reports the live state of a rate limiter: the configured
+// sustained rate (tokens/sec), the burst size, and the currently available
+// tokens. No secrets: only numeric rate-limit state.
+type LimitStatus struct {
+	Tokens float64 `json:"tokens"` // available tokens right now
+	Limit  float64 `json:"limit"`  // tokens per second (rate.Every duration)
+	Burst  int     `json:"burst"`  // bucket size
+}
+
+// RateLimitStatus returns the current read/write rate-limiter state, for the
+// optional health endpoint. It is safe for concurrent use.
+func (g *GuardedService) RateLimitStatus() RateLimits {
+	return RateLimits{
+		Read:  LimitStatus{Tokens: g.readLimit.Tokens(), Limit: float64(g.readLimit.Limit()), Burst: g.readLimit.Burst()},
+		Write: LimitStatus{Tokens: g.writeLimit.Tokens(), Limit: float64(g.writeLimit.Limit()), Burst: g.writeLimit.Burst()},
+	}
+}
+
+// RateLimits groups the read and write limiter statuses.
+type RateLimits struct {
+	Read  LimitStatus `json:"read"`
+	Write LimitStatus `json:"write"`
+}
+
 func (g *GuardedService) waitRead(ctx context.Context) error {
 	if err := g.readLimit.Wait(ctx); err != nil {
 		return fmt.Errorf("read rate limit exceeded: %w", err)
@@ -51,13 +75,20 @@ func (g *GuardedService) waitWrite(ctx context.Context) error {
 }
 
 // retry retries fn up to maxRetries times with exponential backoff
-// (baseDelay * 2^attempt), bounded by ctx.Done().
+// (baseDelay * 2^attempt), bounded by ctx.Done(). It only retries TRANSIENT,
+// NON-CLASSIFIED errors (e.g. a connection blip): a typed *icloud.Error means
+// the HTTP-layer retry/classify doer already exhausted its own budget for the
+// retryable statuses (429/5xx), or the error is terminal (auth, not found,
+// 412), so retrying at this layer would be either redundant or pointless.
 func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt <= g.maxRetries; attempt++ {
 		lastErr = fn()
 		if lastErr == nil {
 			return nil
+		}
+		if AsICloudError(lastErr) != nil {
+			return lastErr
 		}
 		if attempt == g.maxRetries {
 			break

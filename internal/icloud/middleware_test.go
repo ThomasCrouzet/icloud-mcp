@@ -178,3 +178,87 @@ func TestGuardedService_DeleteEventRetried(t *testing.T) {
 		t.Errorf("deleteCalls = %d, want 2 (1 failure + 1 successful retry; DeleteEvent is idempotent)", inner.deleteCalls)
 	}
 }
+
+// TestGuardedService_RateLimitStatus_ReportsConfiguredBudgets: the health
+// endpoint surfaces the live rate-limiter state (no secrets). The configured
+// budgets are 60 reads/min and 20 writes/min with bursts 10 and 3.
+func TestGuardedService_RateLimitStatus_ReportsConfiguredBudgets(t *testing.T) {
+	g := NewGuardedService(&countingService{}, 0, time.Millisecond)
+
+	st := g.RateLimitStatus()
+
+	// 60 reads/min = 1 token/sec; burst 10. 20 writes/min ~= 0.333/sec; burst 3.
+	if st.Read.Burst != 10 {
+		t.Errorf("Read.Burst = %d, want 10", st.Read.Burst)
+	}
+	if st.Write.Burst != 3 {
+		t.Errorf("Write.Burst = %d, want 3", st.Write.Burst)
+	}
+	const readPerSec = 1.0
+	const writePerSec = 20.0 / 60.0
+	if !nearly(st.Read.Limit, readPerSec, 1e-6) {
+		t.Errorf("Read.Limit = %v, want %v", st.Read.Limit, readPerSec)
+	}
+	if !nearly(st.Write.Limit, writePerSec, 1e-6) {
+		t.Errorf("Write.Limit = %v, want %v", st.Write.Limit, writePerSec)
+	}
+	// A freshly-built limiter has its full burst of tokens available.
+	if st.Read.Tokens > 10 || st.Read.Tokens <= 0 {
+		t.Errorf("Read.Tokens = %v, want within (0, 10] on a fresh limiter", st.Read.Tokens)
+	}
+	if st.Write.Tokens > 3 || st.Write.Tokens <= 0 {
+		t.Errorf("Write.Tokens = %v, want within (0, 3] on a fresh limiter", st.Write.Tokens)
+	}
+}
+
+// TestGuardedService_RetrySkipsClassifiedErrors: a typed *icloud.Error
+// (already retried at the HTTP layer, or terminal like auth/not-found) must
+// NOT be retried again by GuardedService: it should be returned immediately,
+// without consuming the retry budget.
+func TestGuardedService_RetrySkipsClassifiedErrors(t *testing.T) {
+	classified := NewError(CodeServerUnavailable, 503, "shard down", nil)
+	// A service that always returns a typed *icloud.Error (already retried by
+	// the HTTP layer, or terminal): GuardedService must NOT retry it.
+	inner := &classifiedService{err: classified}
+	g := NewGuardedService(inner, 5, time.Millisecond)
+
+	_, err := g.ListCalendars(context.Background())
+	if err == nil {
+		t.Fatal("expected the classified error to be returned, not retried")
+	}
+	if AsICloudError(err) == nil {
+		t.Errorf("expected a typed *icloud.Error, got %v", err)
+	}
+	if inner.calls != 1 {
+		t.Errorf("calls = %d, want 1 (classified errors must not be retried)", inner.calls)
+	}
+}
+
+type classifiedService struct {
+	err   error
+	calls int
+}
+
+func (s *classifiedService) ListCalendars(ctx context.Context) ([]Calendar, error) {
+	s.calls++
+	return nil, s.err
+}
+func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error) {
+	return nil, nil
+}
+func (s *classifiedService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
+	return "", nil
+}
+func (s *classifiedService) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
+	return nil
+}
+func (s *classifiedService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+	return "", nil
+}
+
+func nearly(a, b, eps float64) bool {
+	if a > b {
+		return a-b < eps
+	}
+	return b-a < eps
+}

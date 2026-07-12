@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,7 @@ import (
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"ICLOUD_EMAIL", "ICLOUD_PASSWORD", "ICLOUD_MCP_READ_ONLY"} {
+	for _, k := range []string{"ICLOUD_EMAIL", "ICLOUD_PASSWORD", "ICLOUD_MCP_READ_ONLY", "ICLOUD_MCP_LOG_LEVEL"} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
@@ -127,6 +128,44 @@ func TestLoad_FileCredentialMissingFile(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected: file read error")
+	}
+}
+
+func TestLoad_DefaultLogLevelIsInfo(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("LogLevel = %v, want Info (default)", cfg.LogLevel)
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		value string
+		want  slog.Level
+	}{
+		{"", slog.LevelInfo},
+		{"info", slog.LevelInfo},
+		{"INFO", slog.LevelInfo},
+		{"debug", slog.LevelDebug},
+		{"warn", slog.LevelWarn},
+		{"warning", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"garbage", slog.LevelInfo}, // unrecognized -> info
+		{"  Debug  ", slog.LevelDebug},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			if got := parseLogLevel(tt.value); got != tt.want {
+				t.Errorf("parseLogLevel(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

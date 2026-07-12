@@ -68,12 +68,22 @@ type mockCalDAV struct {
 	deletes        []string
 	gets           []string
 
+	// etags maps an object path to its current ETag (quotes included, as
+	// served in the ETag header). When a path has an entry, the mock
+	// returns it on GET (so icloud.Client can do a conditional PUT) and
+	// ENFORCES If-Match on PUT: a mismatch yields 412 Precondition Failed,
+	// a match accepts the PUT and bumps the etag. Tests that do not populate
+	// this map keep the legacy unconditional behavior (no ETag on GET, no
+	// If-Match check), so existing fixtures are unchanged.
+	etags map[string]string
+
 	srv *httptest.Server
 }
 
 type mockPut struct {
-	path string
-	body string
+	path    string
+	body    string
+	ifMatch string
 }
 
 func newMockCalDAV(t *testing.T) *mockCalDAV {
@@ -81,6 +91,7 @@ func newMockCalDAV(t *testing.T) *mockCalDAV {
 	m := &mockCalDAV{
 		t:       t,
 		objects: make(map[string]mockObject),
+		etags:   make(map[string]string),
 	}
 	m.principalHrefFunc = func(string) string { return testPrincipalPath }
 	m.homeSetHrefFunc = func(baseURL string) string { return baseURL + testHomeSetPath }
@@ -97,6 +108,13 @@ func (m *mockCalDAV) URL() string { return m.srv.URL }
 func (m *mockCalDAV) client() *Client {
 	authHTTP := basicAuthDoer{inner: m.srv.Client(), user: "user@example.com", pass: "app-password"}
 	return NewClient(authHTTP, m.srv.URL, func(string) bool { return true })
+}
+
+// nextEtag synthesizes a deterministic new ETag value for a path after the nth
+// PUT, so the mock's conditional-PUT logic can bump the ETag on each
+// successful write and reject a stale If-Match.
+func nextEtag(path string, n int) string {
+	return fmt.Sprintf("v%d-%s", n, path)
 }
 
 // basicAuthDoer sets a Basic Authorization header, a minimal equivalent of
@@ -157,8 +175,20 @@ func (m *mockCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.handleReport(w, body)
 	case r.Method == http.MethodPut:
 		body, _ := io.ReadAll(r.Body)
-		m.puts = append(m.puts, mockPut{path: r.URL.Path, body: string(body)})
-		w.Header().Set("ETag", `"etag-1"`)
+		ifMatch := r.Header.Get("If-Match")
+		m.puts = append(m.puts, mockPut{path: r.URL.Path, body: string(body), ifMatch: ifMatch})
+		// If the path has a tracked ETag, enforce If-Match (conditional
+		// PUT). A missing/empty If-Match on a tracked path is also a
+		// 412 per RFC 7232 (the resource is not "unmapped"), but iCloud's
+		// real behavior is to accept an unconditional PUT; the mock
+		// mirrors iCloud and only rejects an If-Match that does not match.
+		if current, ok := m.etags[r.URL.Path]; ok && ifMatch != "" && ifMatch != current {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		// Bump the ETag on a successful PUT.
+		m.etags[r.URL.Path] = `"` + nextEtag(r.URL.Path, len(m.puts)) + `"`
+		w.Header().Set("ETag", m.etags[r.URL.Path])
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodDelete:
@@ -185,6 +215,12 @@ func (m *mockCalDAV) handleGet(w http.ResponseWriter, r *http.Request) {
 			body = obj.getIcs
 		}
 		w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+		// When the path has a tracked ETag, return it so the client can do
+		// a conditional PUT (If-Match). Paths without a tracked ETag serve
+		// no ETag header (legacy unconditional behavior).
+		if etag, ok := m.etags[obj.path]; ok {
+			w.Header().Set("ETag", etag)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, body)
 		return
