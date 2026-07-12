@@ -19,7 +19,7 @@ func TestRedactor_Redact(t *testing.T) {
 		{
 			name:    "simple secret present",
 			secrets: []string{"SENTINEL-PW-abc123"},
-			input:   "password: SENTINEL-PW-abc123 rejected",
+			input:   "password: SENTINEL-PW-abc123 rejected", // gitleaks:allow, test sentinel, not a real secret
 			want:    "password: [REDACTED] rejected",
 		},
 		{
