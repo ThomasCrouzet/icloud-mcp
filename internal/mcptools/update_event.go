@@ -11,7 +11,7 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
-func newUpdateEventTool() mcp.Tool {
+func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
 		mcp.WithDescription("Updates the provided fields of an existing event, located by UID. Omitted fields remain unchanged; a text field provided as empty clears the existing value."),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -22,8 +22,8 @@ func newUpdateEventTool() mcp.Tool {
 		mcp.WithString("title", mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("New title. Omitted = unchanged; empty = cleared.")),
 		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("New location. Omitted = unchanged; empty = cleared.")),
 		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("New notes. Omitted = unchanged; empty = cleared.")),
-		mcp.WithString("start", mcp.Description("New start time, RFC3339. Omitted = unchanged.")),
-		mcp.WithString("end", mcp.Description("New end time, RFC3339. Omitted = unchanged.")),
+		mcp.WithString("start", mcp.Description(datetimeParamDescription("New start time. Omitted = unchanged", defaultLoc))),
+		mcp.WithString("end", mcp.Description(datetimeParamDescription("New end time. Omitted = unchanged", defaultLoc))),
 	)
 }
 
@@ -83,7 +83,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		var newStart, newEnd *time.Time
 		if v, exists := args["start"]; exists {
 			s, _ := v.(string)
-			t, err := icloud.ParseRFC3339("start", s)
+			t, err := icloud.ParseDateTime("start", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
 			}
@@ -92,7 +92,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		if v, exists := args["end"]; exists {
 			s, _ := v.(string)
-			t, err := icloud.ParseRFC3339("end", s)
+			t, err := icloud.ParseDateTime("end", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
 			}

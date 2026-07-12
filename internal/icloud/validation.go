@@ -73,15 +73,50 @@ func ValidateTextField(name, value string, max int) error {
 	return nil
 }
 
-// ParseRFC3339 parses an RFC3339 date/time with a deliberately pedagogical
-// error message (the calling agent must be able to correct its input from
-// the message alone).
-func ParseRFC3339(name, value string) (time.Time, error) {
-	t, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid %s (%q): expected RFC3339 format, e.g. 2026-07-01T00:00:00Z: %w", name, value, err)
+// naiveDateTimeLayout is the RFC3339 date-time layout stripped of the
+// "Z07:00" offset designator: a local wall-clock time with no timezone
+// information at all, e.g. "2026-07-01T14:00:00".
+const naiveDateTimeLayout = "2006-01-02T15:04:05"
+
+// ParseDateTime parses a date/time supplied by the calling MCP agent for a
+// start/end parameter. Two forms are accepted:
+//
+//   - RFC3339 WITH an explicit offset ("2026-07-01T14:00:00+02:00", or
+//     "...Z" for UTC): parsed literally. The offset is a deliberate,
+//     self-declared choice by the caller, so it is always honored as-is,
+//     including "Z" (never silently reinterpreted as "local time typed by
+//     the user").
+//   - A local wall-clock time with NO offset ("2026-07-01T14:00:00"):
+//     interpreted in defaultLoc (nil defaults to UTC).
+//
+// The no-offset form exists because converting a stated local hour to the
+// correct UTC offset is precisely the step an LLM agent gets wrong: on
+// 2026-07-12, asked to create "Grand ménage" from 10h to 14h (Europe/Paris,
+// confirmed in French with the user), the calling agent sent
+// start=2026-07-12T10:00:00Z / end=2026-07-12T14:00:00Z, i.e. literal UTC.
+// iCloud rendered that 2h later than intended (CEST = UTC+2) once displayed
+// in the user's Europe/Paris calendar. Accepting a bare local time and
+// resolving the DST-aware offset server-side (via defaultLoc, see
+// ICLOUD_MCP_DEFAULT_TZ in internal/config) removes that arithmetic from
+// the agent's job entirely; the tool description steers callers toward this
+// form for "the time the user said" and reserves the explicit-offset form
+// for a deliberately different timezone (e.g. a call with someone abroad).
+func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
 	}
-	return t, nil
+	loc := defaultLoc
+	if loc == nil {
+		loc = time.UTC
+	}
+	if t, err := time.ParseInLocation(naiveDateTimeLayout, value, loc); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf(
+		"invalid %s (%q): expected RFC3339 with an explicit offset (e.g. 2026-07-01T14:00:00+02:00, or ...Z for UTC) "+
+			"or a local time with no offset (e.g. 2026-07-01T14:00:00), interpreted as %s",
+		name, value, loc,
+	)
 }
 
 // ValidateRange checks that end > start and that the range does not exceed

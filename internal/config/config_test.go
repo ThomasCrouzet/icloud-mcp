@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"ICLOUD_EMAIL", "ICLOUD_PASSWORD", "ICLOUD_MCP_READ_ONLY", "ICLOUD_MCP_LOG_LEVEL"} {
+	for _, k := range []string{"ICLOUD_EMAIL", "ICLOUD_PASSWORD", "ICLOUD_MCP_READ_ONLY", "ICLOUD_MCP_LOG_LEVEL", "ICLOUD_MCP_DEFAULT_TZ"} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
@@ -36,6 +37,39 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 	if cfg.Timeout.Seconds() != 30 {
 		t.Errorf("Timeout = %v, want 30s", cfg.Timeout)
+	}
+	if cfg.DefaultLocation != time.UTC {
+		t.Errorf("DefaultLocation = %v, want UTC when ICLOUD_MCP_DEFAULT_TZ is unset", cfg.DefaultLocation)
+	}
+}
+
+func TestLoad_DefaultTZExplicit(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_DEFAULT_TZ", "Europe/Paris")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	if cfg.DefaultLocation == nil || cfg.DefaultLocation.String() != "Europe/Paris" {
+		t.Errorf("DefaultLocation = %v, want Europe/Paris", cfg.DefaultLocation)
+	}
+}
+
+func TestLoad_DefaultTZInvalid(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_DEFAULT_TZ", "Not/A_Real_Zone")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected: invalid ICLOUD_MCP_DEFAULT_TZ error")
+	}
+	if !strings.Contains(err.Error(), "ICLOUD_MCP_DEFAULT_TZ") {
+		t.Errorf("expected error mentioning ICLOUD_MCP_DEFAULT_TZ: %v", err)
 	}
 }
 

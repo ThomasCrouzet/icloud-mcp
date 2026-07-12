@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -11,14 +12,14 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
-func newSearchEventsTool() mcp.Tool {
+func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
 		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded into individual occurrences. Results are sorted by date, capped at 400 events, and paginated."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithString("start", mcp.Required(), mcp.Description("Range start, RFC3339 (e.g. 2026-07-01T00:00:00Z)")),
-		mcp.WithString("end", mcp.Required(), mcp.Description("Range end, RFC3339 (at most 366 days after start)")),
+		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Range start", defaultLoc))),
+		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("Range end", defaultLoc)+" At most 366 days after start.")),
 		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted.")),
 		mcp.WithString("query", mcp.MaxLength(icloud.MaxQueryLen), mcp.Description("Optional text filter (title/location/notes, case insensitive)")),
 		mcp.WithNumber("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Maximum number of results per page (max 400)")),
@@ -45,11 +46,11 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return errResult(deps.Redactor, "end parameter", err), nil
 		}
-		start, err := icloud.ParseRFC3339("start", startStr)
+		start, err := icloud.ParseDateTime("start", startStr, deps.DefaultLocation)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
-		end, err := icloud.ParseRFC3339("end", endStr)
+		end, err := icloud.ParseDateTime("end", endStr, deps.DefaultLocation)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}

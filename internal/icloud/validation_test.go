@@ -79,7 +79,7 @@ func TestValidateTextField(t *testing.T) {
 	}
 }
 
-func TestParseRFC3339(t *testing.T) {
+func TestParseDateTime_ExplicitOffset(t *testing.T) {
 	tests := []struct {
 		name    string
 		value   string
@@ -93,11 +93,89 @@ func TestParseRFC3339(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseRFC3339("start", tt.value)
+			_, err := ParseDateTime("start", tt.value, time.UTC)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseRFC3339(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+				t.Errorf("ParseDateTime(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally locks in that an
+// explicit offset is NEVER reinterpreted through defaultLoc, regardless of
+// what defaultLoc is: it is a deliberate, self-declared choice by the
+// caller (see ParseDateTime's doc comment).
+func TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("LoadLocation(Europe/Paris): %v", err)
+	}
+	got, err := ParseDateTime("start", "2026-07-12T10:00:00Z", paris)
+	if err != nil {
+		t.Fatalf("ParseDateTime: %v", err)
+	}
+	want := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v (an explicit Z must mean UTC even with a non-UTC defaultLoc)", got, want)
+	}
+}
+
+// TestParseDateTime_NaiveLocalUsesDefaultLocation is the regression lock for
+// the 2026-07-12 "Grand ménage" incident: the user confirmed "10h à 14h"
+// (Europe/Paris, CEST = UTC+2), but the calling agent sent the offset-bearing
+// form "2026-07-12T10:00:00Z", which iCloud rendered as 12h, 2h late. The
+// fix is the no-offset local-time form: given the SAME literal hour the
+// agent should now send ("2026-07-12T10:00:00", no "Z"), the server must
+// itself resolve it against defaultLoc (Europe/Paris) to the correct UTC
+// instant (08:00 UTC), instead of requiring the agent to do that
+// DST-arithmetic itself.
+func TestParseDateTime_NaiveLocalUsesDefaultLocation(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("LoadLocation(Europe/Paris): %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		value string
+		want  time.Time
+	}{
+		{
+			name:  "CEST (summer, UTC+2) - the Grand menage incident",
+			value: "2026-07-12T10:00:00",
+			want:  time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC),
+		},
+		{
+			name:  "CET (winter, UTC+1)",
+			value: "2026-01-12T10:00:00",
+			want:  time.Date(2026, 1, 12, 9, 0, 0, 0, time.UTC),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseDateTime("start", tt.value, paris)
+			if err != nil {
+				t.Fatalf("ParseDateTime(%q): %v", tt.value, err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("ParseDateTime(%q) = %v (%v UTC), want %v UTC", tt.value, got, got.UTC(), tt.want)
+			}
+		})
+	}
+}
+
+// TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil covers the
+// defensive nil-safety of ParseDateTime: a caller that fails to wire the
+// configured location must not panic or silently misbehave, it must fall
+// back to the previous strict-UTC behavior.
+func TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil(t *testing.T) {
+	got, err := ParseDateTime("start", "2026-07-12T10:00:00", nil)
+	if err != nil {
+		t.Fatalf("ParseDateTime: %v", err)
+	}
+	want := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 

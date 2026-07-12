@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"time"
+	_ "time/tzdata" // embed the IANA database: ICLOUD_MCP_DEFAULT_TZ and TZID parsing must not depend on the host/container having zoneinfo installed
 
 	"github.com/emersion/go-webdav"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -113,7 +114,7 @@ func main() {
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)
-	mcptools.Register(s, mcptools.Deps{Service: svc, Audit: audit, Redactor: red}, cfg.ReadOnly)
+	mcptools.Register(s, mcptools.Deps{Service: svc, Audit: audit, Redactor: red, DefaultLocation: cfg.DefaultLocation}, cfg.ReadOnly)
 
 	// 6. Optional healthcheck (off by default).
 	if *healthAddr != "" {
@@ -125,7 +126,7 @@ func main() {
 		defer func() { _ = h.Close() }()
 	}
 
-	slog.Info("server started", "version", version, "readOnly", cfg.ReadOnly)
+	slog.Info("server started", "version", version, "readOnly", cfg.ReadOnly, "defaultTZ", cfg.DefaultLocation.String())
 
 	// 7. Stdio: ServeStdio handles SIGTERM/SIGINT itself. The transport
 	// error logger MUST be wired to the redacting writer, otherwise mcp-go

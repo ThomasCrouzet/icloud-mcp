@@ -17,6 +17,10 @@ import (
 // Frozen by the spec (no dedicated environment variable).
 const icloudTimeout = 30 * time.Second
 
+// defaultTZEnvVar names the environment variable used to resolve
+// DefaultLocation. See Config.DefaultLocation for why it exists.
+const defaultTZEnvVar = "ICLOUD_MCP_DEFAULT_TZ"
+
 // Config holds the configuration validated at startup.
 type Config struct {
 	Email      string        // ICLOUD_EMAIL (file:// supported)
@@ -25,6 +29,18 @@ type Config struct {
 	HealthAddr string        // -health flag (e.g. "127.0.0.1:8797"), "" = off
 	Timeout    time.Duration // 30s constant
 	LogLevel   slog.Level    // ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error), default info
+
+	// DefaultLocation is the timezone used to interpret a start/end value
+	// supplied WITHOUT an explicit RFC3339 offset (e.g. "2026-07-01T14:00:00",
+	// no "Z", no "+02:00"). Set via ICLOUD_MCP_DEFAULT_TZ (IANA name, e.g.
+	// "Europe/Paris"); defaults to UTC if unset, which keeps the previous
+	// strict behavior (a bare RFC3339 offset is still respected literally,
+	// this only affects the offset-less fallback). See
+	// internal/icloud.ParseDateTime for the parsing rules and the incident
+	// that motivated this: an agent echoing a local hour back as "...Z"
+	// (UTC) instead of converting it, shifting events by the local UTC
+	// offset (2h during CEST).
+	DefaultLocation *time.Location
 }
 
 // Load reads the configuration from the environment, resolves any file://
@@ -39,18 +55,40 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	loc, err := loadDefaultLocation(os.Getenv(defaultTZEnvVar))
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
-		Email:    email,
-		Password: password,
-		ReadOnly: parseBool(os.Getenv("ICLOUD_MCP_READ_ONLY")),
-		Timeout:  icloudTimeout,
-		LogLevel: parseLogLevel(os.Getenv("ICLOUD_MCP_LOG_LEVEL")),
+		Email:           email,
+		Password:        password,
+		ReadOnly:        parseBool(os.Getenv("ICLOUD_MCP_READ_ONLY")),
+		Timeout:         icloudTimeout,
+		LogLevel:        parseLogLevel(os.Getenv("ICLOUD_MCP_LOG_LEVEL")),
+		DefaultLocation: loc,
 	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// loadDefaultLocation resolves ICLOUD_MCP_DEFAULT_TZ to a *time.Location,
+// defaulting to UTC when unset. Failing fast here (before any network
+// access, alongside the other config validation) is deliberate: a typo in
+// the IANA name would otherwise surface much later as a silently wrong
+// event time instead of a clear boot error.
+func loadDefaultLocation(tz string) (*time.Location, error) {
+	if tz == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s (%q): %w", defaultTZEnvVar, tz, err)
+	}
+	return loc, nil
 }
 
 // Validate checks the email format and the minimum password length. Error

@@ -6,11 +6,35 @@ package mcptools
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
+
+// datetimeParamDescription builds the mcp.Description text for a start/end
+// tool parameter, naming the actually configured default timezone so the
+// schema never nudges the calling agent toward the wrong thing.
+//
+// Deliberately does NOT lead with a "...Z" example: an earlier version of
+// this description did, and the calling agent was observed echoing a stated
+// local hour straight back with a "Z" suffix (i.e. literal UTC) instead of
+// converting it, shifting real events by the local UTC offset once iCloud
+// rendered them. Leading with the no-offset local-time example steers
+// towards the form that removes that conversion step entirely.
+func datetimeParamDescription(label string, defaultLoc *time.Location) string {
+	tz := defaultLocationName(defaultLoc)
+	return fmt.Sprintf(
+		"%s. Prefer a local wall-clock time with NO offset (e.g. 2026-07-01T14:00:00 for 2pm) "+
+			"matching what the user said: it is interpreted as %s (ICLOUD_MCP_DEFAULT_TZ), DST-aware, "+
+			"with no conversion needed on your part. Do NOT append Z or compute an offset yourself "+
+			"unless the user explicitly means a different, specific timezone (e.g. UTC or another city) "+
+			"in which case use full RFC3339 with that explicit offset (e.g. 2026-07-01T14:00:00+02:00, or "+
+			"...Z only if UTC is truly what is meant).",
+		label, tz,
+	)
+}
 
 // errResult builds an error CallToolResult, always routing the message
 // through the Redactor. EVERY error returned by a tool goes through this

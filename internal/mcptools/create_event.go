@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,15 +14,15 @@ import (
 // maxAlarmMinutesBefore caps the alarm at 4 weeks before the event.
 const maxAlarmMinutesBefore = 40320
 
-func newCreateEventTool() mcp.Tool {
+func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("create_event",
 		mcp.WithDescription("Creates a new event in an iCloud calendar."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithString("title", mcp.Required(), mcp.MinLength(1), mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("Event title")),
-		mcp.WithString("start", mcp.Required(), mcp.Description("Start time, RFC3339 (e.g. 2026-07-01T10:00:00Z)")),
-		mcp.WithString("end", mcp.Required(), mcp.Description("End time, RFC3339, must be after start")),
+		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Start time", defaultLoc))),
+		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("End time", defaultLoc)+" Must be after start.")),
 		mcp.WithString("calendar", mcp.Required(), mcp.Description("Calendar path (see list_calendars)")),
 		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("Location (optional)")),
 		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("Notes/description (optional)")),
@@ -80,11 +81,11 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if alarm < 0 || alarm > maxAlarmMinutesBefore {
 			return deny("alarm_minutes_before parameter", fmt.Errorf("must be between 0 and %d (4 weeks)", maxAlarmMinutesBefore))
 		}
-		start, err := icloud.ParseRFC3339("start", startStr)
+		start, err := icloud.ParseDateTime("start", startStr, deps.DefaultLocation)
 		if err != nil {
 			return deny("validation", err)
 		}
-		end, err := icloud.ParseRFC3339("end", endStr)
+		end, err := icloud.ParseDateTime("end", endStr, deps.DefaultLocation)
 		if err != nil {
 			return deny("validation", err)
 		}

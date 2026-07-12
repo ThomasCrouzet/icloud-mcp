@@ -125,6 +125,7 @@ Environment variables (see `.env.example`):
 | `ICLOUD_PASSWORD` | Apple **app-specific password**. Supports the `file://` prefix. |
 | `ICLOUD_MCP_READ_ONLY` | `1`/`true` → read-only mode (write tools not registered). |
 | `ICLOUD_MCP_LOG_LEVEL` | `debug`/`info`/`warn`/`error` for the structured JSON logs on stderr (default `info`). |
+| `ICLOUD_MCP_DEFAULT_TZ` | IANA timezone (e.g. `Europe/Paris`) used to interpret a `start`/`end` value with no explicit RFC3339 offset. Default `UTC`. See "Dates and timezones" below. |
 
 The `file://` prefix reads the secret from a file (Docker-secret-like pattern):
 `ICLOUD_PASSWORD=file:///path/to/app-password`. This is the **only** disk read the
@@ -134,6 +135,24 @@ The password MUST be an **app-specific password** generated on
 [appleid.apple.com](https://appleid.apple.com), never the account's main password.
 Optional flag `-health <addr>`: HTTP `/healthz` healthcheck (disabled by default; never
 bind to `0.0.0.0`).
+
+### Dates and timezones
+
+`start`/`end` values (`create_event`, `update_event`, `search_events`) accept two forms:
+
+- **RFC3339 with an explicit offset**, e.g. `2026-07-01T14:00:00+02:00` or
+  `2026-07-01T14:00:00Z`. Parsed literally: the offset is a deliberate choice by the
+  caller and is always honored as-is.
+- **A local wall-clock time with no offset**, e.g. `2026-07-01T14:00:00`. Interpreted
+  in `ICLOUD_MCP_DEFAULT_TZ` (DST-aware), UTC if that variable is unset.
+
+The no-offset form is the recommended one for "the time the user said": it removes
+timezone-offset arithmetic from the calling agent entirely, which is exactly the kind
+of computation an LLM tends to get wrong. Set `ICLOUD_MCP_DEFAULT_TZ` to the IANA
+timezone of the calendar's owner (e.g. `Europe/Paris`) so a bare local hour resolves
+correctly across DST changes without the agent doing any conversion. Reserve the
+explicit-offset form for a value that is deliberately in a different, specific
+timezone (e.g. a call scheduled in UTC, or in another city's local time).
 
 ## Troubleshooting (CalDAV / iCloud)
 
@@ -150,6 +169,7 @@ discovery trace.
 | `rate_limited` (HTTP 429) | Apple is throttling. The built-in 60 reads/min + 20 writes/min limits usually prevent this, but a burst across many calendars can still trip Apple. | Reduce concurrency / request frequency. The HTTP layer already retries 429 with `Retry-After`. |
 | `concurrent_modification` (HTTP 412 on `update_event`) | Another client (Calendar app, another agent) modified the event between your read and your update. | Re-read with `search_events` and re-apply the update. `update_event` sends `If-Match` (ETag) so the conflict is detected rather than silently overwriting. |
 | Events appear with wrong times around a DST change | TZID was lost in a manual edit (forcing `.UTC()` on a `Dtstart`). | This server preserves TZID through GET-then-PUT; never edit the raw `text/calendar` outside the server. See `internal/icloud/recurrence.go`. |
+| A newly created event is off by 1 to 2 hours from the time the user asked for | The calling agent sent an RFC3339 `start`/`end` with an explicit offset (often `Z`/UTC) instead of the intended local time; the offset is always honored literally. | Have the agent send the local wall-clock time with no offset (e.g. `2026-07-01T14:00:00`) and set `ICLOUD_MCP_DEFAULT_TZ` to the calendar owner's IANA timezone; see "Dates and timezones" above. |
 | `search_events` returns no events for a known recurring series | An `EXDATE` excludes the occurrences, or a `RECURRENCE-ID` override replaces them. | Inspect the master object; the override appears as its own occurrence with the moved time. |
 
 ### Apple CalDAV limits to keep in mind
@@ -224,7 +244,7 @@ to DAV services, and this server only exercises the CalDAV scope of that access.
 | **Secret redaction** | The password (+ its Basic-auth base64 form and URL-encoded form) and the email are masked from every output: stderr (slog + audit + transport logger, stdlib `log`), and MCP responses (redacted error helper + redacted recover middleware for the JSON-RPC channel). |
 | **Mutation audit** | Every create/update/delete is logged to stderr as structured JSON (timestamp, level, `msg=audit`, tool, calendar, UID, status), **without** title or content (no PII). |
 | **Rate limiting** | 60 reads/min, 20 writes/min (`x/time/rate` token bucket), 30s HTTP timeout, 25s per-tool timeout, bounded retries with backoff (idempotent operations only). HTTP 429/502/503/504 from the CalDAV shard are retried with `Retry-After` honoring + exponential backoff/jitter (6 attempts, bounded by the tool timeout). |
-| **Input validation** | RFC3339 dates, range ≤ 366 days, UID/paths without `..`/NUL, bounded field sizes. |
+| **Input validation** | RFC3339 dates (offset honored literally) or local time resolved via `ICLOUD_MCP_DEFAULT_TZ`, range ≤ 366 days, UID/paths without `..`/NUL, bounded field sizes. |
 | **Minimal surface** | Stateless, zero `os/exec`, zero disk writes, zero telemetry. The only in-memory state shared across requests is the (immutable-after-boot) discovery cache (`sync.Once` over the shard base + calendar home-set) and the rate-limiter token buckets (a process-wide throttle, not per-client session state). No request depends on a previous request's mutable state: `update_event` re-reads the event fresh via GET, so it never carries state across calls. |
 
 ## Tests
