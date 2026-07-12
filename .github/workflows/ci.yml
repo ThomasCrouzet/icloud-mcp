@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: gofmt / vet / lint / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files (run gofmt -w):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
+
+      - name: go test
+        run: go test ./... -race -cover
+
+      - name: build arm64
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags='-s -w' -o dist/icloud-mcp ./cmd/icloud-mcp
+          ls -la dist/icloud-mcp
+
+      - name: security guardrails
+        run: |
+          # No os/exec anywhere: the server must never execute commands.
+          if grep -rn "os/exec" --include='*.go' .; then
+            echo "os/exec is forbidden (zero command execution)"
+            exit 1
+          fi
+          # Only allowed network URL: caldav.icloud.com (shards are derived from it);
+          # apple.com/ns/ical is an XML namespace (never dereferenced).
+          leaks="$(grep -rniE '"https?://' --include='*.go' . \
+            | grep -v _test.go \
+            | grep -v 'caldav.icloud.com' \
+            | grep -v 'apple.com/ns/ical' || true)"
+          if [ -n "$leaks" ]; then
+            echo "Unauthorized URL detected outside the allowlist:"
+            echo "$leaks"
+            exit 1
+          fi
+
+  secrets:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: gitleaks
+        run: |
+          # Official gitleaks binary: no license required (private or public
+          # repo), unlike gitleaks-action@v2. Scans the working tree and
+          # honors inline "gitleaks:allow" annotations.
+          VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks dir . --redact --verbose
