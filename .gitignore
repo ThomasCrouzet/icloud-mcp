@@ -1,0 +1,20 @@
+# Secrets : jamais commités.
+.env
+*.env
+!.env.example
+
+# Artefacts de build.
+/bin/
+/dist/
+
+# Couverture de tests.
+coverage.out
+coverage.html
+
+# macOS / éditeurs.
+.DS_Store
+.idea/
+.vscode/
+
+# Doc de préparation open-source (interne, ne pas publier dans l'historique public).
+/OPEN-SOURCE.md
