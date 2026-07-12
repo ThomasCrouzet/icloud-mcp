@@ -23,6 +23,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          # Always pull the newest 1.25.x patch instead of a cached older one,
+          # so govulncheck sees standard-library fixes (e.g. a crypto/tls patch
+          # release) without a manual bump.
+          check-latest: true
 
       - name: gofmt
         run: |
