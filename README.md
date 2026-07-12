@@ -1,7 +1,6 @@
 # icloud-mcp
 
 [![CI](https://github.com/ThomasCrouzet/icloud-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ThomasCrouzet/icloud-mcp/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ThomasCrouzet/icloud-mcp)](https://goreportcard.com/report/github.com/ThomasCrouzet/icloud-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A **stdio MCP server** written in Go that exposes the **Apple (iCloud) calendar** over
