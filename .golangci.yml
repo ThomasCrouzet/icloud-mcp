@@ -1,0 +1,15 @@
+# Pinned linter config for icloud-mcp. Keep minimal: match go vet + a few
+# high-signal checks without fighting the hand-rolled CalDAV style.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+run:
+  timeout: 5m

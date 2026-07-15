@@ -53,8 +53,15 @@ cover: ## Unit tests with coverage report + HTML.
 vet: ## go vet.
 	$(GO) vet ./...
 
-lint: vet ## go vet + golangci-lint (if installed).
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout=5m || echo "golangci-lint not installed, skipped"
+# Pin golangci-lint so local make lint and CI do not drift on @latest.
+GOLANGCI_LINT_VERSION ?= v2.1.6
+
+lint: vet ## go vet + golangci-lint (pinned version).
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run --timeout=5m ./...; \
+	else \
+		echo "golangci-lint not on PATH; install $(GOLANGCI_LINT_VERSION) or rely on CI"; \
+	fi
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR) $(DIST_DIR)

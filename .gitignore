@@ -1,5 +1,6 @@
-# Secrets: never committed.
-.env
+# Secrets: never committed. `.env*` also covers .env.local / .env.production,
+# which `*.env` alone does not match.
+.env*
 *.env
 !.env.example
 
