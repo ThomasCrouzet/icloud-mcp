@@ -10,6 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
@@ -36,12 +37,33 @@ func datetimeParamDescription(label string, defaultLoc *time.Location) string {
 	)
 }
 
+// toolErrorPayload is the machine-readable shape of MCP tool errors. Code is
+// set when the underlying error is a classified *icloud.Error (stable CalDAV
+// codes such as concurrent_modification). Message always carries a redacted
+// human-readable string.
+type toolErrorPayload struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
 // errResult builds an error CallToolResult, always routing the message
 // through the Redactor. EVERY error returned by a tool goes through this
 // helper; it is one of the 3 redaction insertion points (see
-// internal/security).
+// internal/security). When err wraps a classified *icloud.Error, the
+// payload is JSON with a stable "code" field so agents can match without
+// parsing English text.
 func errResult(red *security.Redactor, context string, err error) *mcp.CallToolResult {
-	return mcp.NewToolResultError(red.Redact(fmt.Sprintf("%s: %v", context, err)))
+	msg := red.Redact(fmt.Sprintf("%s: %v", context, err))
+	payload := toolErrorPayload{Message: msg}
+	if ie := icloud.AsICloudError(err); ie != nil {
+		payload.Code = string(ie.Code)
+	}
+	b, mErr := json.Marshal(payload)
+	if mErr != nil {
+		// Fall back to plain text if JSON encoding somehow fails.
+		return mcp.NewToolResultError(msg)
+	}
+	return mcp.NewToolResultError(string(b))
 }
 
 // writeJSON serializes payload as indented JSON and builds a success

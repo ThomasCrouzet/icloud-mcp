@@ -179,3 +179,118 @@ func TestSearchEventsHandler_MissingRequiredParams(t *testing.T) {
 		t.Fatal("expected an error for missing start")
 	}
 }
+
+func TestSearchEventsHandler_TruncatedByExpansion(t *testing.T) {
+	svc := &icloud.MockService{
+		Events: []icloud.Event{
+			{UID: "a", Title: "A", StartTime: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC)},
+		},
+		SearchTruncated: true,
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start": "2026-07-01T00:00:00Z", "end": "2026-07-08T00:00:00Z", "calendar": "/cal/",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("error: %s", resultText(t, res))
+	}
+	var payload searchEventsResponse
+	decodeResult(t, res, &payload)
+	if !payload.TruncatedByExpansion {
+		t.Fatal("TruncatedByExpansion = false, want true from service")
+	}
+}
+
+func TestSearchEventsHandler_MultiCalendarEarlyStop(t *testing.T) {
+	// Service returns MaxResults events for the first calendar so the second
+	// calendar is never queried.
+	events := make([]icloud.Event, icloud.MaxResults)
+	for i := range events {
+		events[i] = icloud.Event{
+			UID:       "e",
+			Title:     "x",
+			StartTime: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Hour),
+			EndTime:   time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Hour + time.Minute),
+		}
+	}
+	svc := &icloud.MockService{
+		Calendars: []icloud.Calendar{{Path: "/cal/a/"}, {Path: "/cal/b/"}},
+		Events:    events,
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start": "2026-07-01T00:00:00Z", "end": "2026-07-20T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("error: %s", resultText(t, res))
+	}
+	var payload searchEventsResponse
+	decodeResult(t, res, &payload)
+	if !payload.MultiCalendarCapped {
+		t.Error("MultiCalendarCapped = false, want true")
+	}
+	if !payload.Truncated {
+		t.Error("Truncated = false, want true when multi-calendar cap hits")
+	}
+	// Only first calendar searched.
+	if svc.SearchCallCount != 1 {
+		t.Errorf("SearchCallCount = %d, want 1 (early stop before second calendar)", svc.SearchCallCount)
+	}
+}
+
+// TestSearchEventsHandler_QueryDoesNotEarlyStopOnNonMatches: a first calendar
+// returning MaxResults non-matching events must NOT prevent searching a later
+// calendar that holds matching events (query filter before 400 budget).
+func TestSearchEventsHandler_QueryDoesNotEarlyStopOnNonMatches(t *testing.T) {
+	noise := make([]icloud.Event, icloud.MaxResults)
+	for i := range noise {
+		noise[i] = icloud.Event{
+			UID:       "noise",
+			Title:     "unrelated",
+			StartTime: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Hour),
+			EndTime:   time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Hour + time.Minute),
+		}
+	}
+	hit := icloud.Event{
+		UID:       "hit",
+		Title:     "team standup",
+		StartTime: time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
+	}
+	svc := &icloud.MockService{
+		Calendars: []icloud.Calendar{{Path: "/cal/a/"}, {Path: "/cal/b/"}},
+		EventsByPath: map[string][]icloud.Event{
+			"/cal/a/": noise,
+			"/cal/b/": {hit},
+		},
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start": "2026-07-01T00:00:00Z",
+		"end":   "2026-07-20T00:00:00Z",
+		"query": "standup",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("error: %s", resultText(t, res))
+	}
+	var payload searchEventsResponse
+	decodeResult(t, res, &payload)
+	if payload.Total != 1 || len(payload.Events) != 1 || payload.Events[0].UID != "hit" {
+		t.Fatalf("want the matching event from calendar b, got total=%d events=%+v", payload.Total, payload.Events)
+	}
+	if svc.SearchCallCount != 2 {
+		t.Errorf("SearchCallCount = %d, want 2 (must search both calendars when query filters first calendar to empty)", svc.SearchCallCount)
+	}
+	if payload.MultiCalendarCapped {
+		t.Error("MultiCalendarCapped should be false: matching set never filled the 400 cap")
+	}
+}

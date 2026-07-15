@@ -18,21 +18,23 @@ const maxOccurrencesPerSeries = 2000
 // overrides falling inside the range but absent from the generated series
 // (moved out of their original slot) are still included.
 // maxOccurrences bounds the expansion; if <= 0, the package default is used.
-func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd time.Time, maxOccurrences int) ([]Event, error) {
+// truncated is true when the per-series cap dropped occurrences that the
+// RRULE would otherwise have produced inside the widened selection window.
+func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd time.Time, maxOccurrences int) (events []Event, truncated bool, err error) {
 	if maxOccurrences <= 0 {
 		maxOccurrences = maxOccurrencesPerSeries
 	}
 
 	if master.Recurrence == "" {
 		if eventOverlaps(master, rangeStart, rangeEnd) {
-			return []Event{master}, nil
+			return []Event{master}, false, nil
 		}
-		return nil, nil
+		return nil, false, nil
 	}
 
 	ropt, err := rrule.StrToROption(master.Recurrence)
 	if err != nil {
-		return nil, fmt.Errorf("invalid RRULE (uid=%s): %w", master.UID, err)
+		return nil, false, fmt.Errorf("invalid RRULE (uid=%s): %w", master.UID, err)
 	}
 	// Do NOT force .UTC() here: RFC 5545 requires the recurrence to follow
 	// the local WALL CLOCK time of the Dtstart (TZID), not a fixed UTC
@@ -45,7 +47,7 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 
 	rule, err := rrule.NewRRule(*ropt)
 	if err != nil {
-		return nil, fmt.Errorf("invalid RRULE (uid=%s): %w", master.UID, err)
+		return nil, false, fmt.Errorf("invalid RRULE (uid=%s): %w", master.UID, err)
 	}
 
 	set := &rrule.Set{}
@@ -71,6 +73,7 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 	occTimes := set.Between(lowerBound.UTC(), rangeEnd.UTC(), true)
 	if len(occTimes) > maxOccurrences {
 		occTimes = occTimes[:maxOccurrences]
+		truncated = true
 	}
 
 	overrideByRecID := make(map[int64]Event, len(overrides))
@@ -115,9 +118,10 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 
 	if len(out) > maxOccurrences {
 		out = out[:maxOccurrences]
+		truncated = true
 	}
 
-	return out, nil
+	return out, truncated, nil
 }
 
 // eventOverlaps tests the half-open [start,end) overlap of an event with

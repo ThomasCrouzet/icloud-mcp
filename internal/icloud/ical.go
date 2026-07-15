@@ -23,6 +23,12 @@ func newUID() (string, error) {
 }
 
 // buildEventCalendar builds the complete VCALENDAR for a new event.
+// All-day events use VALUE=DATE; timed events are written as UTC (Z), which
+// pins the absolute instant regardless of the reader's timezone database.
+// Writing DTSTART/DTEND with TZID plus a VTIMEZONE would preserve local
+// wall-clock intent, but only with a full DST transition table: a fixed
+// offset is wrong for any occurrence on the other side of a transition.
+// That remains unimplemented pending verification against real iCloud.
 func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 	cal := ical.NewCalendar()
 	cal.Props.SetText(ical.PropVersion, "2.0")
@@ -37,9 +43,27 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 	if ne.Notes != "" {
 		ev.Props.SetText(ical.PropDescription, ne.Notes)
 	}
-	ev.Props.SetDateTime(ical.PropDateTimeStart, ne.StartTime.UTC())
-	ev.Props.SetDateTime(ical.PropDateTimeEnd, ne.EndTime.UTC())
+
+	if ne.AllDay {
+		// DATE values: use calendar date in UTC (date components only).
+		startDay := time.Date(ne.StartTime.Year(), ne.StartTime.Month(), ne.StartTime.Day(), 0, 0, 0, 0, time.UTC)
+		endDay := time.Date(ne.EndTime.Year(), ne.EndTime.Month(), ne.EndTime.Day(), 0, 0, 0, 0, time.UTC)
+		if !endDay.After(startDay) {
+			endDay = startDay.Add(24 * time.Hour)
+		}
+		ev.Props.SetDate(ical.PropDateTimeStart, startDay)
+		ev.Props.SetDate(ical.PropDateTimeEnd, endDay)
+	} else {
+		ev.Props.SetDateTime(ical.PropDateTimeStart, ne.StartTime.UTC())
+		ev.Props.SetDateTime(ical.PropDateTimeEnd, ne.EndTime.UTC())
+	}
 	ev.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
+
+	if ne.Recurrence != "" {
+		prop := ical.NewProp(ical.PropRecurrenceRule)
+		prop.Value = ne.Recurrence
+		ev.Props.Set(prop)
+	}
 
 	if ne.AlarmMinutesBefore > 0 {
 		alarm := ical.NewComponent(ical.CompAlarm)

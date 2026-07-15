@@ -14,13 +14,13 @@ import (
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
-		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded into individual occurrences. Results are sorted by date, capped at 400 events, and paginated."),
+		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded into individual occurrences (capped at 2000 per series; truncatedByExpansion is set if a series was capped). Results are sorted by date, capped at 400 events (truncated=true), and paginated. When calendar is omitted, calendars are scanned in list order until 400 matching events are held (query filter applied per calendar before the budget; remaining calendars skipped: multiCalendarCapped=true)."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Range start", defaultLoc))),
 		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("Range end", defaultLoc)+" At most 366 days after start.")),
-		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted.")),
+		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted (best-effort under the 400-event cap and rate limits).")),
 		mcp.WithString("query", mcp.MaxLength(icloud.MaxQueryLen), mcp.Description("Optional text filter (title/location/notes, case insensitive)")),
 		mcp.WithNumber("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Maximum number of results per page (max 400)")),
 		mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0), mcp.Description("Pagination offset")),
@@ -28,12 +28,14 @@ func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 }
 
 type searchEventsResponse struct {
-	Count     int            `json:"count"`
-	Total     int            `json:"total"`
-	Offset    int            `json:"offset"`
-	Limit     int            `json:"limit"`
-	Truncated bool           `json:"truncated"`
-	Events    []icloud.Event `json:"events"`
+	Count                int            `json:"count"`
+	Total                int            `json:"total"`
+	Offset               int            `json:"offset"`
+	Limit                int            `json:"limit"`
+	Truncated            bool           `json:"truncated"`
+	TruncatedByExpansion bool           `json:"truncatedByExpansion,omitempty"`
+	MultiCalendarCapped  bool           `json:"multiCalendarCapped,omitempty"`
+	Events               []icloud.Event `json:"events"`
 }
 
 func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
@@ -98,24 +100,41 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		var all []icloud.Event
+		var truncatedByExpansion bool
+		var multiCalendarCapped bool
+		// Multi-calendar policy: fetch calendars in list order; stop starting
+		// new calendars once we already hold MaxResults *matching* events
+		// (hard cap). Query filtering is applied per calendar BEFORE the
+		// budget check so a busy first calendar full of non-matches cannot
+		// hide later calendars that contain hits. Remaining calendars are
+		// not queried (saves rate-limit tokens) once the cap is filled.
 		for _, path := range calendarPaths {
-			events, err := deps.Service.SearchEvents(ctx, path, start, end)
+			if calendarPath == "" && len(all) >= icloud.MaxResults {
+				multiCalendarCapped = true
+				break
+			}
+			result, err := deps.Service.SearchEvents(ctx, path, start, end)
 			if err != nil {
 				return errResult(deps.Redactor, "searching events", err), nil
 			}
-			all = append(all, events...)
+			if result.TruncatedByExpansion {
+				truncatedByExpansion = true
+			}
+			batch := result.Events
+			if query != "" {
+				batch = filterByQuery(batch, query)
+			}
+			all = append(all, batch...)
 		}
 
-		if query != "" {
-			all = filterByQuery(all, query)
-		}
 		sort.Slice(all, func(i, j int) bool { return all[i].StartTime.Before(all[j].StartTime) })
 
 		total := len(all)
-		truncated := total > icloud.MaxResults
+		truncated := total > icloud.MaxResults || multiCalendarCapped
 		workable := all
-		if truncated {
+		if total > icloud.MaxResults {
 			workable = all[:icloud.MaxResults]
+			truncated = true
 		}
 
 		pageStart := offset
@@ -132,12 +151,14 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		resp := searchEventsResponse{
-			Count:     len(page),
-			Total:     total,
-			Offset:    offset,
-			Limit:     limit,
-			Truncated: truncated,
-			Events:    page,
+			Count:                len(page),
+			Total:                total,
+			Offset:               offset,
+			Limit:                limit,
+			Truncated:            truncated,
+			TruncatedByExpansion: truncatedByExpansion,
+			MultiCalendarCapped:  multiCalendarCapped,
+			Events:               page,
 		}
 		return writeJSON(deps.Redactor, resp), nil
 	}

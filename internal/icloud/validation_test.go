@@ -179,6 +179,27 @@ func TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil(t *testing.T) {
 	}
 }
 
+func TestValidateRRULE(t *testing.T) {
+	tests := []struct {
+		rule    string
+		wantErr bool
+	}{
+		{"FREQ=WEEKLY;COUNT=10", false},
+		{"FREQ=DAILY;UNTIL=20261231T000000Z", false},
+		{"FREQ=MINUTELY", true},
+		{"FREQ=HOURLY", true},
+		{"RRULE:FREQ=WEEKLY;COUNT=1", true},
+		{"", true},
+		{"not-a-rule", true},
+	}
+	for _, tt := range tests {
+		err := ValidateRRULE(tt.rule)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ValidateRRULE(%q) err=%v, wantErr=%v", tt.rule, err, tt.wantErr)
+		}
+	}
+}
+
 func TestValidateRange(t *testing.T) {
 	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	tests := []struct {

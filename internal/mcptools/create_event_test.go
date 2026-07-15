@@ -176,3 +176,46 @@ func TestCreateEventHandler_AuditLogged(t *testing.T) {
 		t.Errorf("audit line must NEVER contain the title: %s", logLine)
 	}
 }
+
+func TestCreateEventHandler_AllDayAndRRule(t *testing.T) {
+	svc := &icloud.MockService{CreatedUID: "allday-uid"}
+	handler := createEventHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"title":    "Bastille Day",
+		"start":    "2026-07-14",
+		"end":      "2026-07-15",
+		"calendar": "/cal/home/",
+		"all_day":  true,
+		"rrule":    "FREQ=YEARLY;COUNT=3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("error: %s", resultText(t, res))
+	}
+	if svc.LastCreated == nil || !svc.LastCreated.AllDay {
+		t.Fatalf("LastCreated all_day not set: %+v", svc.LastCreated)
+	}
+	if svc.LastCreated.Recurrence != "FREQ=YEARLY;COUNT=3" {
+		t.Errorf("Recurrence = %q", svc.LastCreated.Recurrence)
+	}
+}
+
+func TestCreateEventHandler_RejectsBadRRule(t *testing.T) {
+	svc := &icloud.MockService{}
+	handler := createEventHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"title": "x", "start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z",
+		"calendar": "/cal/", "rrule": "FREQ=MINUTELY",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected rejection of unbounded MINUTELY RRULE")
+	}
+	if svc.CreateCallCount != 0 {
+		t.Error("CreateEvent should not have been called")
+	}
+}

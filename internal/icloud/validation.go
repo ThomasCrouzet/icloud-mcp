@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/teambition/rrule-go"
 )
 
 // Input validation bounds, enforced on the MCP handler side (before any
-// network call) AND on the Client side (defense in depth).
+// network call) and re-checked on Client methods (defense in depth).
 const (
 	MaxTitleLen    = 500
 	MaxLocationLen = 1000
@@ -127,6 +129,41 @@ func ValidateRange(start, end time.Time) error {
 	}
 	if end.Sub(start) > MaxRangeDays*24*time.Hour {
 		return fmt.Errorf("date range exceeds %d days (maximum allowed)", MaxRangeDays)
+	}
+	return nil
+}
+
+// ValidateRRULE checks that an RRULE string (without the "RRULE:" prefix) is
+// parseable and not pathologically unbounded for write paths. COUNT/UNTIL
+// is required when FREQ is SECONDLY or MINUTELY (or when neither COUNT nor
+// UNTIL is set and FREQ is HOURLY) so a create cannot plant an infinite
+// high-frequency series.
+func ValidateRRULE(rule string) error {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return fmt.Errorf("RRULE cannot be empty")
+	}
+	if len(rule) > 1024 {
+		return fmt.Errorf("RRULE is too long (max 1024 characters)")
+	}
+	if strings.HasPrefix(strings.ToUpper(rule), "RRULE:") {
+		return fmt.Errorf("RRULE must not include the RRULE: prefix; pass only the value (e.g. FREQ=WEEKLY;COUNT=10)")
+	}
+	ropt, err := rrule.StrToROption(rule)
+	if err != nil {
+		return fmt.Errorf("invalid RRULE: %w", err)
+	}
+	freq := strings.ToUpper(ropt.Freq.String())
+	hasBound := ropt.Count > 0 || !ropt.Until.IsZero()
+	switch freq {
+	case "SECONDLY", "MINUTELY":
+		if !hasBound {
+			return fmt.Errorf("RRULE with FREQ=%s requires COUNT or UNTIL (unbounded high-frequency series rejected)", freq)
+		}
+	case "HOURLY":
+		if !hasBound {
+			return fmt.Errorf("RRULE with FREQ=HOURLY requires COUNT or UNTIL")
+		}
 	}
 	return nil
 }

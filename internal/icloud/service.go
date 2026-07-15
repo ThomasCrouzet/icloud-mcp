@@ -44,6 +44,25 @@ type NewEvent struct {
 	Title, Location, Notes string
 	StartTime, EndTime     time.Time
 	AlarmMinutesBefore     int // 0 = no alarm; >0 produces VALARM DISPLAY TRIGGER:-PT<n>M
+
+	// AllDay writes DTSTART/DTEND as VALUE=DATE (end exclusive). When true,
+	// StartTime/EndTime are interpreted as calendar dates (only the date
+	// components matter).
+	AllDay bool
+
+	// Recurrence is an optional RRULE value (without the "RRULE:" prefix),
+	// e.g. "FREQ=WEEKLY;COUNT=10". Empty = non-recurring. Validated before PUT.
+	// The rule applies to the master VEVENT; overrides (RECURRENCE-ID) are
+	// out of scope for writes.
+	Recurrence string
+}
+
+// SearchResult is returned by Service.SearchEvents.
+type SearchResult struct {
+	Events []Event
+	// TruncatedByExpansion is true when at least one recurring series hit
+	// maxOccurrencesPerSeries; some occurrences may be missing from Events.
+	TruncatedByExpansion bool
 }
 
 // EventUpdate groups the editable fields of an existing event
@@ -57,7 +76,7 @@ type EventUpdate struct {
 // Service is the interface consumed by the MCP tools (mockable for tests).
 type Service interface {
 	ListCalendars(ctx context.Context) ([]Calendar, error)
-	SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error)
+	SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error)
 	CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (uid string, err error)
 	UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error
 	// DeleteEvent returns the title of the deleted event (echo required by

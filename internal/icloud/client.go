@@ -25,6 +25,13 @@ const icalTimeLayout = "20060102T150405Z"
 // in depth against an abnormally large response).
 const maxReportBodySize = 32 << 20 // 32 MiB
 
+// uidLookupWindow is the half-range used by findEventByUID when the direct
+// GET on <uid>.ics fails (imported events whose filename differs from the
+// UID). ±5 years keeps the REPORT tractable under the 25s tool timeout while
+// covering ordinary calendar content. Events entirely outside this window
+// are reported as not found on the fallback path.
+const uidLookupWindow = 5 * 365 * 24 * time.Hour
+
 // httpDoer is the minimal slice of an HTTP client used by the hand-rolled
 // discovery, compatible with both *http.Client and the return value of
 // webdav.HTTPClientWithBasicAuth (the webdav.HTTPClient interface), which
@@ -74,9 +81,15 @@ func (c *Client) Discover(ctx context.Context) error {
 // SearchEvents searches a calendar's events overlapping [start, end] and
 // expands recurrences (RRULE + EXDATE + RECURRENCE-ID overrides) within
 // that same range.
-func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error) {
+func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+	if err := ValidateCalendarPath(calendarPath); err != nil {
+		return SearchResult{}, err
+	}
+	if err := ValidateRange(start, end); err != nil {
+		return SearchResult{}, err
+	}
 	if err := c.discover(ctx); err != nil {
-		return nil, err
+		return SearchResult{}, err
 	}
 
 	// Time-range filter on VEVENT (the server only returns events, including
@@ -87,28 +100,58 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		`</C:comp-filter></C:comp-filter></C:filter>`
 	objs, err := c.reportCalendarQuery(ctx, calendarPath, filterXML)
 	if err != nil {
-		return nil, fmt.Errorf("searching events (calendar=%s): %w", calendarPath, err)
+		return SearchResult{}, fmt.Errorf("searching events (calendar=%s): %w", calendarPath, err)
 	}
 
 	var events []Event
+	var truncated bool
 	for i := range objs {
 		master, overrides, perr := parseCalendarObject(&objs[i])
 		if perr != nil {
 			slog.Warn("skipping unparseable calendar object", "path", objs[i].Path, "error", perr)
 			continue
 		}
-		occs, eerr := ExpandOccurrences(*master, overrides, start, end, 0)
+		occs, t, eerr := ExpandOccurrences(*master, overrides, start, end, 0)
 		if eerr != nil {
 			slog.Warn("skipping recurrence expansion", "uid", master.UID, "error", eerr)
 			continue
 		}
+		if t {
+			truncated = true
+		}
 		events = append(events, occs...)
 	}
-	return events, nil
+	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
 }
 
 // CreateEvent creates a new event in calendarPath.
 func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEvent) (string, error) {
+	if err := ValidateCalendarPath(calendarPath); err != nil {
+		return "", err
+	}
+	if ne == nil {
+		return "", fmt.Errorf("event cannot be nil")
+	}
+	if err := ValidateTextField("title", ne.Title, MaxTitleLen); err != nil {
+		return "", err
+	}
+	if ne.Title == "" {
+		return "", fmt.Errorf("title cannot be empty")
+	}
+	if err := ValidateTextField("location", ne.Location, MaxLocationLen); err != nil {
+		return "", err
+	}
+	if err := ValidateTextField("notes", ne.Notes, MaxNotesLen); err != nil {
+		return "", err
+	}
+	if err := ValidateRange(ne.StartTime, ne.EndTime); err != nil {
+		return "", err
+	}
+	if ne.Recurrence != "" {
+		if err := ValidateRRULE(ne.Recurrence); err != nil {
+			return "", err
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return "", err
 	}
@@ -129,6 +172,30 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 // unchanged). nil = field unchanged, pointer to an empty string = clear the
 // field.
 func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
+	if err := ValidateCalendarPath(calendarPath); err != nil {
+		return err
+	}
+	if err := ValidateUID(uid); err != nil {
+		return err
+	}
+	if up == nil {
+		return fmt.Errorf("update cannot be nil")
+	}
+	if up.Title != nil {
+		if err := ValidateTextField("title", *up.Title, MaxTitleLen); err != nil {
+			return err
+		}
+	}
+	if up.Location != nil {
+		if err := ValidateTextField("location", *up.Location, MaxLocationLen); err != nil {
+			return err
+		}
+	}
+	if up.Notes != nil {
+		if err := ValidateTextField("notes", *up.Notes, MaxNotesLen); err != nil {
+			return err
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
@@ -274,6 +341,12 @@ func normalizeIfMatch(etag string) string {
 // DeleteEvent deletes an event located by UID and returns its title (echo
 // required by the spec so a human can confirm what is being deleted).
 func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+	if err := ValidateCalendarPath(calendarPath); err != nil {
+		return "", err
+	}
+	if err := ValidateUID(uid); err != nil {
+		return "", err
+	}
 	if err := c.discover(ctx); err != nil {
 		return "", err
 	}
@@ -309,10 +382,13 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 	}
 
 	// Fallback: imported event whose file name != UID. The only server-side
-	// filter iCloud accepts is time-range: scan a very wide window and filter
-	// by UID client-side.
-	wideStart := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
-	wideEnd := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	// filter iCloud accepts is time-range: scan a bounded window around now
+	// (uidLookupWindow) and filter by UID client-side. Full epoch scans
+	// (1970-2100) were unbounded on large calendars and risked the 25s tool
+	// timeout / 32 MiB REPORT cap.
+	now := time.Now().UTC()
+	wideStart := now.Add(-uidLookupWindow)
+	wideEnd := now.Add(uidLookupWindow)
 	filterXML := `<C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">` +
 		`<C:time-range start="` + wideStart.Format(icalTimeLayout) +
 		`" end="` + wideEnd.Format(icalTimeLayout) + `"/>` +
@@ -346,8 +422,10 @@ func calendarHasUID(cal *ical.Calendar, uid string) bool {
 }
 
 // reportCalendarQuery sends a REPORT calendar-query (Depth:1) requesting the
-// FULL calendar-data (bare <C:calendar-data/>) with the provided filter,
-// then decodes each object via go-ical.
+// FULL calendar-data (bare <C:calendar-data/>) and getetag with the provided
+// filter, then decodes each object via go-ical. getetag populates
+// CalendarObject.ETag so UpdateEvent can send If-Match even when the object
+// was located via this REPORT path (imported events, filename != UID).
 //
 // Hand-rolled request (not go-webdav QueryCalendar) because iCloud does NOT
 // return component properties for a PARTIAL calendar-data retrieval (a
@@ -358,7 +436,7 @@ func calendarHasUID(cal *ical.Calendar, uid string) bool {
 func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXML string) ([]extcaldav.CalendarObject, error) {
 	body := `<?xml version="1.0" encoding="utf-8"?>` +
 		`<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">` +
-		`<D:prop><C:calendar-data/></D:prop>` +
+		`<D:prop><D:getetag/><C:calendar-data/></D:prop>` +
 		filterXML +
 		`</C:calendar-query>`
 
@@ -406,7 +484,14 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 			slog.Warn("undecodable calendar-data, skipping object", "href", r.Href, "error", derr)
 			continue
 		}
-		objs = append(objs, extcaldav.CalendarObject{Path: hrefPath(r.Href), Data: cal})
+		// Strip strong ETag quotes the same way go-webdav does on GET so
+		// normalizeIfMatch can re-quote consistently for If-Match. Weak
+		// ETags (W/"...") are left intact for normalizeIfMatch.
+		etag := strings.TrimSpace(prop.GetETag)
+		if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
+			etag = etag[1 : len(etag)-1]
+		}
+		objs = append(objs, extcaldav.CalendarObject{Path: hrefPath(r.Href), Data: cal, ETag: etag})
 	}
 	return objs, nil
 }

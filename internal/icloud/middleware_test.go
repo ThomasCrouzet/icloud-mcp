@@ -16,7 +16,9 @@ type countingService struct {
 	listCalls int
 	listFailN int
 
-	searchCalls int
+	searchCalls      int
+	searchFailN      int
+	searchClassified bool // when true, failures are typed *Error (not retried)
 
 	createCalls int
 	createErr   error
@@ -41,11 +43,19 @@ func (s *countingService) ListCalendars(ctx context.Context) ([]Calendar, error)
 	return []Calendar{{Path: "/cal/"}}, nil
 }
 
-func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error) {
+func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
 	s.mu.Lock()
 	s.searchCalls++
+	failN := s.searchFailN
+	calls := s.searchCalls
 	s.mu.Unlock()
-	return nil, nil
+	if calls <= failN {
+		if s.searchClassified {
+			return SearchResult{}, NewError(CodeRateLimited, 429, "rate limited", nil)
+		}
+		return SearchResult{}, fmt.Errorf("simulated search failure %d", calls)
+	}
+	return SearchResult{Events: []Event{{UID: "e1", Title: "t"}}}, nil
 }
 
 func (s *countingService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
@@ -243,8 +253,8 @@ func (s *classifiedService) ListCalendars(ctx context.Context) ([]Calendar, erro
 	s.calls++
 	return nil, s.err
 }
-func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error) {
-	return nil, nil
+func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+	return SearchResult{}, nil
 }
 func (s *classifiedService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	return "", nil
@@ -261,4 +271,61 @@ func nearly(a, b, eps float64) bool {
 		return a-b < eps
 	}
 	return b-a < eps
+}
+
+// TestGuardedService_SearchEvents_RetriesTransientThenSucceeds drives the
+// real SearchEvents decorator path (was 0% coverage): transient errors are
+// retried; the final events are returned.
+func TestGuardedService_SearchEvents_RetriesTransientThenSucceeds(t *testing.T) {
+	inner := &countingService{searchFailN: 2}
+	g := NewGuardedService(inner, 2, time.Millisecond)
+
+	res, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(res.Events) != 1 || res.Events[0].UID != "e1" {
+		t.Fatalf("result = %+v, want one event e1", res)
+	}
+	if inner.searchCalls != 3 {
+		t.Errorf("searchCalls = %d, want 3 (2 failures + success)", inner.searchCalls)
+	}
+}
+
+// TestGuardedService_SearchEvents_ClassifiedErrorNotRetried: a typed
+// *icloud.Error from SearchEvents must not consume the GuardedService retry
+// budget (HTTP layer already retried 429/5xx).
+func TestGuardedService_SearchEvents_ClassifiedErrorNotRetried(t *testing.T) {
+	inner := &countingService{searchFailN: 10, searchClassified: true}
+	g := NewGuardedService(inner, 5, time.Millisecond)
+
+	_, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	if err == nil {
+		t.Fatal("expected classified error")
+	}
+	if AsICloudError(err) == nil {
+		t.Errorf("expected *icloud.Error, got %v", err)
+	}
+	if inner.searchCalls != 1 {
+		t.Errorf("searchCalls = %d, want 1 (no GuardedService retry)", inner.searchCalls)
+	}
+}
+
+// TestGuardedService_SearchEvents_RateLimitBlocksAfterBurst exercises the
+// read limiter on the SearchEvents path specifically.
+func TestGuardedService_SearchEvents_RateLimitBlocksAfterBurst(t *testing.T) {
+	inner := &countingService{}
+	g := NewGuardedService(inner, 0, time.Millisecond)
+	start := time.Now()
+	end := start.Add(time.Hour)
+	for i := 0; i < 10; i++ {
+		if _, err := g.SearchEvents(context.Background(), "/cal/", start, end); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if _, err := g.SearchEvents(ctx, "/cal/", start, end); err == nil {
+		t.Fatal("expected rate limit error after read burst exhausted")
+	}
 }

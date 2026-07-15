@@ -20,6 +20,10 @@ type MockService struct {
 	Calendars []Calendar
 	Events    []Event
 
+	// EventsByPath, when non-nil, overrides Events for SearchEvents on that
+	// calendar path (used to test multi-calendar query + early-stop).
+	EventsByPath map[string][]Event
+
 	ListErr   error
 	SearchErr error
 	CreateErr error
@@ -28,6 +32,9 @@ type MockService struct {
 
 	CreatedUID   string // UID returned by CreateEvent ("mock-uid" by default)
 	DeletedTitle string // title returned by DeleteEvent
+
+	// SearchTruncated is returned as SearchResult.TruncatedByExpansion.
+	SearchTruncated bool
 
 	mu sync.Mutex
 
@@ -38,6 +45,10 @@ type MockService struct {
 	LastSearchPath string
 	LastSearchFrom time.Time
 	LastSearchTo   time.Time
+
+	// SearchPaths records each calendar path SearchEvents was called with
+	// (order preserved), for multi-calendar early-stop assertions.
+	SearchPaths []string
 
 	ListCallCount   int
 	SearchCallCount int
@@ -59,18 +70,27 @@ func (m *MockService) ListCalendars(ctx context.Context) ([]Calendar, error) {
 	return m.Calendars, nil
 }
 
-// SearchEvents returns m.Events (or m.SearchErr).
-func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) ([]Event, error) {
+// SearchEvents returns m.Events (or m.SearchErr). When EventsByPath has an
+// entry for calendarPath, that slice is used instead of m.Events.
+func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
 	m.mu.Lock()
 	m.SearchCallCount++
 	m.LastSearchPath = calendarPath
 	m.LastSearchFrom = start
 	m.LastSearchTo = end
+	m.SearchPaths = append(m.SearchPaths, calendarPath)
+	truncated := m.SearchTruncated
+	events := m.Events
+	if m.EventsByPath != nil {
+		if byPath, ok := m.EventsByPath[calendarPath]; ok {
+			events = byPath
+		}
+	}
 	m.mu.Unlock()
 	if m.SearchErr != nil {
-		return nil, m.SearchErr
+		return SearchResult{}, m.SearchErr
 	}
-	return m.Events, nil
+	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
 }
 
 // CreateEvent returns m.CreatedUID (or "mock-uid" by default, or m.CreateErr).

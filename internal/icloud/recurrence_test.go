@@ -25,7 +25,7 @@ func TestExpandOccurrences_NonRecurring(t *testing.T) {
 	}
 
 	t.Run("within range", func(t *testing.T) {
-		out, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-07-08T00:00:00Z"), 0)
+		out, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-07-08T00:00:00Z"), 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -35,7 +35,7 @@ func TestExpandOccurrences_NonRecurring(t *testing.T) {
 	})
 
 	t.Run("out of range", func(t *testing.T) {
-		out, err := ExpandOccurrences(master, nil, mustParse(t, "2026-08-01T00:00:00Z"), mustParse(t, "2026-08-08T00:00:00Z"), 0)
+		out, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-08-01T00:00:00Z"), mustParse(t, "2026-08-08T00:00:00Z"), 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestExpandOccurrences_DailyWithCount(t *testing.T) {
 		Recurrence: "FREQ=DAILY;COUNT=5",
 	}
 
-	out, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-07-31T00:00:00Z"), 0)
+	out, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-07-31T00:00:00Z"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestExpandOccurrences_WeeklyWithExdate(t *testing.T) {
 		exDates:    []time.Time{exDate},
 	}
 
-	out, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-08-15T00:00:00Z"), 0)
+	out, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-08-15T00:00:00Z"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestExpandOccurrences_OverrideReplacesOccurrence(t *testing.T) {
 		recurrenceID: recID,
 	}
 
-	out, err := ExpandOccurrences(master, []Event{override}, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-08-15T00:00:00Z"), 0)
+	out, _, err := ExpandOccurrences(master, []Event{override}, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-08-15T00:00:00Z"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestExpandOccurrences_PreservesTimezoneAcrossDST(t *testing.T) {
 
 	rangeStart := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	rangeEnd := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
-	out, err := ExpandOccurrences(master, nil, rangeStart, rangeEnd, 0)
+	out, _, err := ExpandOccurrences(master, nil, rangeStart, rangeEnd, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart(t *testing.T)
 	rangeStart := mustParse(t, "2026-07-07T01:00:00Z")
 	rangeEnd := mustParse(t, "2026-08-10T00:00:00Z")
 
-	out, err := ExpandOccurrences(master, nil, rangeStart, rangeEnd, 0)
+	out, _, err := ExpandOccurrences(master, nil, rangeStart, rangeEnd, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestExpandOccurrences_InfiniteRRuleBoundedByRange(t *testing.T) {
 
 	start := mustParse(t, "2026-07-01T00:00:00Z")
 	end := mustParse(t, "2026-07-11T00:00:00Z") // 10 days
-	out, err := ExpandOccurrences(master, nil, start, end, 0)
+	out, _, err := ExpandOccurrences(master, nil, start, end, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -267,12 +267,15 @@ func TestExpandOccurrences_MaxOccurrencesTruncates(t *testing.T) {
 
 	start := mustParse(t, "2026-01-01T00:00:00Z")
 	end := mustParse(t, "2027-01-01T00:00:00Z") // 365 days
-	out, err := ExpandOccurrences(master, nil, start, end, 5)
+	out, truncated, err := ExpandOccurrences(master, nil, start, end, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(out) != 5 {
 		t.Fatalf("len = %d, want 5 (truncated by maxOccurrences)", len(out))
+	}
+	if !truncated {
+		t.Fatal("truncated = false, want true when maxOccurrences caps the series")
 	}
 }
 
@@ -284,7 +287,7 @@ func TestExpandOccurrences_InvalidRRule(t *testing.T) {
 		Recurrence: "THIS-IS-NOT-A-VALID-RRULE",
 	}
 
-	_, err := ExpandOccurrences(master, nil, mustParse(t, "2026-01-01T00:00:00Z"), mustParse(t, "2026-02-01T00:00:00Z"), 0)
+	_, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-01-01T00:00:00Z"), mustParse(t, "2026-02-01T00:00:00Z"), 0)
 	if err == nil {
 		t.Fatal("expected an invalid RRULE error")
 	}

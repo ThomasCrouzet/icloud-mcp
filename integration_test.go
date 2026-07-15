@@ -43,9 +43,10 @@ func TestIntegration_ListAndSearchRealICloud(t *testing.T) {
 
 	start := time.Now()
 	end := start.AddDate(0, 0, 7)
-	events, err := client.SearchEvents(ctx, cals[0].Path, start, end)
+	res, err := client.SearchEvents(ctx, cals[0].Path, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents: %v", err)
 	}
+	events := res.Events
 	t.Logf("%d event(s) over the next 7 days in %q", len(events), cals[0].Name)
 }

@@ -34,6 +34,7 @@ type msProp struct {
 	ResourceType         *msResourceType `xml:"resourcetype"`
 	SupportedComps       *msSupportedSet `xml:"urn:ietf:params:xml:ns:caldav supported-calendar-component-set"`
 	CalendarData         string          `xml:"urn:ietf:params:xml:ns:caldav calendar-data"`
+	GetETag              string          `xml:"getetag"`
 }
 
 type msHref struct {
@@ -94,6 +95,9 @@ func mergedOKProp(r msResponse) *msProp {
 		}
 		if ps.Prop.CalendarData != "" {
 			merged.CalendarData = ps.Prop.CalendarData
+		}
+		if ps.Prop.GetETag != "" {
+			merged.GetETag = ps.Prop.GetETag
 		}
 	}
 	if !found {

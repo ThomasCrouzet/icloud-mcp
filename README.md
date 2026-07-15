@@ -27,7 +27,7 @@ No other direct dependency (no prometheus, godotenv, uuid, telemetry).
 |------|------|-------------|
 | `list_calendars` | read | Lists calendars (name, path, color, description). |
 | `search_events` | read | Events over a date range (recurrences expanded, pagination, hard cap of 400). |
-| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarm). |
+| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarm, `all_day`, `rrule`). |
 | `update_event` | write | Modifies an event by UID (only the supplied fields). |
 | `delete_event` | write | Deletes an event by UID; echoes back the title for confirmation. |
 
@@ -58,7 +58,8 @@ Example configuration, valid for any MCP host that launches stdio servers:
       "env": {
         "ICLOUD_EMAIL": "you@icloud.com",
         "ICLOUD_PASSWORD": "your-app-specific-password",
-        "ICLOUD_MCP_READ_ONLY": "1"
+        "ICLOUD_MCP_READ_ONLY": "1",
+        "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
       }
     }
   }
@@ -68,6 +69,8 @@ Example configuration, valid for any MCP host that launches stdio servers:
 `ICLOUD_PASSWORD` MUST be an **app-specific password** generated on
 [appleid.apple.com](https://appleid.apple.com), never your main Apple ID password.
 Start with `ICLOUD_MCP_READ_ONLY=1` and lift it only once you trust your setup.
+Set `ICLOUD_MCP_DEFAULT_TZ` to the calendar owner's IANA timezone so bare local
+`start`/`end` times (no offset) resolve correctly; the default is UTC.
 
 Most stdio MCP hosts store this block in a JSON config file (the exact path
 and the UI to add a server vary by host). Use an absolute `command` path so the
@@ -81,7 +84,8 @@ host finds the binary regardless of its working directory:
       "env": {
         "ICLOUD_EMAIL": "you@icloud.com",
         "ICLOUD_PASSWORD": "your-app-specific-password",
-        "ICLOUD_MCP_READ_ONLY": "1"
+        "ICLOUD_MCP_READ_ONLY": "1",
+        "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
       }
     }
   }
@@ -276,16 +280,34 @@ v0.7.0 loses the shard host), correct EXDATE + RECURRENCE-ID override expansion 
 TZID preservation, handling of a missing DTEND, hard cap of 400 results.
 
 ## Known limitations
-- **Update relies on an opportunistic ETag**: `update_event` re-reads the full
-  object via GET (which returns an `ETag`) and sends an `If-Match` header on the
-  PUT, so a concurrent modification is rejected with a stable
-  `concurrent_modification` error rather than silently overwriting. go-webdav
-  v0.7.0 `PutCalendarObject` does not support `If-Match`, so the conditional PUT
-  is hand-rolled. When the server returns no `ETag` (rare, or the wide-scan
-  fallback path for imported events), the PUT degrades to unconditional,
-  last-writer-wins, never worse than before.
+- **Update uses opportunistic If-Match**: `update_event` re-reads the full object
+  (GET on `<uid>.ics`, or REPORT fallback for imported filenames) and sends
+  `If-Match` when an ETag is available (GET header or REPORT `getetag`). When the
+  server omits ETag entirely, the PUT degrades to unconditional last-writer-wins.
+  go-webdav v0.7.0 `PutCalendarObject` does not support `If-Match`, so the
+  conditional PUT is hand-rolled.
+- **UID fallback window**: if `<uid>.ics` is missing, `findEventByUID` scans about
+  ±5 years around now (not 1970-2100). Events entirely outside that window may
+  not be found for update/delete.
+- **Recurrence expansion** is capped at 2000 occurrences per series; when the cap
+  hits, `search_events` sets `truncatedByExpansion`. Results are also hard-capped
+  at 400 events (`truncated`). Multi-calendar search stops starting new calendars
+  once 400 *matching* events are held (`multiCalendarCapped`); optional `query`
+  is applied per calendar before that budget so non-matches cannot hide later
+  calendars.
+- **RDATE** (additional recurrence dates) is not expanded; only RRULE + EXDATE +
+  RECURRENCE-ID overrides.
+- **create_event** can write all-day events and an optional RRULE (master only).
+  Timed events are always written as UTC, never with TZID + VTIMEZONE: emitting
+  a correct VTIMEZONE needs a full DST transition table, and a fixed-offset one
+  would misplace any occurrence on the other side of a transition.
+  `ICLOUD_MCP_DEFAULT_TZ` therefore governs how bare input times are read, not
+  how events are stored.
+- **Optional `-health`**: only loopback binds are accepted (`127.0.0.1`, `::1`,
+  `localhost`); `0.0.0.0` / bare `:port` are rejected.
 - **Single iCloud account** per instance.
-- Recurrence expansion is bounded (protection against infinite RRULEs).
+- Tool errors are JSON objects `{"code":"...","message":"..."}` when a classified
+  CalDAV error applies (`code` omitted for plain validation errors).
 
 ## Contributing
 

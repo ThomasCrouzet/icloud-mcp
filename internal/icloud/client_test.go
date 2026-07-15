@@ -321,9 +321,17 @@ func reportResponseXML(path, ics string) string {
 }
 
 func reportResponseFragment(path, ics string) string {
+	return reportResponseFragmentWithETag(path, ics, `"report-etag-1"`)
+}
+
+func reportResponseFragmentWithETag(path, ics, etag string) string {
 	var esc strings.Builder
 	_ = xml.EscapeText(&esc, []byte(ics))
-	return fmt.Sprintf(`<response><href>%s</href><propstat><prop><C:calendar-data>%s</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response>`, path, esc.String())
+	etagProp := ""
+	if etag != "" {
+		etagProp = "<getetag>" + etag + "</getetag>"
+	}
+	return fmt.Sprintf(`<response><href>%s</href><propstat><prop>%s<C:calendar-data>%s</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response>`, path, etagProp, esc.String())
 }
 
 // defaultCalendarsBody provides 1 regular calendar + inbox + outbox +
@@ -711,10 +719,11 @@ func TestClient_SearchEvents_TimeRangeTransmitted(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	events, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
+	events := res.Events
 	if len(events) != 1 {
 		t.Fatalf("SearchEvents() = %d events, want 1: %+v", len(events), events)
 	}
@@ -740,10 +749,11 @@ func TestClient_SearchEvents_AllDay(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	events, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
+	events := res.Events
 	if len(events) != 1 {
 		t.Fatalf("SearchEvents() = %d events, want 1", len(events))
 	}
@@ -762,10 +772,11 @@ func TestClient_SearchEvents_NoDtendDerivedFromDuration(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	events, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
+	events := res.Events
 	if len(events) != 1 {
 		t.Fatalf("SearchEvents() = %d events, want 1 (DTEND derived from DURATION): %+v", len(events), events)
 	}
@@ -789,10 +800,11 @@ func TestClient_SearchEvents_AllDayNoDtendDefaultsTo24h(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	events, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
+	events := res.Events
 	if len(events) != 1 {
 		t.Fatalf("SearchEvents() = %d events, want 1 (DTEND derived as StartTime+24h): %+v", len(events), events)
 	}
@@ -817,10 +829,11 @@ func TestClient_SearchEvents_RecurringWithExdateAndOverride(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
-	events, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
+	events := res.Events
 
 	// uid-recur-1: 5 weekly occurrences, 1 excluded (EXDATE), so 4.
 	// uid-override-1: 4 weekly occurrences, the 2nd replaced by the override.

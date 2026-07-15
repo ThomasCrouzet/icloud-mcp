@@ -126,6 +126,9 @@ func main() {
 		defer func() { _ = h.Close() }()
 	}
 
+	if cfg.DefaultLocation == nil || cfg.DefaultLocation == time.UTC {
+		slog.Warn("ICLOUD_MCP_DEFAULT_TZ is unset or UTC: bare local start/end times are interpreted as UTC; set ICLOUD_MCP_DEFAULT_TZ to the calendar owner's IANA timezone (e.g. Europe/Paris) to avoid offset mistakes by the calling agent")
+	}
 	slog.Info("server started", "version", version, "readOnly", cfg.ReadOnly, "defaultTZ", cfg.DefaultLocation.String())
 
 	// 7. Stdio: ServeStdio handles SIGTERM/SIGINT itself. The transport
