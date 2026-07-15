@@ -9,8 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -21,15 +23,19 @@ type Server struct {
 }
 
 // Start launches the HTTP healthcheck in the background on addr (e.g.
-// "127.0.0.1:8797", never 0.0.0.0) and returns immediately. If the bind
-// fails, the error is returned by this call; errors occurring afterwards
-// (ListenAndServe) are silent from the caller's perspective (the MCP server
-// must not die because of a healthcheck).
+// "127.0.0.1:8797"). Non-loopback binds (0.0.0.0, ::, LAN addresses) are
+// rejected before Listen. If the bind fails, the error is returned by this
+// call; errors occurring afterwards (ListenAndServe) are silent from the
+// caller's perspective (the MCP server must not die because of a healthcheck).
 //
 // version is the binary version (main.version, overridden at build time).
 // statusFn, if non-nil, returns the current rate-limiter state for /status;
 // pass nil when there is no guarded service to report on.
 func Start(addr, version string, statusFn func() any) (*Server, error) {
+	if err := validateLoopbackAddr(addr); err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -86,6 +92,51 @@ func (s *Server) Close() error {
 	err := s.srv.Shutdown(ctx)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return nil
+}
+
+// validateLoopbackAddr rejects addresses that would listen on non-loopback
+// interfaces (0.0.0.0, ::, bare ":port", LAN IPs). Only 127.0.0.1, ::1, and
+// localhost are accepted. This enforces the documented threat-model rule:
+// never expose /healthz or /status on all interfaces.
+func validateLoopbackAddr(addr string) error {
+	if addr == "" {
+		return fmt.Errorf("health address cannot be empty")
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Malformed addresses that are not parseable as host:port are left to
+		// net.Listen so Start keeps failing with a bind error (preserves the
+		// historical TestStart_InvalidAddrFails behavior).
+		return nil
+	}
+
+	// Empty host means "all interfaces" (e.g. ":8797"). Always reject.
+	switch strings.ToLower(host) {
+	case "", "0.0.0.0", "::", "[::]":
+		return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return nil
+	}
+
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		// Hostname other than localhost: resolve and require every answer to
+		// be loopback. Fail closed if resolution fails.
+		ips, rerr := net.LookupIP(host)
+		if rerr != nil || len(ips) == 0 {
+			return fmt.Errorf("health address %q rejected: cannot resolve host as loopback: %v", addr, rerr)
+		}
+		for _, resolved := range ips {
+			if !resolved.IsLoopback() {
+				return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
+			}
+		}
+		return nil
+	}
+	if !ip.IsLoopback() {
+		return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
 	}
 	return nil
 }

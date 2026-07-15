@@ -139,3 +139,104 @@ func TestRedactingWriter_ReturnsOriginalLength(t *testing.T) {
 		t.Errorf("Write() n = %d, want %d (original length)", n, len(p))
 	}
 }
+
+// TestRedactingWriter_SecretSplitAcrossWrites: a secret fragmented across
+// two Write calls must still be redacted (rolling buffer).
+func TestRedactingWriter_SecretSplitAcrossWrites(t *testing.T) {
+	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf, NewRedactor(password))
+
+	// Split in the middle of the password.
+	mid := len(password) / 2
+	part1 := "auth failed: " + password[:mid]
+	part2 := password[mid:] + " retry\n"
+	if _, err := rw.Write([]byte(part1)); err != nil {
+		t.Fatalf("Write part1: %v", err)
+	}
+	// Before the second write the secret is incomplete: nothing should leak.
+	if strings.Contains(buf.String(), password) {
+		t.Fatalf("password leaked after partial write: %q", buf.String())
+	}
+	if _, err := rw.Write([]byte(part2)); err != nil {
+		t.Fatalf("Write part2: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, password) {
+		t.Fatalf("password not redacted across split writes: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in output: %q", out)
+	}
+}
+
+// TestRedactingWriter_SecretSplitAfterNewline: a logger that batches several
+// records per Write can end a record with '\n' and then cut a secret mid-way.
+// Emitting the whole buffer on any newline would reassemble the secret
+// unredacted on the stream, so only complete lines may be emitted.
+func TestRedactingWriter_SecretSplitAfterNewline(t *testing.T) {
+	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf, NewRedactor(password))
+
+	mid := len(password) / 2
+	if _, err := rw.Write([]byte("first record\nauth failed: " + password[:mid])); err != nil {
+		t.Fatalf("Write part1: %v", err)
+	}
+	if !strings.Contains(buf.String(), "first record\n") {
+		t.Errorf("complete line should be emitted immediately: %q", buf.String())
+	}
+	if _, err := rw.Write([]byte(password[mid:] + " retry\n")); err != nil {
+		t.Fatalf("Write part2: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, password) {
+		t.Fatalf("password reassembled unredacted across the newline flush: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in output: %q", out)
+	}
+}
+
+// TestRedactingWriter_NoNewlineDrainsAtCap: a stream that never emits a
+// newline must not buffer without bound, yet must still keep enough of a tail
+// to match a secret split across the drain.
+func TestRedactingWriter_NoNewlineDrainsAtCap(t *testing.T) {
+	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf, NewRedactor(password))
+
+	mid := len(password) / 2
+	if _, err := rw.Write([]byte(strings.Repeat("x", maxRedactBuf) + password[:mid])); err != nil {
+		t.Fatalf("Write filler: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Fatal("oversized buffer was not drained")
+	}
+	if _, err := rw.Write([]byte(password[mid:] + "\n")); err != nil {
+		t.Fatalf("Write tail: %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, password) {
+		t.Errorf("password leaked across the oversize drain")
+	}
+}
+
+func TestRedactingWriter_FlushEmitsBufferedTail(t *testing.T) {
+	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf, NewRedactor(password))
+	// No newline and incomplete secret: stays buffered until Flush.
+	if _, err := rw.Write([]byte("prefix " + password[:5])); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected buffer to hold incomplete data, got emitted %q", buf.String())
+	}
+	if err := rw.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if !strings.Contains(buf.String(), "prefix") {
+		t.Errorf("Flush did not emit buffered data: %q", buf.String())
+	}
+}

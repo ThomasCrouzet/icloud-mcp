@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,6 +106,61 @@ func TestStart_InvalidAddrFails(t *testing.T) {
 	_, err := Start("not-a-valid-address", testVersion, nil)
 	if err == nil {
 		t.Fatal("expected: bind error on an invalid address")
+	}
+}
+
+// TestStart_RejectsNonLoopback enforces the security rule that -health must
+// never bind 0.0.0.0 / :: / bare :port (all interfaces).
+func TestStart_RejectsNonLoopback(t *testing.T) {
+	for _, addr := range []string{
+		"0.0.0.0:18790",
+		"[::]:18791",
+		":18792",
+		"8.8.8.8:18793",
+	} {
+		_, err := Start(addr, testVersion, nil)
+		if err == nil {
+			t.Errorf("Start(%q) succeeded, want loopback-only rejection", addr)
+			continue
+		}
+		if !strings.Contains(err.Error(), "loopback") {
+			t.Errorf("Start(%q) error = %v, want message mentioning loopback", addr, err)
+		}
+	}
+}
+
+// TestStart_AcceptsLoopback: 127.0.0.1 and localhost remain valid.
+func TestStart_AcceptsLoopback(t *testing.T) {
+	for _, addr := range []string{
+		"127.0.0.1:18810",
+		"localhost:18811",
+	} {
+		s, err := Start(addr, testVersion, nil)
+		if err != nil {
+			t.Fatalf("Start(%q) error: %v", addr, err)
+		}
+		_ = s.Close()
+	}
+}
+
+func TestValidateLoopbackAddr(t *testing.T) {
+	tests := []struct {
+		addr    string
+		wantErr bool
+	}{
+		{"127.0.0.1:8797", false},
+		{"localhost:8797", false},
+		{"[::1]:8797", false},
+		{"0.0.0.0:8797", true},
+		{":8797", true},
+		{"", true},
+		{"192.168.1.1:8797", true},
+	}
+	for _, tt := range tests {
+		err := validateLoopbackAddr(tt.addr)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validateLoopbackAddr(%q) err=%v, wantErr=%v", tt.addr, err, tt.wantErr)
+		}
 	}
 }
 
