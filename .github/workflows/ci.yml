@@ -53,6 +53,17 @@ jobs:
           go test ./... -race -coverprofile=coverage.out -covermode=atomic
           go tool cover -func=coverage.out | tail -1
 
+      - name: coverage threshold
+        run: |
+          # Fails the build on a coverage regression. Threshold set a few
+          # points below the observed total so routine fluctuation does not
+          # flake the build, while still catching a real drop (e.g. a new
+          # 0%-covered function slipping in unnoticed).
+          THRESHOLD=78
+          PCT="$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')"
+          echo "Total coverage: ${PCT}% (threshold: ${THRESHOLD}%)"
+          awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN { if (p + 0 < t) { exit 1 } }'
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
         if: always()
