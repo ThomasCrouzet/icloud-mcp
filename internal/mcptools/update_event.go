@@ -16,7 +16,7 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithDescription("Updates the provided fields of an existing event, located by UID. Omitted fields remain unchanged; a text field provided as empty clears the existing value."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithString("uid", mcp.Required(), mcp.Description("Event UID (see search_events)")),
 		mcp.WithString("calendar", mcp.Required(), mcp.Description("Path of the calendar containing the event")),
 		mcp.WithString("title", mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("New title. Omitted = unchanged; empty = cleared.")),

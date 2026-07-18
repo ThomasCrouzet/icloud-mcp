@@ -133,3 +133,43 @@ func TestRegister_DeleteEventHasDestructiveAnnotation(t *testing.T) {
 	}
 	t.Fatal("delete_event tool not found")
 }
+
+func TestRegister_UpdateEventIsNotIdempotentHint(t *testing.T) {
+	// update_event bumps SEQUENCE and rewrites DTSTAMP on every successful
+	// call, and a conditional PUT means a blind retry can hit a 412
+	// concurrent_modification instead of repeating the same effect. The
+	// IdempotentHint annotation must stay false so hosts that auto-retry
+	// idempotent tools do not retry this one.
+	s := newTestServer(false)
+	c, err := client.NewInProcessClient(s)
+	if err != nil {
+		t.Fatalf("NewInProcessClient: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+
+	ctx := context.Background()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "0.0.0"}
+	if _, err := c.Initialize(ctx, initReq); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "update_event" {
+			continue
+		}
+		if tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint {
+			t.Errorf("update_event should not have IdempotentHint=true")
+		}
+		return
+	}
+	t.Fatal("update_event tool not found")
+}
