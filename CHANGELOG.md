@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-18
+
 ### Changed
 - `update_event` now sends an opportunistic `If-Match` (ETag) on its PUT,
   re-reading the full object via GET first. A concurrent modification is
