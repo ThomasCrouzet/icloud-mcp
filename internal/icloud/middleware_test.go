@@ -58,6 +58,10 @@ func (s *countingService) SearchEvents(ctx context.Context, calendarPath string,
 	return SearchResult{Events: []Event{{UID: "e1", Title: "t"}}}, nil
 }
 
+func (s *countingService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	return &EventDetail{Event: Event{UID: uid}}, nil
+}
+
 func (s *countingService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	s.mu.Lock()
 	s.createCalls++
@@ -75,15 +79,15 @@ func (s *countingService) UpdateEvent(ctx context.Context, calendarPath, uid str
 	return s.updateErr
 }
 
-func (s *countingService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+func (s *countingService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	s.mu.Lock()
 	s.deleteCalls++
 	calls := s.deleteCalls
 	s.mu.Unlock()
 	if calls <= s.deleteFailN {
-		return "", fmt.Errorf("simulated failure %d", calls)
+		return DeleteResult{}, fmt.Errorf("simulated failure %d", calls)
 	}
-	return "deleted-title", nil
+	return DeleteResult{Title: "deleted-title", UID: uid}, nil
 }
 
 func TestGuardedService_ReadRateLimitBlocksAfterBurst(t *testing.T) {
@@ -177,12 +181,12 @@ func TestGuardedService_DeleteEventRetried(t *testing.T) {
 	inner := &countingService{deleteFailN: 1}
 	g := NewGuardedService(inner, 2, time.Millisecond)
 
-	title, err := g.DeleteEvent(context.Background(), "/cal/", "uid")
+	res, err := g.DeleteEvent(context.Background(), "/cal/", "uid", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if title != "deleted-title" {
-		t.Errorf("title = %q, want %q", title, "deleted-title")
+	if res.Title != "deleted-title" {
+		t.Errorf("title = %q, want %q", res.Title, "deleted-title")
 	}
 	if inner.deleteCalls != 2 {
 		t.Errorf("deleteCalls = %d, want 2 (1 failure + 1 successful retry; DeleteEvent is idempotent)", inner.deleteCalls)
@@ -256,14 +260,17 @@ func (s *classifiedService) ListCalendars(ctx context.Context) ([]Calendar, erro
 func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
 	return SearchResult{}, nil
 }
+func (s *classifiedService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	return nil, nil
+}
 func (s *classifiedService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	return "", nil
 }
 func (s *classifiedService) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
 	return nil
 }
-func (s *classifiedService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
-	return "", nil
+func (s *classifiedService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
+	return DeleteResult{}, nil
 }
 
 func nearly(a, b, eps float64) bool {

@@ -41,7 +41,7 @@ func TestMockService_ConcurrentAccessIsRaceFree(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = svc.DeleteEvent(context.Background(), "/cal/", "uid-1")
+			_, _ = svc.DeleteEvent(context.Background(), "/cal/", "uid-1", nil)
 		}()
 	}
 	wg.Wait()

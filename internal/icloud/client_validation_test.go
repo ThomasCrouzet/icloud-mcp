@@ -153,7 +153,7 @@ func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	c := m.client()
 
 	// Force REPORT path by using a UID whose .ics GET 404s.
-	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-imported-2")
+	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-imported-2", nil)
 	if err != nil {
 		t.Fatalf("DeleteEvent: %v", err)
 	}

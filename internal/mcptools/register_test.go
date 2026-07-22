@@ -66,27 +66,35 @@ func TestRegister_ReadOnlyExposesOnlyReadTools(t *testing.T) {
 	s := newTestServer(true)
 	names := listToolNames(t, s)
 
-	want := map[string]bool{"list_calendars": true, "search_events": true}
-	if len(names) != 2 {
-		t.Fatalf("READ_ONLY: %d tools registered, want 2: %v", len(names), names)
+	want := map[string]bool{
+		"list_calendars": true, "search_events": true, "get_event": true,
+		"find_free_slots": true, "validate_event": true, "calendar_capabilities": true,
+	}
+	if len(names) != len(want) {
+		t.Fatalf("READ_ONLY: %d tools registered, want %d: %v", len(names), len(want), names)
 	}
 	for _, n := range names {
 		if !want[n] {
 			t.Errorf("unexpected tool in READ_ONLY mode: %q", n)
 		}
+		// Mutations must stay absent.
+		if n == "create_event" || n == "update_event" || n == "delete_event" {
+			t.Errorf("mutation tool present in READ_ONLY: %q", n)
+		}
 	}
 }
 
-func TestRegister_FullModeExposesAllFiveTools(t *testing.T) {
+func TestRegister_FullModeExposesAllTools(t *testing.T) {
 	s := newTestServer(false)
 	names := listToolNames(t, s)
 
 	want := map[string]bool{
-		"list_calendars": true, "search_events": true,
+		"list_calendars": true, "search_events": true, "get_event": true,
+		"find_free_slots": true, "validate_event": true, "calendar_capabilities": true,
 		"create_event": true, "update_event": true, "delete_event": true,
 	}
-	if len(names) != 5 {
-		t.Fatalf("full mode: %d tools registered, want 5: %v", len(names), names)
+	if len(names) != len(want) {
+		t.Fatalf("full mode: %d tools registered, want %d: %v", len(names), len(want), names)
 	}
 	for _, n := range names {
 		if !want[n] {

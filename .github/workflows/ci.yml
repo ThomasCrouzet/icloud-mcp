@@ -75,7 +75,8 @@ jobs:
 
       - name: govulncheck (go.mod vulnerabilities)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pin a version so CI does not drift on @latest overnight.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: build (linux/amd64 + linux/arm64)
@@ -85,6 +86,26 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
               go build -trimpath -ldflags='-s -w' -o dist/icloud-mcp-linux-$arch ./cmd/icloud-mcp
             file dist/icloud-mcp-linux-$arch
+            echo "::endgroup::"
+          done
+
+      - name: mod verify and tidy
+        run: |
+          go mod verify
+          go mod tidy -diff
+
+      - name: fuzz smoke
+        run: |
+          # Short deterministic smoke: each target runs a few seconds.
+          set -e
+          for target in FuzzValidateCalendarPath FuzzValidateUID FuzzParseDateTime FuzzValidateRRULE FuzzExpandOccurrences FuzzIsICloudHostViaPath FuzzRedactLikeEventRoundTrip; do
+            echo "::group::fuzz $target"
+            go test ./internal/icloud/ -run=^$ -fuzz=$target -fuzztime=3s
+            echo "::endgroup::"
+          done
+          for target in FuzzRedactor FuzzRedactingWriter FuzzIsICloudHost; do
+            echo "::group::fuzz $target"
+            go test ./internal/security/ -run=^$ -fuzz=$target -fuzztime=3s
             echo "::endgroup::"
           done
 
@@ -104,6 +125,21 @@ jobs:
           if [ -n "$leaks" ]; then
             echo "Unauthorized URL detected outside the allowlist:"
             echo "$leaks"
+            exit 1
+          fi
+          # No InsecureSkipVerify in production code.
+          if grep -rn "InsecureSkipVerify" --include='*.go' . | grep -v _test.go; then
+            echo "InsecureSkipVerify is forbidden outside tests"
+            exit 1
+          fi
+
+      - name: binary size budget (linux/arm64)
+        run: |
+          # Static stripped arm64 binary should stay under 20 MiB.
+          SIZE=$(wc -c < dist/icloud-mcp-linux-arm64)
+          echo "linux/arm64 size: $SIZE bytes"
+          if [ "$SIZE" -gt 20971520 ]; then
+            echo "binary exceeds 20 MiB budget"
             exit 1
           fi
 
