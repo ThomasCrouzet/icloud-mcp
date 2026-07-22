@@ -3,7 +3,6 @@ package mcptools
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -73,11 +72,9 @@ func TestCalendarCapabilities_NoSecrets(t *testing.T) {
 		t.Fatalf("err=%v res=%+v", err, res)
 	}
 	text := resultText(t, res)
-	for _, banned := range []string{"ICLOUD_EMAIL", "password", "shard", "DSID", "@", "file://", "caldav.icloud"} {
-		if strings.Contains(strings.ToLower(text), strings.ToLower(banned)) && banned != "@" {
-			// '@' alone is too broad; skip. email domains not expected.
-		}
-		if banned != "@" && strings.Contains(text, banned) {
+	// '@' alone is too broad (JSON punctuation, email-shaped noise); skip it.
+	for _, banned := range []string{"ICLOUD_EMAIL", "password", "shard", "DSID", "file://", "caldav.icloud"} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(banned)) {
 			t.Errorf("capabilities leaked %q: %s", banned, text)
 		}
 	}
@@ -162,11 +159,4 @@ func TestCreateEventHandler_ClientUIDConflict(t *testing.T) {
 	if !strings.Contains(text, "conflict") {
 		t.Errorf("want conflict code in %s", text)
 	}
-}
-
-// failingRT fails any RoundTrip; used to prove local tools need no network.
-type failingRT struct{}
-
-func (failingRT) RoundTrip(*http.Request) (*http.Response, error) {
-	panic("network forbidden")
 }

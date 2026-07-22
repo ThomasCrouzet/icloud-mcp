@@ -122,10 +122,15 @@ func FuzzIsICloudHostViaPath(f *testing.F) {
 	f.Add("https://evil.example/path")
 	f.Add("")
 	f.Fuzz(func(t *testing.T, href string) {
+		// Ensure path extraction never panics, including null bytes and
+		// absolute URLs that are not iCloud hosts.
 		p := hrefPath(href)
 		if strings.Contains(p, "\x00") {
-			// just ensure no panic
+			// Null bytes must not crash; result may still contain them when
+			// the input did. Length is the only cheap invariant.
+			if len(p) == 0 && href != "" && !strings.Contains(href, "://") {
+				t.Fatalf("unexpected empty path for non-empty relative href %q", href)
+			}
 		}
-		_ = p
 	})
 }
