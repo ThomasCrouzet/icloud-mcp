@@ -16,7 +16,7 @@ const maxAlarmMinutesBefore = 40320
 
 func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("create_event",
-		mcp.WithDescription("Creates a new event in an iCloud calendar. Supports timed events, all-day events (all_day=true), and optional RRULE recurrence on the master VEVENT only."),
+		mcp.WithDescription("Creates a new event in an iCloud calendar. Supports timed/all-day events, optional RRULE, status/transparency/URL, multiple alarms, and client_uid for idempotent create (conflict if UID exists; never silent overwrite). No attendees/invitations."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -29,6 +29,12 @@ func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithNumber("alarm_minutes_before", mcp.Min(0), mcp.Max(maxAlarmMinutesBefore), mcp.Description("Alarm N minutes before start, 0 = none (optional)")),
 		mcp.WithBoolean("all_day", mcp.Description("If true, write an all-day event (VALUE=DATE). Default false.")),
 		mcp.WithString("rrule", mcp.MaxLength(1024), mcp.Description("Optional RRULE value without the RRULE: prefix (e.g. FREQ=WEEKLY;COUNT=10). Master VEVENT only; high-frequency rules require COUNT or UNTIL.")),
+		mcp.WithString("status", mcp.Description("TENTATIVE, CONFIRMED, or CANCELLED (optional)")),
+		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT (optional)")),
+		mcp.WithString("url", mcp.Description("http(s) URL (optional)")),
+		mcp.WithString("timezone", mcp.Description("IANA timezone name (informational; timed events stored as UTC instants)")),
+		mcp.WithString("client_uid", mcp.Description("Optional client UID for idempotent create; conflict if already exists")),
+		mcp.WithString("idempotency_key", mcp.Description("Alias of client_uid when client_uid omitted")),
 	)
 }
 
@@ -61,6 +67,14 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		alarm := req.GetInt("alarm_minutes_before", 0)
 		allDay := req.GetBool("all_day", false)
 		rrule := req.GetString("rrule", "")
+		status := req.GetString("status", "")
+		transp := req.GetString("transparency", "")
+		eventURL := req.GetString("url", "")
+		timezone := req.GetString("timezone", "")
+		clientUID := req.GetString("client_uid", "")
+		if clientUID == "" {
+			clientUID = req.GetString("idempotency_key", "")
+		}
 
 		deny := func(context string, err error) (*mcp.CallToolResult, error) {
 			deps.Audit.LogMutation("create_event", calendarPath, "", "denied")
@@ -129,6 +143,21 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			AlarmMinutesBefore: alarm,
 			AllDay:             allDay,
 			Recurrence:         rrule,
+			Status:             status,
+			Transparency:       transp,
+			URL:                eventURL,
+			Timezone:           timezone,
+			ClientUID:          clientUID,
+		}
+		// Local validate for status/url/uid before network.
+		vr := icloud.ValidateEventInput(&icloud.EventInput{
+			Title: title, Location: location, Notes: notes,
+			StartTime: start, EndTime: end, AllDay: allDay,
+			Timezone: timezone, Status: status, Transparency: transp,
+			URL: eventURL, Recurrence: rrule, AlarmMinutes: alarm, ClientUID: clientUID,
+		}, deps.DefaultLocation)
+		if !vr.OK {
+			return deny("validation", fmt.Errorf("%s", joinErrors(vr.Errors)))
 		}
 
 		uid, err := deps.Service.CreateEvent(ctx, calendarPath, ne)
@@ -153,4 +182,15 @@ func parseAllDayDate(name, value string, defaultLoc *time.Location) (time.Time, 
 		return time.Time{}, fmt.Errorf("invalid all-day %s (%q): use YYYY-MM-DD or a datetime", name, value)
 	}
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), nil
+}
+
+func joinErrors(errs []string) string {
+	if len(errs) == 0 {
+		return "validation failed"
+	}
+	out := errs[0]
+	for i := 1; i < len(errs); i++ {
+		out += "; " + errs[i]
+	}
+	return out
 }
