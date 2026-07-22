@@ -193,27 +193,27 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 
 	var out []Interval
 	for _, win := range free {
-		// Walk day by day in local time.
+		// Walk civil local days (not fixed 24h steps; DST days are 23h or 25h).
 		day := startOfLocalDay(win.Start.In(loc), loc)
 		endLocal := win.End.In(loc)
 		for !day.After(endLocal) {
 			if !dayFilter[day.Weekday()] {
-				day = day.Add(24 * time.Hour)
+				day = nextLocalCivilDay(day, loc)
 				continue
 			}
 			var segments []Interval
 			if !useWH {
-				segments = []Interval{{Start: day, End: day.Add(24 * time.Hour)}}
+				segments = []Interval{{Start: day, End: nextLocalCivilDay(day, loc)}}
 			} else if whEnd > whStart {
 				segments = []Interval{{
-					Start: day.Add(time.Duration(whStart) * time.Minute),
-					End:   day.Add(time.Duration(whEnd) * time.Minute),
+					Start: localTimeOnDay(day, whStart, loc),
+					End:   localTimeOnDay(day, whEnd, loc),
 				}}
 			} else {
-				// Cross-midnight: [whStart, 24h) U [0, whEnd).
+				// Cross-midnight: [whStart, next midnight) U [midnight, whEnd).
 				segments = []Interval{
-					{Start: day.Add(time.Duration(whStart) * time.Minute), End: day.Add(24 * time.Hour)},
-					{Start: day, End: day.Add(time.Duration(whEnd) * time.Minute)},
+					{Start: localTimeOnDay(day, whStart, loc), End: nextLocalCivilDay(day, loc)},
+					{Start: day, End: localTimeOnDay(day, whEnd, loc)},
 				}
 			}
 			for _, seg := range segments {
@@ -222,7 +222,7 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 					out = append(out, inter)
 				}
 			}
-			day = day.Add(24 * time.Hour)
+			day = nextLocalCivilDay(day, loc)
 		}
 	}
 	return MergeIntervals(out)
@@ -231,6 +231,30 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 func startOfLocalDay(t time.Time, loc *time.Location) time.Time {
 	lt := t.In(loc)
 	return time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc)
+}
+
+// nextLocalCivilDay returns local midnight of the calendar day after day.
+// day is expected to be a local midnight; progression uses civil date
+// arithmetic so spring-forward (23h) and fall-back (25h) days are correct.
+func nextLocalCivilDay(day time.Time, loc *time.Location) time.Time {
+	lt := day.In(loc)
+	return time.Date(lt.Year(), lt.Month(), lt.Day()+1, 0, 0, 0, 0, loc)
+}
+
+// localTimeOnDay returns the wall-clock local time on the civil day of day
+// at minutesFromMidnight (0..1440). 1440 means next local midnight.
+// Using time.Date (not midnight.Add) preserves wall-clock hours across DST.
+func localTimeOnDay(day time.Time, minutesFromMidnight int, loc *time.Location) time.Time {
+	lt := day.In(loc)
+	if minutesFromMidnight >= 24*60 {
+		return time.Date(lt.Year(), lt.Month(), lt.Day()+1, 0, 0, 0, 0, loc)
+	}
+	if minutesFromMidnight < 0 {
+		minutesFromMidnight = 0
+	}
+	h := minutesFromMidnight / 60
+	m := minutesFromMidnight % 60
+	return time.Date(lt.Year(), lt.Month(), lt.Day(), h, m, 0, 0, loc)
 }
 
 func intersect(a, b Interval) Interval {
