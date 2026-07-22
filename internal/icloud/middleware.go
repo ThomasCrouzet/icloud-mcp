@@ -132,6 +132,20 @@ func (g *GuardedService) SearchEvents(ctx context.Context, calendarPath string, 
 	return result, err
 }
 
+// GetEvent: read, retried.
+func (g *GuardedService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	if err := g.waitRead(ctx); err != nil {
+		return nil, err
+	}
+	var result *EventDetail
+	err := g.retry(ctx, "GetEvent", func() error {
+		var e error
+		result, e = g.inner.GetEvent(ctx, calendarPath, uid)
+		return e
+	})
+	return result, err
+}
+
 // CreateEvent: write, NEVER retried (non-idempotent).
 func (g *GuardedService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	if err := g.waitWrite(ctx); err != nil {
@@ -141,7 +155,7 @@ func (g *GuardedService) CreateEvent(ctx context.Context, calendarPath string, e
 }
 
 // UpdateEvent: write, NEVER retried (non-idempotent: SEQUENCE/DTSTAMP change
-// on every attempt).
+// on every attempt). Also never auto-retries 412 conflicts.
 func (g *GuardedService) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
 	if err := g.waitWrite(ctx); err != nil {
 		return err
@@ -149,17 +163,25 @@ func (g *GuardedService) UpdateEvent(ctx context.Context, calendarPath, uid stri
 	return g.inner.UpdateEvent(ctx, calendarPath, uid, up)
 }
 
-// DeleteEvent: write, retried (idempotent: deleting an already deleted event
-// fails cleanly with no dangerous side effect).
-func (g *GuardedService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+// DeleteEvent: write. Series/full deletes are retried (idempotent at the
+// resource level). Dry-run never hits the inner service more than once and
+// performs no mutation. Occurrence-scoped deletes are NOT retried (they
+// rewrite the master with EXDATE/override and bump SEQUENCE).
+func (g *GuardedService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	if err := g.waitWrite(ctx); err != nil {
-		return "", err
+		return DeleteResult{}, err
 	}
-	var title string
+	if opts != nil && opts.DryRun {
+		return g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
+	}
+	if opts != nil && opts.Scope == ScopeOccurrence {
+		return g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
+	}
+	var result DeleteResult
 	err := g.retry(ctx, "DeleteEvent", func() error {
 		var e error
-		title, e = g.inner.DeleteEvent(ctx, calendarPath, uid)
+		result, e = g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
 		return e
 	})
-	return title, err
+	return result, err
 }

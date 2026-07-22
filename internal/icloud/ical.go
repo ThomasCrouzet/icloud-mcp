@@ -64,19 +64,51 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 		prop.Value = ne.Recurrence
 		ev.Props.Set(prop)
 	}
+	for _, ex := range ne.ExDates {
+		p := ical.NewProp(ical.PropExceptionDates)
+		p.Value = ex.UTC().Format("20060102T150405Z")
+		ev.Props.Add(p)
+	}
+	if s := strings.ToUpper(strings.TrimSpace(ne.Status)); s != "" {
+		ev.Props.SetText(ical.PropStatus, s)
+	}
+	if s := strings.ToUpper(strings.TrimSpace(ne.Transparency)); s != "" {
+		ev.Props.SetText(ical.PropTransparency, s)
+	}
+	if ne.URL != "" {
+		ev.Props.SetText(ical.PropURL, ne.URL)
+	}
 
-	if ne.AlarmMinutesBefore > 0 {
+	alarmMinutes := collectCreateAlarms(ne)
+	for _, mins := range alarmMinutes {
 		alarm := ical.NewComponent(ical.CompAlarm)
 		alarm.Props.SetText(ical.PropAction, "DISPLAY")
 		alarm.Props.SetText(ical.PropDescription, "Reminder")
 		trigger := ical.NewProp(ical.PropTrigger)
-		trigger.Value = fmt.Sprintf("-PT%dM", ne.AlarmMinutesBefore) // raw DURATION value, not SetText
+		trigger.Value = fmt.Sprintf("-PT%dM", mins) // raw DURATION value, not SetText
 		alarm.Props.Set(trigger)
 		ev.Children = append(ev.Children, alarm)
 	}
 
 	cal.Children = append(cal.Children, ev.Component)
 	return cal
+}
+
+func collectCreateAlarms(ne *NewEvent) []int {
+	var out []int
+	if ne.AlarmMinutesBefore > 0 {
+		out = append(out, ne.AlarmMinutesBefore)
+	}
+	for _, a := range ne.Alarms {
+		if a.Disable || a.MinutesBefore <= 0 {
+			continue
+		}
+		out = append(out, a.MinutesBefore)
+		if len(out) >= MaxAlarms {
+			break
+		}
+	}
+	return out
 }
 
 // findMasterVEvent returns the master VEVENT (the one without RECURRENCE-ID)
@@ -219,6 +251,15 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	if p := vevent.Props.Get(ical.PropRecurrenceRule); p != nil {
 		e.Recurrence = p.Value
 	}
+	if p := vevent.Props.Get(ical.PropStatus); p != nil {
+		e.Status = p.Value
+	}
+	if p := vevent.Props.Get(ical.PropTransparency); p != nil {
+		e.Transp = p.Value
+	}
+	if p := vevent.Props.Get(ical.PropURL); p != nil {
+		e.URL = p.Value
+	}
 
 	if p := vevent.Props.Get(ical.PropRecurrenceID); p != nil {
 		t, derr := p.DateTime(time.UTC)
@@ -257,6 +298,55 @@ func parseExDateProp(p *ical.Prop) ([]time.Time, error) {
 		out = append(out, t.UTC())
 	}
 	return out, nil
+}
+
+// parseAlarms extracts VALARM children from the master VEVENT of cal.
+func parseAlarms(cal *ical.Calendar) []AlarmInfo {
+	if cal == nil {
+		return nil
+	}
+	master, err := findMasterVEvent(cal)
+	if err != nil {
+		return nil
+	}
+	var out []AlarmInfo
+	for _, ch := range master.Children {
+		if ch.Name != ical.CompAlarm {
+			continue
+		}
+		info := AlarmInfo{}
+		if p := ch.Props.Get(ical.PropAction); p != nil {
+			info.Action = p.Value
+		}
+		if p := ch.Props.Get(ical.PropTrigger); p != nil {
+			info.Trigger = p.Value
+			info.MinutesBefore = parseTriggerMinutesBefore(p.Value)
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// parseTriggerMinutesBefore parses common -PTnM / -PTnH triggers.
+func parseTriggerMinutesBefore(v string) int {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "-PT") {
+		return 0
+	}
+	rest := strings.TrimPrefix(v, "-PT")
+	if strings.HasSuffix(rest, "M") {
+		n, err := strconv.Atoi(strings.TrimSuffix(rest, "M"))
+		if err == nil {
+			return n
+		}
+	}
+	if strings.HasSuffix(rest, "H") {
+		n, err := strconv.Atoi(strings.TrimSuffix(rest, "H"))
+		if err == nil {
+			return n * 60
+		}
+	}
+	return 0
 }
 
 // parseICalDateTimeValue parses a raw iCalendar date/date-time value

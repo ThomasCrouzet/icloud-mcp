@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Code is a stable, greppable error code surfaced to the MCP client. It is
@@ -13,44 +14,62 @@ import (
 type Code string
 
 const (
+	// CodeValidation: client-side input validation failed before any network call.
+	CodeValidation Code = "validation"
 	// CodeAuthenticationRefused: 401 (bad app-specific password, revoked
 	// credentials). The user must regenerate/renew the app-specific password
 	// on appleid.apple.com.
 	CodeAuthenticationRefused Code = "authentication_refused"
-	// CodeForbidden: 403 (revoked app-specific password, or Apple quota
-	// exceeded: an iCloud calendar holds at most 50,000 events).
-	CodeForbidden Code = "forbidden"
+	// CodeAuthentication is an alias used in structured MCP payloads (objective
+	// vocabulary). Prefer matching either authentication or authentication_refused.
+	CodeAuthentication Code = "authentication"
+	// CodeForbidden / CodeAuthorization: 403.
+	CodeForbidden     Code = "forbidden"
+	CodeAuthorization Code = "authorization"
 	// CodeNotFound: 404 (calendar or event no longer exists server-side).
 	CodeNotFound Code = "not_found"
-	// CodeConcurrentModification: 412 Precondition Failed (If-Match/ETag
-	// mismatch). Another client modified the event since it was read; the
-	// caller must re-read and retry the update.
+	// CodeConflict / CodeConcurrentModification: 409/412.
+	CodeConflict               Code = "conflict"
 	CodeConcurrentModification Code = "concurrent_modification"
-	// CodeRateLimited: 429 returned by iCloud after the HTTP-layer retry
-	// budget was exhausted. Reduce the request rate.
+	// CodeRateLimited: 429 after HTTP-layer retry budget exhausted.
 	CodeRateLimited Code = "rate_limited"
-	// CodeServerUnavailable: 5xx (502/503/504) returned by the CalDAV shard
-	// after the HTTP-layer retry budget was exhausted. The shard is
-	// temporarily unreachable.
+	// CodeTimeout: context deadline or client timeout.
+	CodeTimeout Code = "timeout"
+	// CodeServerUnavailable / CodeUnavailable: 5xx after retries.
 	CodeServerUnavailable Code = "server_unavailable"
-	// CodeHTTPError: any other unexpected HTTP status not covered above.
+	CodeUnavailable       Code = "unavailable"
+	// CodePartialFailure: multi-calendar operation succeeded partially.
+	CodePartialFailure Code = "partial_failure"
+	// CodeProtocolError: unexpected protocol / HTTP status not otherwise classified.
+	CodeProtocolError Code = "protocol_error"
+	// CodeHTTPError: legacy alias of protocol_error for unexpected HTTP status.
 	CodeHTTPError Code = "http_error"
+	// CodeInternal: unexpected internal error (never carries raw bodies).
+	CodeInternal Code = "internal_error"
 )
 
-// Error is the typed CalDAV error returned by the client wrapper for every
-// non-2xx HTTP response that could be classified. Its Error() text starts
-// with the stable Code (e.g. "concurrent_modification: ..."), so the code is
-// visible in the MCP error text even without structured access.
+// Error is the typed CalDAV/MCP error returned for classified failures. Its
+// Error() text starts with the stable Code so the code is visible even
+// without structured access. Message never contains raw HTTP/XML bodies or
+// credentials (callers must still run the Redactor on the way out).
 type Error struct {
-	Code    Code
-	Status  int
-	Message string
-	Cause   error
+	Code       Code
+	Status     int
+	Message    string
+	Retryable  bool
+	RetryAfter time.Duration // zero = none; always capped by the HTTP retry layer
+	Details    map[string]string
+	Cause      error
 }
 
 // NewError builds a typed Error. A nil cause is fine.
 func NewError(code Code, status int, message string, cause error) *Error {
 	return &Error{Code: code, Status: status, Message: message, Cause: cause}
+}
+
+// NewValidationError builds a non-retryable validation error.
+func NewValidationError(message string) *Error {
+	return &Error{Code: CodeValidation, Message: message}
 }
 
 func (e *Error) Error() string {
@@ -87,17 +106,52 @@ func classifyStatus(status int) *Error {
 	case status == http.StatusNotFound:
 		return NewError(CodeNotFound, status,
 			"iCloud resource not found: the calendar or event no longer exists", nil)
+	case status == http.StatusConflict:
+		return &Error{
+			Code: CodeConflict, Status: status,
+			Message: "the request conflicts with the current state of the resource",
+		}
 	case status == http.StatusPreconditionFailed:
-		return NewError(CodeConcurrentModification, status,
-			"the event was modified by another client since it was read (ETag mismatch): re-read and retry the update", nil)
+		return &Error{
+			Code: CodeConcurrentModification, Status: status,
+			Message: "the event was modified by another client since it was read (ETag mismatch): re-read and retry the update",
+		}
+	case status == http.StatusLocked: // 423
+		return &Error{
+			Code: CodeConflict, Status: status,
+			Message:   "the calendar resource is locked",
+			Retryable: true,
+		}
 	case status == http.StatusTooManyRequests:
-		return NewError(CodeRateLimited, status,
-			"iCloud is rate limiting requests (HTTP 429) after retries: reduce the request rate", nil)
+		return &Error{
+			Code: CodeRateLimited, Status: status, Retryable: true,
+			Message: "iCloud is rate limiting requests (HTTP 429) after retries: reduce the request rate",
+		}
 	case status >= 500:
-		return NewError(CodeServerUnavailable, status,
-			fmt.Sprintf("iCloud CalDAV shard is temporarily unavailable (HTTP %d) after retries", status), nil)
+		return &Error{
+			Code: CodeServerUnavailable, Status: status, Retryable: true,
+			Message: fmt.Sprintf("iCloud CalDAV shard is temporarily unavailable (HTTP %d) after retries", status),
+		}
 	default:
-		return NewError(CodeHTTPError, status,
+		return NewError(CodeProtocolError, status,
 			fmt.Sprintf("iCloud returned an unexpected HTTP status (%d)", status), nil)
+	}
+}
+
+// PublicCode maps an internal/legacy Code to the objective vocabulary where
+// useful, while keeping concurrent_modification as the preferred conflict
+// signal for agents that already match on it.
+func PublicCode(c Code) Code {
+	switch c {
+	case CodeAuthenticationRefused:
+		return CodeAuthentication
+	case CodeForbidden:
+		return CodeAuthorization
+	case CodeServerUnavailable:
+		return CodeUnavailable
+	case CodeHTTPError:
+		return CodeProtocolError
+	default:
+		return c
 	}
 }

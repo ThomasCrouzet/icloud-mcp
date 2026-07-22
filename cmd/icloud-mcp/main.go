@@ -114,10 +114,18 @@ func main() {
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)
-	mcptools.Register(s, mcptools.Deps{Service: svc, Audit: audit, Redactor: red, DefaultLocation: cfg.DefaultLocation}, cfg.ReadOnly)
+	mcptools.ServerVersion = version
+	healthEnabled := *healthAddr != ""
+	mcptools.Register(s, mcptools.Deps{
+		Service:         svc,
+		Audit:           audit,
+		Redactor:        red,
+		DefaultLocation: cfg.DefaultLocation,
+		HealthEnabled:   healthEnabled,
+	}, cfg.ReadOnly)
 
 	// 6. Optional healthcheck (off by default).
-	if *healthAddr != "" {
+	if healthEnabled {
 		h, err := health.Start(*healthAddr, version, func() any { return svc.RateLimitStatus() })
 		if err != nil {
 			slog.Error("healthcheck startup failed", "err", err)

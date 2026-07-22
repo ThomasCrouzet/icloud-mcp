@@ -19,6 +19,7 @@ import (
 type MockService struct {
 	Calendars []Calendar
 	Events    []Event
+	Detail    *EventDetail
 
 	// EventsByPath, when non-nil, overrides Events for SearchEvents on that
 	// calendar path (used to test multi-calendar query + early-stop).
@@ -26,6 +27,7 @@ type MockService struct {
 
 	ListErr   error
 	SearchErr error
+	GetErr    error
 	CreateErr error
 	UpdateErr error
 	DeleteErr error
@@ -36,12 +38,22 @@ type MockService struct {
 	// SearchTruncated is returned as SearchResult.TruncatedByExpansion.
 	SearchTruncated bool
 
+	// ExistingUIDs, when set, makes CreateEvent return conflict if ClientUID
+	// is already present (idempotency / no silent overwrite).
+	ExistingUIDs map[string]bool
+
+	// RecordedMutations records PUT/DELETE-like mutations for dry-run proofs.
+	// Append-only under mu.
+	RecordedMutations []string
+
 	mu sync.Mutex
 
 	LastCreated    *NewEvent
 	LastUpdateUID  string
 	LastUpdate     *EventUpdate
 	LastDeleteUID  string
+	LastDeleteOpts *DeleteOptions
+	LastGetUID     string
 	LastSearchPath string
 	LastSearchFrom time.Time
 	LastSearchTo   time.Time
@@ -52,6 +64,7 @@ type MockService struct {
 
 	ListCallCount   int
 	SearchCallCount int
+	GetCallCount    int
 	CreateCallCount int
 	UpdateCallCount int
 	DeleteCallCount int
@@ -93,18 +106,46 @@ func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, sta
 	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
 }
 
+// GetEvent returns m.Detail or synthesizes one from Events.
+func (m *MockService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	m.mu.Lock()
+	m.GetCallCount++
+	m.LastGetUID = uid
+	m.mu.Unlock()
+	if m.GetErr != nil {
+		return nil, m.GetErr
+	}
+	if m.Detail != nil && m.Detail.UID == uid {
+		d := *m.Detail
+		return &d, nil
+	}
+	for _, e := range m.Events {
+		if e.UID == uid {
+			return &EventDetail{Event: e}, nil
+		}
+	}
+	return nil, NewError(CodeNotFound, 404, "event not found (uid="+uid+")", nil)
+}
+
 // CreateEvent returns m.CreatedUID (or "mock-uid" by default, or m.CreateErr).
 func (m *MockService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	m.mu.Lock()
 	m.CreateCallCount++
 	m.LastCreated = ev
+	m.RecordedMutations = append(m.RecordedMutations, "PUT")
 	m.mu.Unlock()
 	if m.CreateErr != nil {
 		return "", m.CreateErr
 	}
 	uid := m.CreatedUID
+	if uid == "" && ev != nil && ev.ClientUID != "" {
+		uid = ev.ClientUID
+	}
 	if uid == "" {
 		uid = "mock-uid"
+	}
+	if m.ExistingUIDs != nil && m.ExistingUIDs[uid] {
+		return "", NewError(CodeConflict, 409, "event already exists (uid="+uid+")", nil)
 	}
 	return uid, nil
 }
@@ -115,6 +156,7 @@ func (m *MockService) UpdateEvent(ctx context.Context, calendarPath, uid string,
 	m.UpdateCallCount++
 	m.LastUpdateUID = uid
 	m.LastUpdate = up
+	m.RecordedMutations = append(m.RecordedMutations, "PUT")
 	m.mu.Unlock()
 	if m.UpdateErr != nil {
 		return m.UpdateErr
@@ -122,14 +164,36 @@ func (m *MockService) UpdateEvent(ctx context.Context, calendarPath, uid string,
 	return nil
 }
 
-// DeleteEvent returns m.DeletedTitle (or m.DeleteErr).
-func (m *MockService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+// DeleteEvent returns a DeleteResult (or m.DeleteErr). Dry-run records no mutation.
+func (m *MockService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	m.mu.Lock()
 	m.DeleteCallCount++
 	m.LastDeleteUID = uid
+	m.LastDeleteOpts = opts
+	dry := opts != nil && opts.DryRun
+	if !dry {
+		m.RecordedMutations = append(m.RecordedMutations, "DELETE")
+	}
 	m.mu.Unlock()
 	if m.DeleteErr != nil {
-		return "", m.DeleteErr
+		return DeleteResult{}, m.DeleteErr
 	}
-	return m.DeletedTitle, nil
+	scope := string(ScopeSeries)
+	if opts != nil && opts.Scope != "" {
+		scope = string(opts.Scope)
+	}
+	return DeleteResult{
+		Title:       m.DeletedTitle,
+		DryRun:      dry,
+		UID:         uid,
+		Scope:       scope,
+		WouldMutate: true,
+	}, nil
+}
+
+// MutationCount returns how many mutating HTTP-like operations were recorded.
+func (m *MockService) MutationCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.RecordedMutations)
 }
