@@ -78,10 +78,11 @@ func (c *Client) Discover(ctx context.Context) error {
 	return c.discover(ctx)
 }
 
-// SearchEvents searches a calendar's events overlapping [start, end] and
-// expands recurrences (RRULE + EXDATE + RECURRENCE-ID overrides) within
-// that same range.
-func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+// SearchEvents searches a calendar's events overlapping [start, end].
+// When opts is nil or opts.ExpandRecurrence is true, recurrences are expanded
+// (RRULE + EXDATE + RECURRENCE-ID). When ExpandRecurrence is false, only
+// master VEVENTs from the server time-range are returned.
+func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	if err := ValidateCalendarPath(calendarPath); err != nil {
 		return SearchResult{}, err
 	}
@@ -90,6 +91,10 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 	}
 	if err := c.discover(ctx); err != nil {
 		return SearchResult{}, err
+	}
+	expand := true
+	if opts != nil {
+		expand = opts.ExpandRecurrence
 	}
 
 	// Time-range filter on VEVENT (the server only returns events, including
@@ -111,6 +116,14 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 			slog.Warn("skipping unparseable calendar object", "path", objs[i].Path, "error", perr)
 			continue
 		}
+		if !expand {
+			// Masters only: still apply overlap so zero-length/out-of-range
+			// masters are not returned when the server over-selects.
+			if eventOverlaps(*master, start, end) {
+				events = append(events, *master)
+			}
+			continue
+		}
 		occs, t, eerr := ExpandOccurrences(*master, overrides, start, end, 0)
 		if eerr != nil {
 			slog.Warn("skipping recurrence expansion", "uid", master.UID, "error", eerr)
@@ -122,6 +135,41 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		events = append(events, occs...)
 	}
 	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
+}
+
+// GetEvent returns a single event by UID (master + metadata). Path is never
+// exposed on the returned detail's JSON (Event.Path has json:"-").
+func (c *Client) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	if err := ValidateCalendarPath(calendarPath); err != nil {
+		return nil, err
+	}
+	if err := ValidateUID(uid); err != nil {
+		return nil, err
+	}
+	if err := c.discover(ctx); err != nil {
+		return nil, err
+	}
+	obj, err := c.findEventByUID(ctx, calendarPath, uid)
+	if err != nil {
+		if strings.Contains(err.Error(), "event not found") {
+			return nil, NewError(CodeNotFound, 404, err.Error(), nil)
+		}
+		return nil, err
+	}
+	master, overrides, perr := parseCalendarObject(obj)
+	if perr != nil {
+		return nil, perr
+	}
+	master.ETag = obj.ETag
+	detail := &EventDetail{
+		Event:         *master,
+		IsRecurring:   master.Recurrence != "",
+		OverrideCount: len(overrides),
+		Alarms:        parseAlarms(obj.Data),
+	}
+	// Never leak internal path to callers that serialize EventDetail by hand.
+	detail.Path = ""
+	return detail, nil
 }
 
 // CreateEvent creates a new event in calendarPath.
@@ -152,15 +200,46 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 			return "", err
 		}
 	}
+	if ne.ClientUID != "" {
+		if err := ValidateUID(ne.ClientUID); err != nil {
+			return "", err
+		}
+	}
+	status := strings.ToUpper(strings.TrimSpace(ne.Status))
+	if !AllowedStatus[status] {
+		return "", fmt.Errorf("invalid status %q", ne.Status)
+	}
+	transp := strings.ToUpper(strings.TrimSpace(ne.Transparency))
+	if !AllowedTransparency[transp] {
+		return "", fmt.Errorf("invalid transparency %q", ne.Transparency)
+	}
+	if ne.URL != "" {
+		if err := validateEventURL(ne.URL); err != nil {
+			return "", err
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return "", err
 	}
-	uid, err := newUID()
-	if err != nil {
-		return "", err
+	uid := ne.ClientUID
+	if uid == "" {
+		var err error
+		uid, err = newUID()
+		if err != nil {
+			return "", err
+		}
+	}
+	path := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
+	// Idempotent create: if client-supplied UID already exists, refuse to
+	// overwrite (no silent last-writer-wins on create retry).
+	if ne.ClientUID != "" {
+		if existing, gerr := c.dav.GetCalendarObject(ctx, path); gerr == nil && existing != nil {
+			return "", NewError(CodeConflict, 409, "event already exists for client UID; not overwriting", nil)
+		}
 	}
 	cal := buildEventCalendar(uid, ne)
-	path := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
+	// If-None-Match: * would be ideal; go-webdav PutCalendarObject does not
+	// expose it. We already rejected existing UID above when ClientUID set.
 	if _, err := c.dav.PutCalendarObject(ctx, path, cal); err != nil {
 		return "", fmt.Errorf("creating event: %w", err)
 	}
@@ -168,9 +247,10 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 }
 
 // UpdateEvent modifies the provided (non-nil) fields of an event located by
-// UID. The master VEVENT is modified (any RECURRENCE-ID overrides are left
-// unchanged). nil = field unchanged, pointer to an empty string = clear the
-// field.
+// UID. With scope=series (default) the master VEVENT is modified. With
+// scope=occurrence a RECURRENCE-ID override is created/updated; the master
+// RRULE is never removed. nil = field unchanged; pointer to empty string =
+// clear the field (Title/Location/Notes only).
 func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
 	if err := ValidateCalendarPath(calendarPath); err != nil {
 		return err
@@ -196,6 +276,23 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 			return err
 		}
 	}
+	// Reject invalid status/transparency/URL before any network I/O.
+	if err := ValidateEventUpdateFields(up); err != nil {
+		return err
+	}
+	NormalizeEventUpdateFields(up)
+	scope := up.Scope
+	if scope == "" {
+		scope = ScopeSeries
+	}
+	if scope != ScopeSeries && scope != ScopeOccurrence {
+		return NewValidationError("scope must be series or occurrence")
+	}
+	if scope == ScopeOccurrence {
+		if up.RecurrenceID == nil || up.RecurrenceID.IsZero() {
+			return NewValidationError("recurrence_id is required when scope=occurrence")
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
@@ -211,6 +308,48 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		return err
 	}
 
+	if scope == ScopeOccurrence {
+		if err := applyOccurrenceUpdate(found.Data, vevent, *up.RecurrenceID, up); err != nil {
+			return err
+		}
+	} else {
+		applyFieldUpdate(vevent, up)
+		// Consistency validation after merging (needed when only one of the two
+		// start/end bounds is provided: consistency can only be checked after
+		// re-reading the existing event).
+		startProp := vevent.Props.Get(ical.PropDateTimeStart)
+		endProp := vevent.Props.Get(ical.PropDateTimeEnd)
+		if startProp != nil && endProp != nil {
+			newStart, sErr := startProp.DateTime(time.UTC)
+			newEnd, eErr := endProp.DateTime(time.UTC)
+			if sErr == nil && eErr == nil && !newEnd.After(newStart) {
+				return fmt.Errorf("invalid update: end (%s) must be after start (%s)", newEnd.Format(time.RFC3339), newStart.Format(time.RFC3339))
+			}
+		}
+	}
+
+	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
+	seq := 0
+	if p := vevent.Props.Get(ical.PropSequence); p != nil {
+		if n, serr := p.Int(); serr == nil {
+			seq = n
+		}
+	}
+	setSequence(vevent, seq+1)
+
+	etag := found.ETag
+	if up.IfMatchETag != "" {
+		etag = up.IfMatchETag
+	}
+	// Conditional PUT with If-Match when ETag is known. 412 is never
+	// auto-retried (GuardedService does not retry UpdateEvent).
+	if err := c.putCalendarObjectIfMatch(ctx, found.Path, etag, found.Data); err != nil {
+		return fmt.Errorf("updating event (uid=%s): %w", uid, err)
+	}
+	return nil
+}
+
+func applyFieldUpdate(vevent *ical.Event, up *EventUpdate) {
 	if up.Title != nil {
 		if *up.Title == "" {
 			vevent.Props.Del(ical.PropSummary)
@@ -238,41 +377,79 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	if up.EndTime != nil {
 		setEventDateProp(vevent, ical.PropDateTimeEnd, *up.EndTime)
 	}
-
-	// Consistency validation after merging (needed when only one of the two
-	// start/end bounds is provided: consistency can only be checked after
-	// re-reading the existing event).
-	startProp := vevent.Props.Get(ical.PropDateTimeStart)
-	endProp := vevent.Props.Get(ical.PropDateTimeEnd)
-	if startProp != nil && endProp != nil {
-		newStart, sErr := startProp.DateTime(time.UTC)
-		newEnd, eErr := endProp.DateTime(time.UTC)
-		if sErr == nil && eErr == nil && !newEnd.After(newStart) {
-			return fmt.Errorf("invalid update: end (%s) must be after start (%s)", newEnd.Format(time.RFC3339), newStart.Format(time.RFC3339))
+	if up.Status != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Status))
+		if s == "" {
+			vevent.Props.Del(ical.PropStatus)
+		} else {
+			vevent.Props.SetText(ical.PropStatus, s)
 		}
 	}
-
-	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
-	seq := 0
-	if p := vevent.Props.Get(ical.PropSequence); p != nil {
-		if n, serr := p.Int(); serr == nil {
-			seq = n
+	if up.Transparency != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Transparency))
+		if s == "" {
+			vevent.Props.Del(ical.PropTransparency)
+		} else {
+			vevent.Props.SetText(ical.PropTransparency, s)
 		}
 	}
-	setSequence(vevent, seq+1)
-
-	// Conditional PUT: send If-Match with the ETag read during the GET of
-	// the full object (findEventByUID -> GetCalendarObject populates
-	// found.ETag from the ETag response header). go-webdav v0.7.0
-	// PutCalendarObject does NOT support If-Match (explicit TODO upstream),
-	// so the PUT is hand-rolled here, consistent with the hand-rolled
-	// discovery and REPORT. An empty ETag (no header returned, or the
-	// event was located via the wide-scan fallback which does not capture
-	// getetag) degrades to an unconditional PUT: same last-writer-wins as
-	// before, never worse.
-	if err := c.putCalendarObjectIfMatch(ctx, found.Path, found.ETag, found.Data); err != nil {
-		return fmt.Errorf("updating event (uid=%s): %w", uid, err)
+	if up.URL != nil {
+		if *up.URL == "" {
+			vevent.Props.Del(ical.PropURL)
+		} else {
+			vevent.Props.SetText(ical.PropURL, *up.URL)
+		}
 	}
+}
+
+// applyOccurrenceUpdate creates or replaces a RECURRENCE-ID override VEVENT
+// for recID, applying field patches from up. The master RRULE is preserved.
+func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Time, up *EventUpdate) error {
+	var override *ical.Component
+	for _, ch := range cal.Children {
+		if ch.Name != ical.CompEvent {
+			continue
+		}
+		if p := ch.Props.Get(ical.PropRecurrenceID); p != nil {
+			if t, err := p.DateTime(time.UTC); err == nil && t.UTC().Unix() == recID.UTC().Unix() {
+				override = ch
+				break
+			}
+		}
+	}
+	if override == nil {
+		override = ical.NewEvent().Component
+		for name, props := range master.Props {
+			if name == ical.PropRecurrenceRule || name == ical.PropExceptionDates {
+				continue
+			}
+			for _, p := range props {
+				cp := p
+				override.Props.Add(&cp)
+			}
+		}
+		rid := ical.NewProp(ical.PropRecurrenceID)
+		rid.Value = recID.UTC().Format("20060102T150405Z")
+		override.Props.Set(rid)
+		// Default occurrence times = original slot duration on recID.
+		if up.StartTime == nil {
+			if p := master.Props.Get(ical.PropDateTimeStart); p != nil {
+				if st, err := p.DateTime(time.UTC); err == nil {
+					dur := time.Hour
+					if ep := master.Props.Get(ical.PropDateTimeEnd); ep != nil {
+						if en, e2 := ep.DateTime(time.UTC); e2 == nil {
+							dur = en.Sub(st)
+						}
+					}
+					setEventDateProp(&ical.Event{Component: override}, ical.PropDateTimeStart, recID)
+					setEventDateProp(&ical.Event{Component: override}, ical.PropDateTimeEnd, recID.Add(dur))
+				}
+			}
+		}
+		cal.Children = append(cal.Children, override)
+	}
+	ov := &ical.Event{Component: override}
+	applyFieldUpdate(ov, up)
 	return nil
 }
 
@@ -338,21 +515,36 @@ func normalizeIfMatch(etag string) string {
 	return `"` + etag + `"`
 }
 
-// DeleteEvent deletes an event located by UID and returns its title (echo
-// required by the spec so a human can confirm what is being deleted).
-func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+// DeleteEvent deletes an event located by UID (or a single occurrence when
+// opts.Scope == ScopeOccurrence). Dry-run performs lookup only: no PUT/DELETE.
+func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return "", err
+		return DeleteResult{}, err
 	}
 	if err := ValidateUID(uid); err != nil {
-		return "", err
+		return DeleteResult{}, err
+	}
+	scope := ScopeSeries
+	if opts != nil && opts.Scope != "" {
+		scope = opts.Scope
+	}
+	if scope != ScopeSeries && scope != ScopeOccurrence {
+		return DeleteResult{}, NewValidationError("scope must be series or occurrence")
+	}
+	if scope == ScopeOccurrence {
+		if opts == nil || opts.RecurrenceID == nil || opts.RecurrenceID.IsZero() {
+			return DeleteResult{}, NewValidationError("recurrence_id is required when scope=occurrence")
+		}
 	}
 	if err := c.discover(ctx); err != nil {
-		return "", err
+		return DeleteResult{}, err
 	}
 	obj, err := c.findEventByUID(ctx, calendarPath, uid)
 	if err != nil {
-		return "", err
+		if strings.Contains(err.Error(), "event not found") {
+			return DeleteResult{}, NewError(CodeNotFound, 404, err.Error(), nil)
+		}
+		return DeleteResult{}, err
 	}
 
 	title := ""
@@ -362,10 +554,111 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string) (str
 		}
 	}
 
-	if err := c.dav.RemoveAll(ctx, obj.Path); err != nil {
-		return "", fmt.Errorf("deleting event (uid=%s): %w", uid, err)
+	result := DeleteResult{
+		Title:       title,
+		UID:         uid,
+		Scope:       string(scope),
+		WouldMutate: true,
 	}
-	return title, nil
+
+	if opts != nil && opts.DryRun {
+		result.DryRun = true
+		return result, nil
+	}
+
+	if scope == ScopeOccurrence {
+		if err := c.deleteOccurrence(ctx, obj, *opts.RecurrenceID, opts.IfMatchETag); err != nil {
+			return DeleteResult{}, fmt.Errorf("deleting occurrence (uid=%s): %w", uid, err)
+		}
+		return result, nil
+	}
+
+	etag := obj.ETag
+	if opts != nil && opts.IfMatchETag != "" {
+		etag = opts.IfMatchETag
+	}
+	if err := c.deleteCalendarObjectIfMatch(ctx, obj.Path, etag); err != nil {
+		return DeleteResult{}, fmt.Errorf("deleting event (uid=%s): %w", uid, err)
+	}
+	return result, nil
+}
+
+// deleteOccurrence cancels a single occurrence by adding EXDATE to the master
+// (and removing a matching RECURRENCE-ID override if present). It never
+// deletes the series resource.
+func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarObject, recID time.Time, ifMatch string) error {
+	vevent, err := findMasterVEvent(obj.Data)
+	if err != nil {
+		return err
+	}
+	// Add EXDATE for the occurrence.
+	ex := ical.NewProp(ical.PropExceptionDates)
+	ex.Value = recID.UTC().Format("20060102T150405Z")
+	vevent.Props.Add(ex)
+	// Drop any override VEVENT whose RECURRENCE-ID matches.
+	var kept []*ical.Component
+	for _, ch := range obj.Data.Children {
+		if ch.Name != ical.CompEvent {
+			kept = append(kept, ch)
+			continue
+		}
+		if p := ch.Props.Get(ical.PropRecurrenceID); p != nil {
+			if t, derr := p.DateTime(time.UTC); derr == nil && t.UTC().Unix() == recID.UTC().Unix() {
+				continue // drop override
+			}
+		}
+		kept = append(kept, ch)
+	}
+	obj.Data.Children = kept
+	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
+	seq := 0
+	if p := vevent.Props.Get(ical.PropSequence); p != nil {
+		if n, serr := p.Int(); serr == nil {
+			seq = n
+		}
+	}
+	setSequence(vevent, seq+1)
+	etag := obj.ETag
+	if ifMatch != "" {
+		etag = ifMatch
+	}
+	return c.putCalendarObjectIfMatch(ctx, obj.Path, etag, obj.Data)
+}
+
+// deleteCalendarObjectIfMatch DELETEs path with optional If-Match.
+func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, path, etag string) error {
+	if err := c.discover(ctx); err != nil {
+		return err
+	}
+	if etag == "" {
+		// No ETag: fall back to go-webdav RemoveAll (same as pre-V2).
+		return c.dav.RemoveAll(ctx, path)
+	}
+	target, err := resolveRef(c.shardBase, path)
+	if err != nil {
+		return fmt.Errorf("invalid event URL (%s): %w", path, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	if err != nil {
+		return fmt.Errorf("building DELETE request (%s): %w", path, err)
+	}
+	req.Header.Set("If-Match", normalizeIfMatch(etag))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch {
+	case resp.StatusCode == http.StatusPreconditionFailed:
+		return classifyStatus(resp.StatusCode)
+	case resp.StatusCode == http.StatusNotFound:
+		// Idempotent: already gone.
+		return nil
+	case resp.StatusCode/100 == 2:
+		return nil
+	default:
+		return classifyStatus(resp.StatusCode)
+	}
 }
 
 // findEventByUID locates an event by UID. The .ics file name is NOT

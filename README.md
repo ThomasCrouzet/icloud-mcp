@@ -26,14 +26,23 @@ No other direct dependency (no prometheus, godotenv, uuid, telemetry).
 | Tool | Type | Description |
 |------|------|-------------|
 | `list_calendars` | read | Lists calendars (name, path, color, description). |
-| `search_events` | read | Events over a date range (recurrences expanded, pagination, hard cap of 400). |
-| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarm, `all_day`, `rrule`). |
-| `update_event` | write | Modifies an event by UID (only the supplied fields). |
-| `delete_event` | write | Deletes an event by UID; echoes back the title for confirmation. |
+| `search_events` | read | Events over a date range (recurrences expanded, filters, pagination, hard cap of 400). |
+| `get_event` | read | Single event by calendar path + exact UID (includes etag, alarms, status). |
+| `find_free_slots` | read | Free time slots computed locally; never reveals busy event titles. |
+| `validate_event` | read | Local validation of create-shaped fields (no network). |
+| `calendar_capabilities` | read | Version, limits, features (no secrets, no paths, no network). |
+| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarms, `all_day`, `rrule`, status, transparency, URL, `client_uid`). |
+| `update_event` | write | Modifies an event by UID (`scope` series/occurrence, optional `etag` If-Match). |
+| `delete_event` | write | Deletes by UID (`scope`, `etag`, optional `dry_run`); echoes title for confirmation. |
 
 **`ICLOUD_MCP_READ_ONLY=1`** removes the 3 write tools from `tools/list` (they are
-absent, not merely rejected at execution time). This is the recommended initial
-deployment mode.
+absent, not merely rejected at execution time). Read tools including
+`get_event`, `find_free_slots`, `validate_event`, and `calendar_capabilities`
+remain available. This is the recommended initial deployment mode.
+
+Further docs: [architecture](docs/architecture.md), [security](docs/security.md),
+[CalDAV compatibility](docs/caldav-compatibility.md), [testing](docs/testing.md),
+[V2 migration](docs/v2-migration.md).
 
 ## Installation
 

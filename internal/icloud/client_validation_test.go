@@ -15,7 +15,7 @@ func TestClient_RejectsInvalidPathBeforeNetwork(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	_, err := c.SearchEvents(context.Background(), "../etc/passwd", start, end)
+	_, err := c.SearchEvents(context.Background(), "../etc/passwd", start, end, nil)
 	if err == nil {
 		t.Fatal("expected validation error for traversal path")
 	}
@@ -153,7 +153,7 @@ func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	c := m.client()
 
 	// Force REPORT path by using a UID whose .ics GET 404s.
-	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-imported-2")
+	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-imported-2", nil)
 	if err != nil {
 		t.Fatalf("DeleteEvent: %v", err)
 	}

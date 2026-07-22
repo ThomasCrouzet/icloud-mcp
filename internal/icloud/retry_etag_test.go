@@ -359,7 +359,7 @@ func TestClassifyStatus_MapsKnownCodes(t *testing.T) {
 		{http.StatusBadGateway, CodeServerUnavailable},
 		{http.StatusServiceUnavailable, CodeServerUnavailable},
 		{http.StatusGatewayTimeout, CodeServerUnavailable},
-		{http.StatusConflict, CodeHTTPError},
+		{http.StatusConflict, CodeConflict},
 	}
 	for _, c := range cases {
 		got := classifyStatus(c.status)

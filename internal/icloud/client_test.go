@@ -66,6 +66,7 @@ type mockCalDAV struct {
 	lastReportBody []byte
 	puts           []mockPut
 	deletes        []string
+	deleteIfMatch  []string
 	gets           []string
 
 	// etags maps an object path to its current ETag (quotes included, as
@@ -192,7 +193,20 @@ func (m *mockCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodDelete:
+		ifMatch := r.Header.Get("If-Match")
 		m.deletes = append(m.deletes, r.URL.Path)
+		m.deleteIfMatch = append(m.deleteIfMatch, ifMatch)
+		if current, ok := m.etags[r.URL.Path]; ok && ifMatch != "" && ifMatch != current {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		// Remove object on successful delete.
+		for uid, obj := range m.objects {
+			if obj.path == r.URL.Path {
+				delete(m.objects, uid)
+				break
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet:
 		m.gets = append(m.gets, r.URL.Path)
@@ -719,7 +733,7 @@ func TestClient_SearchEvents_TimeRangeTransmitted(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -749,7 +763,7 @@ func TestClient_SearchEvents_AllDay(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -772,7 +786,7 @@ func TestClient_SearchEvents_NoDtendDerivedFromDuration(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -800,7 +814,7 @@ func TestClient_SearchEvents_AllDayNoDtendDefaultsTo24h(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -829,7 +843,7 @@ func TestClient_SearchEvents_RecurringWithExdateAndOverride(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -1044,12 +1058,12 @@ func TestClient_DeleteEvent_ReturnsTitleAndDeletesRealPath(t *testing.T) {
 	m.objects["uid-simple-1"] = mockObject{path: objPath, ics: icsSimpleEvent}
 	c := m.client()
 
-	title, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-simple-1")
+	res, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-simple-1", nil)
 	if err != nil {
 		t.Fatalf("DeleteEvent() error: %v", err)
 	}
-	if title != "Team meeting" {
-		t.Errorf("title = %q, want %q", title, "Team meeting")
+	if res.Title != "Team meeting" {
+		t.Errorf("title = %q, want %q", res.Title, "Team meeting")
 	}
 
 	m.mu.Lock()
@@ -1063,7 +1077,7 @@ func TestClient_DeleteEvent_UIDNotFound(t *testing.T) {
 	m := newMockCalDAV(t)
 	c := m.client()
 
-	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "unknown-uid")
+	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "unknown-uid", nil)
 	if err == nil {
 		t.Fatal("expected: event not found error")
 	}

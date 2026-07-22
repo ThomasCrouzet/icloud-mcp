@@ -29,7 +29,7 @@ func TestMockService_ConcurrentAccessIsRaceFree(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = svc.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+			_, _ = svc.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour), nil)
 		}()
 		go func() {
 			defer wg.Done()
@@ -41,7 +41,7 @@ func TestMockService_ConcurrentAccessIsRaceFree(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = svc.DeleteEvent(context.Background(), "/cal/", "uid-1")
+			_, _ = svc.DeleteEvent(context.Background(), "/cal/", "uid-1", nil)
 		}()
 	}
 	wg.Wait()

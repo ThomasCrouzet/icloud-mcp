@@ -76,10 +76,10 @@ func (t *AllowlistTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // NewICloudHTTPClient returns the production HTTP client: IsICloudHost
-// allowlist, verified TLS (default config, MinVersion TLS1.2, never
-// InsecureSkipVerify), bounded timeout, reasonable connection pool. An
-// additional CheckRedirect revalidates the host on every redirect hop
-// (defense in depth, redundant with the RoundTripper but at no cost).
+// allowlist, verified TLS (default config, MinVersion TLS1.2, TLS
+// verification always required), bounded timeout, reasonable connection
+// pool. An additional CheckRedirect revalidates the host on every redirect
+// hop (defense in depth, redundant with the RoundTripper but at no cost).
 func NewICloudHTTPClient(timeout time.Duration) *http.Client {
 	inner := &http.Transport{
 		MaxIdleConns:    10,

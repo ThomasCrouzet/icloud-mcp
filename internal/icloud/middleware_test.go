@@ -43,7 +43,7 @@ func (s *countingService) ListCalendars(ctx context.Context) ([]Calendar, error)
 	return []Calendar{{Path: "/cal/"}}, nil
 }
 
-func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	s.mu.Lock()
 	s.searchCalls++
 	failN := s.searchFailN
@@ -56,6 +56,10 @@ func (s *countingService) SearchEvents(ctx context.Context, calendarPath string,
 		return SearchResult{}, fmt.Errorf("simulated search failure %d", calls)
 	}
 	return SearchResult{Events: []Event{{UID: "e1", Title: "t"}}}, nil
+}
+
+func (s *countingService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	return &EventDetail{Event: Event{UID: uid}}, nil
 }
 
 func (s *countingService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
@@ -75,15 +79,15 @@ func (s *countingService) UpdateEvent(ctx context.Context, calendarPath, uid str
 	return s.updateErr
 }
 
-func (s *countingService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
+func (s *countingService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	s.mu.Lock()
 	s.deleteCalls++
 	calls := s.deleteCalls
 	s.mu.Unlock()
 	if calls <= s.deleteFailN {
-		return "", fmt.Errorf("simulated failure %d", calls)
+		return DeleteResult{}, fmt.Errorf("simulated failure %d", calls)
 	}
-	return "deleted-title", nil
+	return DeleteResult{Title: "deleted-title", UID: uid}, nil
 }
 
 func TestGuardedService_ReadRateLimitBlocksAfterBurst(t *testing.T) {
@@ -177,12 +181,12 @@ func TestGuardedService_DeleteEventRetried(t *testing.T) {
 	inner := &countingService{deleteFailN: 1}
 	g := NewGuardedService(inner, 2, time.Millisecond)
 
-	title, err := g.DeleteEvent(context.Background(), "/cal/", "uid")
+	res, err := g.DeleteEvent(context.Background(), "/cal/", "uid", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if title != "deleted-title" {
-		t.Errorf("title = %q, want %q", title, "deleted-title")
+	if res.Title != "deleted-title" {
+		t.Errorf("title = %q, want %q", res.Title, "deleted-title")
 	}
 	if inner.deleteCalls != 2 {
 		t.Errorf("deleteCalls = %d, want 2 (1 failure + 1 successful retry; DeleteEvent is idempotent)", inner.deleteCalls)
@@ -253,8 +257,11 @@ func (s *classifiedService) ListCalendars(ctx context.Context) ([]Calendar, erro
 	s.calls++
 	return nil, s.err
 }
-func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	return SearchResult{}, nil
+}
+func (s *classifiedService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
+	return nil, nil
 }
 func (s *classifiedService) CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (string, error) {
 	return "", nil
@@ -262,8 +269,8 @@ func (s *classifiedService) CreateEvent(ctx context.Context, calendarPath string
 func (s *classifiedService) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
 	return nil
 }
-func (s *classifiedService) DeleteEvent(ctx context.Context, calendarPath, uid string) (string, error) {
-	return "", nil
+func (s *classifiedService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
+	return DeleteResult{}, nil
 }
 
 func nearly(a, b, eps float64) bool {
@@ -280,7 +287,7 @@ func TestGuardedService_SearchEvents_RetriesTransientThenSucceeds(t *testing.T) 
 	inner := &countingService{searchFailN: 2}
 	g := NewGuardedService(inner, 2, time.Millisecond)
 
-	res, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	res, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour), nil)
 	if err != nil {
 		t.Fatalf("SearchEvents: %v", err)
 	}
@@ -299,7 +306,7 @@ func TestGuardedService_SearchEvents_ClassifiedErrorNotRetried(t *testing.T) {
 	inner := &countingService{searchFailN: 10, searchClassified: true}
 	g := NewGuardedService(inner, 5, time.Millisecond)
 
-	_, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	_, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour), nil)
 	if err == nil {
 		t.Fatal("expected classified error")
 	}
@@ -319,13 +326,13 @@ func TestGuardedService_SearchEvents_RateLimitBlocksAfterBurst(t *testing.T) {
 	start := time.Now()
 	end := start.Add(time.Hour)
 	for i := 0; i < 10; i++ {
-		if _, err := g.SearchEvents(context.Background(), "/cal/", start, end); err != nil {
+		if _, err := g.SearchEvents(context.Background(), "/cal/", start, end, nil); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
-	if _, err := g.SearchEvents(ctx, "/cal/", start, end); err == nil {
+	if _, err := g.SearchEvents(ctx, "/cal/", start, end, nil); err == nil {
 		t.Fatal("expected rate limit error after read burst exhausted")
 	}
 }

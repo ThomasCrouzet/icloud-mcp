@@ -6,6 +6,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Tools: `get_event`, `find_free_slots`, `validate_event`, `calendar_capabilities`.
+- `search_events` optional filters: multi-calendar list, UID, status, all-day,
+  cancelled, busy-only, compact (omit notes), stable sort by start+UID.
+- `create_event` optional status, transparency, URL, timezone, `client_uid` /
+  `idempotency_key` (conflict if UID already exists; never silent overwrite).
+- `update_event` / `delete_event` support `scope=series|occurrence`,
+  `recurrence_id`, and optional `etag` (If-Match). Occurrence never deletes
+  the whole series. `delete_event` supports `dry_run` (zero PUT/DELETE).
+- Conditional DELETE with If-Match; structured `conflict` for HTTP 409.
+- Expanded structured error codes (`validation`, `authentication`,
+  `authorization`, `timeout`, `unavailable`, `partial_failure`,
+  `protocol_error`, `internal_error`) with optional `retryable` /
+  `retry_after_seconds`.
+- Pure free-slot interval merge (buffers, working hours, overnight windows,
+  generative tests). Local event validation shared by create/validate tools.
+- Native Go fuzz targets (paths, UIDs, RRULE, dates, redaction, hosts) and
+  MCP in-process E2E registration tests.
+- Docs under `docs/` (architecture, security, CalDAV, testing, V2 migration,
+  audit). CI: mod verify/tidy, fuzz smoke, pinned govulncheck, binary size
+  budget, `InsecureSkipVerify` guard.
+
+### Fixed
+- Redactor iterates to a fixed point so secrets re-formed across a previous
+  `[REDACTED]` boundary are still masked; secrets with newlines are rejected
+  at registration (line-buffered writer cannot mask them).
+
+### Changed
+- Read-only mode now exposes 6 tools (was 2); write tools remain absent.
+- Default `ICLOUD_MCP_DEFAULT_TZ` remains UTC for compatibility (operators
+  should set the calendar owner timezone explicitly).
+
 ## [0.2.0] - 2026-07-18
 
 ### Changed
