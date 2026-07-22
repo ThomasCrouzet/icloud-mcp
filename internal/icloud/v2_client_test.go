@@ -219,6 +219,84 @@ func TestClient_UpdateEvent_OccurrenceScope(t *testing.T) {
 	}
 }
 
+func TestClient_UpdateEvent_InvalidStatusTransparencyURL_NoPUT(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-simple-1.ics"
+	m.objects["uid-simple-1"] = mockObject{path: path, ics: icsSimpleEvent}
+	m.etags[path] = `"e1"`
+	c := m.client()
+
+	badStatus := "MAYBE"
+	badTransp := "BUSY"
+	badURL := "ftp://evil.example/x"
+	for _, tc := range []struct {
+		name string
+		up   *EventUpdate
+	}{
+		{"status", &EventUpdate{Status: &badStatus}},
+		{"transparency", &EventUpdate{Transparency: &badTransp}},
+		{"url", &EventUpdate{URL: &badURL}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-simple-1", tc.up)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.puts) != 0 {
+		t.Fatalf("invalid update must not PUT: puts=%d", len(m.puts))
+	}
+	// Discovery may not even run, but any GET/PUT for the object is forbidden.
+	// Ensure no mutating PUT was recorded (primary invariant).
+}
+
+func TestClient_UpdateEvent_ValidStatusURL(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-simple-1.ics"
+	m.objects["uid-simple-1"] = mockObject{path: path, ics: icsSimpleEvent}
+	m.etags[path] = `"e1"`
+	c := m.client()
+	status := "tentative"
+	url := "https://example.com/x"
+	if err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-simple-1", &EventUpdate{
+		Status: &status, URL: &url,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.puts) != 1 {
+		t.Fatalf("puts=%d", len(m.puts))
+	}
+	if !strings.Contains(m.puts[0].body, "STATUS:TENTATIVE") {
+		t.Errorf("PUT missing STATUS:TENTATIVE:\n%s", m.puts[0].body)
+	}
+	if !strings.Contains(m.puts[0].body, "example.com/x") {
+		t.Errorf("PUT missing URL:\n%s", m.puts[0].body)
+	}
+}
+
+func TestClient_CreateEvent_RejectsBadURL(t *testing.T) {
+	m := newMockCalDAV(t)
+	c := m.client()
+	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	_, err := c.CreateEvent(context.Background(), testHomeCalendar, &NewEvent{
+		Title: "x", StartTime: start, EndTime: start.Add(time.Hour),
+		URL: "ftp://evil.example/",
+	})
+	if err == nil {
+		t.Fatal("expected URL rejection")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.puts) != 0 {
+		t.Fatalf("bad URL must not PUT: %d", len(m.puts))
+	}
+}
+
 func TestBuildEventCalendar_AllDayAndRRULE(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	cal := buildEventCalendar("u@x", &NewEvent{

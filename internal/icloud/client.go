@@ -213,6 +213,11 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	if !AllowedTransparency[transp] {
 		return "", fmt.Errorf("invalid transparency %q", ne.Transparency)
 	}
+	if ne.URL != "" {
+		if err := validateEventURL(ne.URL); err != nil {
+			return "", err
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return "", err
 	}
@@ -271,6 +276,11 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 			return err
 		}
 	}
+	// Reject invalid status/transparency/URL before any network I/O.
+	if err := ValidateEventUpdateFields(up); err != nil {
+		return err
+	}
+	NormalizeEventUpdateFields(up)
 	scope := up.Scope
 	if scope == "" {
 		scope = ScopeSeries

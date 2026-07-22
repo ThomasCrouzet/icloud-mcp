@@ -231,6 +231,56 @@ func validateEventURL(raw string) error {
 	return nil
 }
 
+// ValidateEventURL is the exported URL policy used by create/update paths.
+// Empty string is not validated here (callers treat empty as clear/omit).
+func ValidateEventURL(raw string) error {
+	return validateEventURL(raw)
+}
+
+// ValidateEventUpdateFields validates optional status, transparency, and URL
+// on an EventUpdate. Nil pointers mean unchanged and are skipped. Empty
+// string means clear (allowed). Invalid values return an error; callers must
+// not issue any CalDAV mutation after a non-nil error.
+func ValidateEventUpdateFields(up *EventUpdate) error {
+	if up == nil {
+		return fmt.Errorf("update cannot be nil")
+	}
+	if up.Status != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Status))
+		if !AllowedStatus[s] {
+			return fmt.Errorf("status must be one of TENTATIVE, CONFIRMED, CANCELLED (got %q)", *up.Status)
+		}
+	}
+	if up.Transparency != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Transparency))
+		if !AllowedTransparency[s] {
+			return fmt.Errorf("transparency must be OPAQUE or TRANSPARENT (got %q)", *up.Transparency)
+		}
+	}
+	if up.URL != nil && *up.URL != "" {
+		if err := validateEventURL(*up.URL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// NormalizeEventUpdateFields uppercases status/transparency in place when set
+// (empty remains empty for clear). Call after ValidateEventUpdateFields.
+func NormalizeEventUpdateFields(up *EventUpdate) {
+	if up == nil {
+		return
+	}
+	if up.Status != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Status))
+		up.Status = &s
+	}
+	if up.Transparency != nil {
+		s := strings.ToUpper(strings.TrimSpace(*up.Transparency))
+		up.Transparency = &s
+	}
+}
+
 // StructuredRecurrenceToRRULE is the exported wrapper used by MCP handlers
 // after validation to obtain RRULE + EXDATE times.
 func StructuredRecurrenceToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (string, []time.Time, error) {

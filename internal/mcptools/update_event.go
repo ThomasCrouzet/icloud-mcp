@@ -125,6 +125,12 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			s, _ := v.(string)
 			update.URL = &s
 		}
+		// Same status/transparency/URL policy as create_event / validate_event.
+		// Reject before any service (CalDAV) call so invalid input never mutates.
+		if err := icloud.ValidateEventUpdateFields(update); err != nil {
+			return deny("validation", err)
+		}
+		icloud.NormalizeEventUpdateFields(update)
 
 		scope := req.GetString("scope", "series")
 		switch scope {

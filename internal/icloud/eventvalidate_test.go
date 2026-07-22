@@ -57,3 +57,56 @@ func TestValidateEventInput_ClientUID(t *testing.T) {
 		t.Fatal("expected client uid rejection")
 	}
 }
+
+func TestValidateEventUpdateFields_EmptyClearsAndValid(t *testing.T) {
+	empty := ""
+	confirmed := "confirmed" // case-insensitive
+	opaque := "OPAQUE"
+	goodURL := "https://example.com/meet"
+	up := &EventUpdate{
+		Status:       &empty,
+		Transparency: &opaque,
+		URL:          &goodURL,
+	}
+	if err := ValidateEventUpdateFields(up); err != nil {
+		t.Fatalf("valid clear/set: %v", err)
+	}
+	up.Status = &confirmed
+	if err := ValidateEventUpdateFields(up); err != nil {
+		t.Fatalf("case-insensitive status: %v", err)
+	}
+	NormalizeEventUpdateFields(up)
+	if *up.Status != "CONFIRMED" {
+		t.Errorf("normalized status = %q", *up.Status)
+	}
+	// Empty URL clears without validation error.
+	up.URL = &empty
+	if err := ValidateEventUpdateFields(up); err != nil {
+		t.Fatalf("empty url clear: %v", err)
+	}
+}
+
+func TestValidateEventUpdateFields_RejectsInvalid(t *testing.T) {
+	badStatus := "MAYBE"
+	badTransp := "BUSY"
+	ftp := "ftp://evil.example/x"
+	js := "javascript:alert(1)"
+	noHost := "https://"
+	for _, tc := range []struct {
+		name string
+		up   EventUpdate
+	}{
+		{"status", EventUpdate{Status: &badStatus}},
+		{"transparency", EventUpdate{Transparency: &badTransp}},
+		{"ftp", EventUpdate{URL: &ftp}},
+		{"javascript", EventUpdate{URL: &js}},
+		{"no-host", EventUpdate{URL: &noHost}},
+	} {
+		if err := ValidateEventUpdateFields(&tc.up); err == nil {
+			t.Errorf("%s: expected error", tc.name)
+		}
+	}
+	if err := ValidateEventUpdateFields(nil); err == nil {
+		t.Error("nil update should error")
+	}
+}
