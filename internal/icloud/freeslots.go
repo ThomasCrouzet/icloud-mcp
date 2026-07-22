@@ -24,10 +24,13 @@ type FreeSlotOptions struct {
 	Location *time.Location
 	// WorkingHourStart / WorkingHourEnd are minutes from local midnight
 	// [0, 1440]. When both zero, the whole day is allowed. When End <= Start
-	// and both non-zero, hours cross midnight (e.g. 22:00-06:00).
+	// and both non-zero, hours cross midnight (e.g. 22:00-06:00) as one
+	// continuous window [startDay@Start, nextCivilDay@End).
 	WorkingHourStart int
 	WorkingHourEnd   int
 	// DaysOfWeek: empty = all days. Sunday=0 ... Saturday=6 (time.Weekday).
+	// For overnight working hours, the filter applies to the civil day the
+	// shift starts (e.g. Monday + 22:00-06:00 => Monday 22:00 through Tuesday 06:00).
 	DaysOfWeek []time.Weekday
 	// BufferBefore / BufferAfter expand each busy interval before merge.
 	BufferBefore time.Duration
@@ -191,10 +194,18 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 		}
 	}
 
+	// Overnight working hours: End <= Start (e.g. 22:00-06:00).
+	overnight := useWH && whEnd <= whStart
+
 	var out []Interval
 	for _, win := range free {
 		// Walk civil local days (not fixed 24h steps; DST days are 23h or 25h).
 		day := startOfLocalDay(win.Start.In(loc), loc)
+		// Overnight shifts of the previous civil day still cover the morning
+		// of win.Start (e.g. Tuesday 22:00 -> Wednesday 06:00 covers Wed 03:00).
+		if overnight {
+			day = prevLocalCivilDay(day, loc)
+		}
 		endLocal := win.End.In(loc)
 		for !day.After(endLocal) {
 			if !dayFilter[day.Weekday()] {
@@ -204,17 +215,19 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 			var segments []Interval
 			if !useWH {
 				segments = []Interval{{Start: day, End: nextLocalCivilDay(day, loc)}}
-			} else if whEnd > whStart {
+			} else if !overnight {
 				segments = []Interval{{
 					Start: localTimeOnDay(day, whStart, loc),
 					End:   localTimeOnDay(day, whEnd, loc),
 				}}
 			} else {
-				// Cross-midnight: [whStart, next midnight) U [midnight, whEnd).
-				segments = []Interval{
-					{Start: localTimeOnDay(day, whStart, loc), End: nextLocalCivilDay(day, loc)},
-					{Start: day, End: localTimeOnDay(day, whEnd, loc)},
-				}
+				// Continuous overnight: [day@whStart, nextCivilDay@whEnd).
+				// DaysOfWeek filters the start day (Monday night => Mon 22:00-Tue 06:00).
+				next := nextLocalCivilDay(day, loc)
+				segments = []Interval{{
+					Start: localTimeOnDay(day, whStart, loc),
+					End:   localTimeOnDay(next, whEnd, loc),
+				}}
 			}
 			for _, seg := range segments {
 				inter := intersect(win, seg)
@@ -239,6 +252,12 @@ func startOfLocalDay(t time.Time, loc *time.Location) time.Time {
 func nextLocalCivilDay(day time.Time, loc *time.Location) time.Time {
 	lt := day.In(loc)
 	return time.Date(lt.Year(), lt.Month(), lt.Day()+1, 0, 0, 0, 0, loc)
+}
+
+// prevLocalCivilDay returns local midnight of the calendar day before day.
+func prevLocalCivilDay(day time.Time, loc *time.Location) time.Time {
+	lt := day.In(loc)
+	return time.Date(lt.Year(), lt.Month(), lt.Day()-1, 0, 0, 0, 0, loc)
 }
 
 // localTimeOnDay returns the wall-clock local time on the civil day of day

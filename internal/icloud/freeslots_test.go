@@ -76,12 +76,14 @@ func TestFindFreeSlots_ImpossibleDuration(t *testing.T) {
 }
 
 func TestFindFreeSlots_WorkingHoursCrossMidnight(t *testing.T) {
-	// Night shift 22:00-06:00 local.
+	// Night shift 22:00-06:00 local as one continuous window per start day.
+	// Range covers Tue 00:00 through Wed 12:00 so Tuesday night is fully inside.
 	loc := time.UTC
-	day := time.Date(2026, 7, 1, 0, 0, 0, 0, loc)
+	// 2026-07-01 is Wednesday; start Tuesday for a full Tue 22:00-Wed 06:00 night.
+	tue := time.Date(2026, 6, 30, 0, 0, 0, 0, loc)
 	slots, err := FindFreeSlots(nil, FreeSlotOptions{
-		RangeStart:       day,
-		RangeEnd:         day.Add(24 * time.Hour),
+		RangeStart:       tue,
+		RangeEnd:         tue.Add(36 * time.Hour), // through Wed 12:00
 		Duration:         time.Hour,
 		Location:         loc,
 		WorkingHourStart: 22 * 60,
@@ -99,6 +101,90 @@ func TestFindFreeSlots_WorkingHoursCrossMidnight(t *testing.T) {
 		if h >= 6 && h < 22 {
 			t.Errorf("slot start hour %d outside overnight window: %+v", h, s)
 		}
+	}
+}
+
+func TestFindFreeSlots_OvernightDaysOfWeek_ContinuousWindow(t *testing.T) {
+	// Monday + 22:00-06:00 must be Mon 22:00 -> Tue 06:00, NOT Mon 00:00-06:00
+	// plus Mon 22:00-00:00. 2026-07-06 is Monday.
+	loc := time.UTC
+	mon := time.Date(2026, 7, 6, 0, 0, 0, 0, loc)
+	// Cover Sun noon through Wed noon so Monday night is fully in range and
+	// Sunday night can spill Mon morning if (buggily) filtered wrong.
+	rangeStart := mon.Add(-12 * time.Hour) // Sun 12:00
+	rangeEnd := mon.Add(60 * time.Hour)    // Wed 12:00
+	slots, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart:       rangeStart,
+		RangeEnd:         rangeEnd,
+		Duration:         time.Hour,
+		Location:         loc,
+		WorkingHourStart: 22 * 60,
+		WorkingHourEnd:   6 * 60,
+		DaysOfWeek:       []time.Weekday{time.Monday},
+		Limit:            50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSlotsInRangeNoDupNoBusy(t, slots, rangeStart, rangeEnd, nil)
+	// Exactly 8 one-hour slots: Mon 22,23 and Tue 00,01,02,03,04,05.
+	if len(slots) != 8 {
+		t.Fatalf("got %d slots, want 8 (Mon 22:00 through Tue 06:00): %v",
+			len(slots), formatSlots(slots, loc))
+	}
+	wantFirst := time.Date(2026, 7, 6, 22, 0, 0, 0, loc)
+	wantLastEnd := time.Date(2026, 7, 7, 6, 0, 0, 0, loc)
+	if !slots[0].Start.Equal(wantFirst) {
+		t.Errorf("first slot start = %v, want %v", slots[0].Start, wantFirst)
+	}
+	if !slots[len(slots)-1].End.Equal(wantLastEnd) {
+		t.Errorf("last slot end = %v, want %v", slots[len(slots)-1].End, wantLastEnd)
+	}
+	// Must not include Monday morning (would be Mon-only with split segments).
+	for _, s := range slots {
+		ls := s.Start.In(loc)
+		if ls.Weekday() == time.Monday && ls.Hour() < 22 {
+			t.Errorf("unexpected Monday daytime/morning slot: %v", ls)
+		}
+		// Tuesday slots only in 00-06; no Tuesday evening (Tue is not filtered in).
+		if ls.Weekday() == time.Tuesday && ls.Hour() >= 6 {
+			t.Errorf("unexpected Tuesday slot outside morning spill: %v", ls)
+		}
+		if ls.Weekday() != time.Monday && ls.Weekday() != time.Tuesday {
+			t.Errorf("slot on unexpected weekday: %v", ls)
+		}
+	}
+}
+
+func TestFindFreeSlots_OvernightMorningCoveredByPreviousStartDay(t *testing.T) {
+	// Free range starts mid-overnight (Wed 03:00). With DaysOfWeek=Tuesday and
+	// 22:00-06:00, Tuesday's continuous window must still cover Wed 03:00-06:00.
+	loc := time.UTC
+	// 2026-07-01 is Wednesday.
+	rangeStart := time.Date(2026, 7, 1, 3, 0, 0, 0, loc)
+	rangeEnd := time.Date(2026, 7, 1, 12, 0, 0, 0, loc)
+	slots, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart:       rangeStart,
+		RangeEnd:         rangeEnd,
+		Duration:         time.Hour,
+		Location:         loc,
+		WorkingHourStart: 22 * 60,
+		WorkingHourEnd:   6 * 60,
+		DaysOfWeek:       []time.Weekday{time.Tuesday},
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wed 03:00, 04:00, 05:00 => 3 slots.
+	if len(slots) != 3 {
+		t.Fatalf("got %d slots, want 3: %v", len(slots), formatSlots(slots, loc))
+	}
+	if !slots[0].Start.Equal(rangeStart) {
+		t.Errorf("first = %v, want %v", slots[0].Start, rangeStart)
+	}
+	if !slots[len(slots)-1].End.Equal(time.Date(2026, 7, 1, 6, 0, 0, 0, loc)) {
+		t.Errorf("last end = %v", slots[len(slots)-1].End)
 	}
 }
 
