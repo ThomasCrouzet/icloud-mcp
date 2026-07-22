@@ -25,6 +25,9 @@ type MockService struct {
 	// calendar path (used to test multi-calendar query + early-stop).
 	EventsByPath map[string][]Event
 
+	// EventsUnexpanded is returned when SearchOptions.ExpandRecurrence is false.
+	EventsUnexpanded []Event
+
 	ListErr   error
 	SearchErr error
 	GetErr    error
@@ -57,6 +60,7 @@ type MockService struct {
 	LastSearchPath string
 	LastSearchFrom time.Time
 	LastSearchTo   time.Time
+	LastSearchOpts *SearchOptions
 
 	// SearchPaths records each calendar path SearchEvents was called with
 	// (order preserved), for multi-calendar early-stop assertions.
@@ -85,12 +89,16 @@ func (m *MockService) ListCalendars(ctx context.Context) ([]Calendar, error) {
 
 // SearchEvents returns m.Events (or m.SearchErr). When EventsByPath has an
 // entry for calendarPath, that slice is used instead of m.Events.
-func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+// When opts.ExpandRecurrence is false and Events have Recurrence set, only
+// events that look like masters are returned (test hook: EventsUnexpanded
+// when set).
+func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	m.mu.Lock()
 	m.SearchCallCount++
 	m.LastSearchPath = calendarPath
 	m.LastSearchFrom = start
 	m.LastSearchTo = end
+	m.LastSearchOpts = opts
 	m.SearchPaths = append(m.SearchPaths, calendarPath)
 	truncated := m.SearchTruncated
 	events := m.Events
@@ -99,9 +107,17 @@ func (m *MockService) SearchEvents(ctx context.Context, calendarPath string, sta
 			events = byPath
 		}
 	}
+	unexpanded := m.EventsUnexpanded
 	m.mu.Unlock()
 	if m.SearchErr != nil {
 		return SearchResult{}, m.SearchErr
+	}
+	expand := true
+	if opts != nil {
+		expand = opts.ExpandRecurrence
+	}
+	if !expand && unexpanded != nil {
+		return SearchResult{Events: unexpanded, TruncatedByExpansion: false}, nil
 	}
 	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
 }

@@ -231,6 +231,12 @@ func validateEventURL(raw string) error {
 	return nil
 }
 
+// StructuredRecurrenceToRRULE is the exported wrapper used by MCP handlers
+// after validation to obtain RRULE + EXDATE times.
+func StructuredRecurrenceToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (string, []time.Time, error) {
+	return structuredToRRULE(s, defaultLoc)
+}
+
 func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (string, []time.Time, error) {
 	if s == nil {
 		return "", nil, nil

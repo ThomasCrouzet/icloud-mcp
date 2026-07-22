@@ -78,10 +78,11 @@ func (c *Client) Discover(ctx context.Context) error {
 	return c.discover(ctx)
 }
 
-// SearchEvents searches a calendar's events overlapping [start, end] and
-// expands recurrences (RRULE + EXDATE + RECURRENCE-ID overrides) within
-// that same range.
-func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+// SearchEvents searches a calendar's events overlapping [start, end].
+// When opts is nil or opts.ExpandRecurrence is true, recurrences are expanded
+// (RRULE + EXDATE + RECURRENCE-ID). When ExpandRecurrence is false, only
+// master VEVENTs from the server time-range are returned.
+func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	if err := ValidateCalendarPath(calendarPath); err != nil {
 		return SearchResult{}, err
 	}
@@ -90,6 +91,10 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 	}
 	if err := c.discover(ctx); err != nil {
 		return SearchResult{}, err
+	}
+	expand := true
+	if opts != nil {
+		expand = opts.ExpandRecurrence
 	}
 
 	// Time-range filter on VEVENT (the server only returns events, including
@@ -109,6 +114,14 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		master, overrides, perr := parseCalendarObject(&objs[i])
 		if perr != nil {
 			slog.Warn("skipping unparseable calendar object", "path", objs[i].Path, "error", perr)
+			continue
+		}
+		if !expand {
+			// Masters only: still apply overlap so zero-length/out-of-range
+			// masters are not returned when the server over-selects.
+			if eventOverlaps(*master, start, end) {
+				events = append(events, *master)
+			}
 			continue
 		}
 		occs, t, eerr := ExpandOccurrences(*master, overrides, start, end, 0)

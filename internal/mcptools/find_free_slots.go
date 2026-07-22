@@ -121,7 +121,7 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 
 		var allEvents []icloud.Event
 		for _, path := range paths {
-			res, serr := deps.Service.SearchEvents(ctx, path, start, end)
+			res, serr := deps.Service.SearchEvents(ctx, path, start, end, nil)
 			if serr != nil {
 				// Auth/security must not become a soft warning.
 				if ie := icloud.AsICloudError(serr); ie != nil {

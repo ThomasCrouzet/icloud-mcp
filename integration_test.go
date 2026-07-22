@@ -43,7 +43,7 @@ func TestIntegration_ListAndSearchRealICloud(t *testing.T) {
 
 	start := time.Now()
 	end := start.AddDate(0, 0, 7)
-	res, err := client.SearchEvents(ctx, cals[0].Path, start, end)
+	res, err := client.SearchEvents(ctx, cals[0].Path, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents: %v", err)
 	}

@@ -109,6 +109,14 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		busyOnly := req.GetBool("busy_only", false)
 		compact := req.GetBool("compact", false)
+		// expand_recurrence defaults true when omitted.
+		expandRecurrence := true
+		if v, ok := req.GetArguments()["expand_recurrence"]; ok {
+			if b, ok := v.(bool); ok {
+				expandRecurrence = b
+			}
+		}
+		searchOpts := &icloud.SearchOptions{ExpandRecurrence: expandRecurrence}
 		filterAllDay := false
 		allDayWanted := false
 		if v, ok := req.GetArguments()["all_day"]; ok {
@@ -138,7 +146,7 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				multiCalendarCapped = true
 				break
 			}
-			result, err := deps.Service.SearchEvents(ctx, path, start, end)
+			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
 			if err != nil {
 				// Auth/security must never be masked as a soft warning.
 				return errResult(deps.Redactor, "searching events", err), nil

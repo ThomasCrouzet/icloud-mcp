@@ -7,6 +7,33 @@ import (
 	"time"
 )
 
+func TestClient_SearchEvents_ExpandRecurrenceFalse(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-recur-1.ics"
+	m.objects["uid-recur-1"] = mockObject{path: path, ics: icsRecurringWithExdate}
+	c := m.client()
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(40 * 24 * time.Hour)
+
+	expanded, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, &SearchOptions{ExpandRecurrence: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	masters, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, &SearchOptions{ExpandRecurrence: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(masters.Events) != 1 {
+		t.Fatalf("masters=%d want 1", len(masters.Events))
+	}
+	if masters.Events[0].Recurrence == "" {
+		t.Error("master should keep RRULE")
+	}
+	if len(expanded.Events) <= len(masters.Events) {
+		t.Fatalf("expanded=%d should exceed masters=%d", len(expanded.Events), len(masters.Events))
+	}
+}
+
 func TestClient_GetEvent_ByUID(t *testing.T) {
 	m := newMockCalDAV(t)
 	path := testHomeCalendar + "uid-simple-1.ics"

@@ -119,14 +119,14 @@ func (g *GuardedService) ListCalendars(ctx context.Context) ([]Calendar, error) 
 }
 
 // SearchEvents: read, retried.
-func (g *GuardedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+func (g *GuardedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	if err := g.waitRead(ctx); err != nil {
 		return SearchResult{}, err
 	}
 	var result SearchResult
 	err := g.retry(ctx, "SearchEvents", func() error {
 		var e error
-		result, e = g.inner.SearchEvents(ctx, calendarPath, start, end)
+		result, e = g.inner.SearchEvents(ctx, calendarPath, start, end, opts)
 		return e
 	})
 	return result, err

@@ -733,7 +733,7 @@ func TestClient_SearchEvents_TimeRangeTransmitted(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -763,7 +763,7 @@ func TestClient_SearchEvents_AllDay(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -786,7 +786,7 @@ func TestClient_SearchEvents_NoDtendDerivedFromDuration(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestClient_SearchEvents_AllDayNoDtendDefaultsTo24h(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}
@@ -843,7 +843,7 @@ func TestClient_SearchEvents_RecurringWithExdateAndOverride(t *testing.T) {
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
-	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end)
+	res, err := c.SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
 	if err != nil {
 		t.Fatalf("SearchEvents() error: %v", err)
 	}

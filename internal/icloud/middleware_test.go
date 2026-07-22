@@ -43,7 +43,7 @@ func (s *countingService) ListCalendars(ctx context.Context) ([]Calendar, error)
 	return []Calendar{{Path: "/cal/"}}, nil
 }
 
-func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+func (s *countingService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	s.mu.Lock()
 	s.searchCalls++
 	failN := s.searchFailN
@@ -257,7 +257,7 @@ func (s *classifiedService) ListCalendars(ctx context.Context) ([]Calendar, erro
 	s.calls++
 	return nil, s.err
 }
-func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error) {
+func (s *classifiedService) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
 	return SearchResult{}, nil
 }
 func (s *classifiedService) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
@@ -287,7 +287,7 @@ func TestGuardedService_SearchEvents_RetriesTransientThenSucceeds(t *testing.T) 
 	inner := &countingService{searchFailN: 2}
 	g := NewGuardedService(inner, 2, time.Millisecond)
 
-	res, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	res, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour), nil)
 	if err != nil {
 		t.Fatalf("SearchEvents: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestGuardedService_SearchEvents_ClassifiedErrorNotRetried(t *testing.T) {
 	inner := &countingService{searchFailN: 10, searchClassified: true}
 	g := NewGuardedService(inner, 5, time.Millisecond)
 
-	_, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour))
+	_, err := g.SearchEvents(context.Background(), "/cal/", time.Now(), time.Now().Add(time.Hour), nil)
 	if err == nil {
 		t.Fatal("expected classified error")
 	}
@@ -326,13 +326,13 @@ func TestGuardedService_SearchEvents_RateLimitBlocksAfterBurst(t *testing.T) {
 	start := time.Now()
 	end := start.Add(time.Hour)
 	for i := 0; i < 10; i++ {
-		if _, err := g.SearchEvents(context.Background(), "/cal/", start, end); err != nil {
+		if _, err := g.SearchEvents(context.Background(), "/cal/", start, end, nil); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
-	if _, err := g.SearchEvents(ctx, "/cal/", start, end); err == nil {
+	if _, err := g.SearchEvents(ctx, "/cal/", start, end, nil); err == nil {
 		t.Fatal("expected rate limit error after read burst exhausted")
 	}
 }

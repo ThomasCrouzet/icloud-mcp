@@ -104,6 +104,20 @@ type NewEvent struct {
 	ClientUID string
 }
 
+// SearchOptions configures SearchEvents. A nil *SearchOptions means defaults
+// (expand recurrences).
+type SearchOptions struct {
+	// ExpandRecurrence, when true (default), expands RRULE into occurrences
+	// within the range. When false, only master VEVENTs overlapping the
+	// server time-range are returned (with Recurrence still populated).
+	ExpandRecurrence bool
+}
+
+// DefaultSearchOptions returns expand-on defaults.
+func DefaultSearchOptions() SearchOptions {
+	return SearchOptions{ExpandRecurrence: true}
+}
+
 // SearchResult is returned by Service.SearchEvents.
 type SearchResult struct {
 	Events []Event
@@ -152,7 +166,10 @@ type DeleteResult struct {
 // Service is the interface consumed by the MCP tools (mockable for tests).
 type Service interface {
 	ListCalendars(ctx context.Context) ([]Calendar, error)
-	SearchEvents(ctx context.Context, calendarPath string, start, end time.Time) (SearchResult, error)
+	// SearchEvents lists events overlapping [start, end]. opts may be nil
+	// (expand recurrences). When opts.ExpandRecurrence is false, only master
+	// objects are returned without occurrence expansion.
+	SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error)
 	GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error)
 	CreateEvent(ctx context.Context, calendarPath string, ev *NewEvent) (uid string, err error)
 	UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error
