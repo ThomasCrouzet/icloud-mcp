@@ -23,12 +23,10 @@ func newUID() (string, error) {
 }
 
 // buildEventCalendar builds the complete VCALENDAR for a new event.
-// All-day events use VALUE=DATE; timed events are written as UTC (Z), which
-// pins the absolute instant regardless of the reader's timezone database.
-// Writing DTSTART/DTEND with TZID plus a VTIMEZONE would preserve local
-// wall-clock intent, but only with a full DST transition table: a fixed
-// offset is wrong for any occurrence on the other side of a transition.
-// That remains unimplemented pending verification against real iCloud.
+// All-day events use VALUE=DATE. Timed non-recurring events are written as
+// UTC (Z). Timed recurring events (or any timed event with an explicit
+// Timezone) use TZID + a generated VTIMEZONE so wall-clock RRULEs stay
+// correct across DST transitions.
 func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 	cal := ical.NewCalendar()
 	cal.Props.SetText(ical.PropVersion, "2.0")
@@ -44,6 +42,7 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 		ev.Props.SetText(ical.PropDescription, ne.Notes)
 	}
 
+	loc := resolveWriteLocation(ne)
 	if ne.AllDay {
 		// DATE values: use calendar date in UTC (date components only).
 		startDay := time.Date(ne.StartTime.Year(), ne.StartTime.Month(), ne.StartTime.Day(), 0, 0, 0, 0, time.UTC)
@@ -53,6 +52,12 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 		}
 		ev.Props.SetDate(ical.PropDateTimeStart, startDay)
 		ev.Props.SetDate(ical.PropDateTimeEnd, endDay)
+	} else if loc != nil && loc != time.UTC {
+		ev.Props.SetDateTime(ical.PropDateTimeStart, ne.StartTime.In(loc))
+		ev.Props.SetDateTime(ical.PropDateTimeEnd, ne.EndTime.In(loc))
+		if vtz := buildVTimezone(loc, ne.StartTime, ne.EndTime); vtz != nil {
+			cal.Children = append(cal.Children, vtz)
+		}
 	} else {
 		ev.Props.SetDateTime(ical.PropDateTimeStart, ne.StartTime.UTC())
 		ev.Props.SetDateTime(ical.PropDateTimeEnd, ne.EndTime.UTC())
@@ -65,6 +70,12 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 		ev.Props.Set(prop)
 	}
 	for _, ex := range ne.ExDates {
+		if loc != nil && loc != time.UTC && !ne.AllDay {
+			p := ical.NewProp(ical.PropExceptionDates)
+			p.SetDateTime(ex.In(loc))
+			ev.Props.Add(p)
+			continue
+		}
 		p := ical.NewProp(ical.PropExceptionDates)
 		p.Value = ex.UTC().Format("20060102T150405Z")
 		ev.Props.Add(p)
@@ -92,6 +103,148 @@ func buildEventCalendar(uid string, ne *NewEvent) *ical.Calendar {
 
 	cal.Children = append(cal.Children, ev.Component)
 	return cal
+}
+
+// resolveWriteLocation picks the IANA location used for timed create writes.
+// Explicit NewEvent.Timezone wins; otherwise a non-UTC StartTime location is
+// used when the event is recurring (wall-clock RRULE). Single timed events
+// without Timezone stay UTC Z.
+func resolveWriteLocation(ne *NewEvent) *time.Location {
+	if ne == nil || ne.AllDay {
+		return time.UTC
+	}
+	if tz := strings.TrimSpace(ne.Timezone); tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			return loc
+		}
+	}
+	if ne.Recurrence != "" {
+		if loc := ne.StartTime.Location(); loc != nil && loc != time.UTC {
+			return loc
+		}
+	}
+	return time.UTC
+}
+
+// buildVTimezone builds a minimal VTIMEZONE for loc by sampling offset
+// transitions around [from,to] (widened to cover typical DST). Returns nil
+// for UTC or when no usable STANDARD/DAYLIGHT component can be built.
+func buildVTimezone(loc *time.Location, from, to time.Time) *ical.Component {
+	if loc == nil || loc == time.UTC {
+		return nil
+	}
+	// Widen the sample window so yearly DST transitions are observed.
+	start := from.UTC().AddDate(-1, 0, 0)
+	end := to.UTC().AddDate(2, 0, 0)
+	if !end.After(start) {
+		end = start.AddDate(2, 0, 0)
+	}
+
+	type trans struct {
+		at             time.Time
+		fromOff, toOff int
+		name           string
+	}
+	var transitions []trans
+	prev := start.In(loc)
+	_, prevOff := prev.Zone()
+	// Hourly sample is enough to catch civil DST jumps.
+	for t := start.Add(time.Hour); !t.After(end); t = t.Add(time.Hour) {
+		local := t.In(loc)
+		name, off := local.Zone()
+		if off != prevOff {
+			transitions = append(transitions, trans{
+				at: local, fromOff: prevOff, toOff: off, name: name,
+			})
+			prevOff = off
+		}
+	}
+
+	vtz := ical.NewComponent(ical.CompTimezone)
+	vtz.Props.SetText(ical.PropTimezoneID, loc.String())
+
+	if len(transitions) == 0 {
+		// Fixed-offset zone: single STANDARD component.
+		sample := from.In(loc)
+		name, off := sample.Zone()
+		std := ical.NewComponent(ical.CompTimezoneStandard)
+		std.Props.SetDateTime(ical.PropDateTimeStart, time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
+		std.Props.SetText(ical.PropTimezoneOffsetFrom, formatUTCOffset(off))
+		std.Props.SetText(ical.PropTimezoneOffsetTo, formatUTCOffset(off))
+		if name != "" {
+			std.Props.SetText(ical.PropTimezoneName, name)
+		}
+		vtz.Children = append(vtz.Children, std)
+		return vtz
+	}
+
+	// Keep the most recent STANDARD and DAYLIGHT-like transitions (offset
+	// decrease vs increase). Enough for go-ical encode and iCloud RRULE.
+	var std, day *ical.Component
+	for i := len(transitions) - 1; i >= 0; i-- {
+		tr := transitions[i]
+		comp := ical.NewComponent(ical.CompTimezoneStandard)
+		if tr.toOff > tr.fromOff {
+			comp = ical.NewComponent(ical.CompTimezoneDaylight)
+		}
+		// DTSTART is floating local wall time of the transition.
+		wall := time.Date(tr.at.Year(), tr.at.Month(), tr.at.Day(), tr.at.Hour(), tr.at.Minute(), tr.at.Second(), 0, time.UTC)
+		comp.Props.SetDateTime(ical.PropDateTimeStart, wall)
+		comp.Props.SetText(ical.PropTimezoneOffsetFrom, formatUTCOffset(tr.fromOff))
+		comp.Props.SetText(ical.PropTimezoneOffsetTo, formatUTCOffset(tr.toOff))
+		if tr.name != "" {
+			comp.Props.SetText(ical.PropTimezoneName, tr.name)
+		}
+		// YEARLY RRULE on the observed month/day-of-week approximates the rule.
+		rr := ical.NewProp(ical.PropRecurrenceRule)
+		rr.Value = fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=%s", int(tr.at.Month()), byDayToken(tr.at))
+		comp.Props.Set(rr)
+		if comp.Name == ical.CompTimezoneDaylight && day == nil {
+			day = comp
+		}
+		if comp.Name == ical.CompTimezoneStandard && std == nil {
+			std = comp
+		}
+		if std != nil && day != nil {
+			break
+		}
+	}
+	if day != nil {
+		vtz.Children = append(vtz.Children, day)
+	}
+	if std != nil {
+		vtz.Children = append(vtz.Children, std)
+	}
+	if len(vtz.Children) == 0 {
+		return nil
+	}
+	return vtz
+}
+
+func formatUTCOffset(seconds int) string {
+	sign := "+"
+	if seconds < 0 {
+		sign = "-"
+		seconds = -seconds
+	}
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
+	return fmt.Sprintf("%s%02d%02d", sign, h, m)
+}
+
+func byDayToken(t time.Time) string {
+	// Nth weekday of month: 1SU .. 4SU or -1SU for last.
+	day := t.Day()
+	nth := (day-1)/7 + 1
+	names := []string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
+	wd := names[int(t.Weekday())]
+	// If another same weekday exists next week in this month, keep nth;
+	// otherwise emit -1 for last-of-month rules (common DST pattern).
+	next := t.AddDate(0, 0, 7)
+	if next.Month() != t.Month() {
+		return "-1" + wd
+	}
+	return fmt.Sprintf("%d%s", nth, wd)
 }
 
 func collectCreateAlarms(ne *NewEvent) []int {
@@ -350,7 +503,8 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	if p := vevent.Props.Get(ical.PropRecurrenceID); p != nil {
 		t, derr := p.DateTime(time.UTC)
 		if derr == nil {
-			e.recurrenceID = t
+			e.RecurrenceID = t
+			e.IsOverride = true
 			isOverride = true
 		}
 	}

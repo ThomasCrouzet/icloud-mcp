@@ -83,8 +83,34 @@ func ValidateUID(uid string) error {
 	if strings.Contains(uid, "..") {
 		return fmt.Errorf("UID contains a directory traversal sequence ('..')")
 	}
-	if strings.ContainsAny(uid, "\x00\n\r/%") {
+	// Path separators and backslash must never appear: the UID becomes a
+	// path segment (<uid>.ics). Control characters are also rejected.
+	if strings.ContainsAny(uid, "\x00\n\r/%\\") {
 		return fmt.Errorf("UID contains invalid characters")
+	}
+	for _, r := range uid {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("UID contains invalid characters")
+		}
+	}
+	return nil
+}
+
+// ValidateIfMatchETag rejects client-supplied concurrency tokens that would
+// disable optimistic locking. Empty is allowed (callers fail closed later).
+// "*" would become If-Match: * (any representation), last-writer-wins.
+func ValidateIfMatchETag(etag string) error {
+	if etag == "" {
+		return nil
+	}
+	if etag == "*" {
+		return NewValidationError(`etag "*" is not allowed; pass the opaque etag from get_event or search_events`)
+	}
+	if strings.ContainsAny(etag, "\x00\r\n") {
+		return NewValidationError("etag contains invalid characters")
+	}
+	if len(etag) > 512 {
+		return NewValidationError("etag is too long")
 	}
 	return nil
 }
@@ -149,6 +175,26 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 			"or a local time with no offset (e.g. 2026-07-01T14:00:00), interpreted as %s",
 		name, value, loc,
 	)
+}
+
+// ParseRecurrenceID parses recurrence_id for scope=occurrence. Accepts:
+//   - YYYY-MM-DD (all-day series: UTC midnight on that calendar date)
+//   - the same forms as ParseDateTime for timed series
+//
+// Prefer YYYY-MM-DD for all-day masters: a bare local midnight in a non-UTC
+// DEFAULT_TZ would otherwise shift to the previous UTC day and miss the
+// RECURRENCE-ID match.
+func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("invalid %s: empty", name)
+	}
+	if len(value) == 10 {
+		if t, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return ParseDateTime(name, value, defaultLoc)
 }
 
 // ValidateRange checks that end > start and that the range does not exceed

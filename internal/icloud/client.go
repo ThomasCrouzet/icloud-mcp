@@ -83,13 +83,13 @@ func (c *Client) Discover(ctx context.Context) error {
 // (RRULE + EXDATE + RECURRENCE-ID). When ExpandRecurrence is false, only
 // master VEVENTs from the server time-range are returned.
 func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, end time.Time, opts *SearchOptions) (SearchResult, error) {
-	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return SearchResult{}, err
-	}
 	if err := ValidateRange(start, end); err != nil {
 		return SearchResult{}, err
 	}
 	if err := c.discover(ctx); err != nil {
+		return SearchResult{}, err
+	}
+	if err := c.validateAgentCalendarPath(calendarPath); err != nil {
 		return SearchResult{}, err
 	}
 	expand := true
@@ -116,6 +116,9 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 			slog.Warn("skipping unparseable calendar object", "path", objs[i].Path, "error", perr)
 			continue
 		}
+		// Propagate REPORT getetag onto every returned row so agents can
+		// conditional-update without an extra get_event round-trip.
+		master.ETag = objs[i].ETag
 		if !expand {
 			// Masters only: still apply overlap so zero-length/out-of-range
 			// masters are not returned when the server over-selects.
@@ -132,6 +135,9 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		if t {
 			truncated = true
 		}
+		for j := range occs {
+			occs[j].ETag = objs[i].ETag
+		}
 		events = append(events, occs...)
 	}
 	return SearchResult{Events: events, TruncatedByExpansion: truncated}, nil
@@ -140,13 +146,13 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 // GetEvent returns a single event by UID (master + metadata). Path is never
 // exposed on the returned detail's JSON (Event.Path has json:"-").
 func (c *Client) GetEvent(ctx context.Context, calendarPath, uid string) (*EventDetail, error) {
-	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return nil, err
-	}
 	if err := ValidateUID(uid); err != nil {
 		return nil, err
 	}
 	if err := c.discover(ctx); err != nil {
+		return nil, err
+	}
+	if err := c.validateAgentCalendarPath(calendarPath); err != nil {
 		return nil, err
 	}
 	obj, err := c.findEventByUID(ctx, calendarPath, uid)
@@ -167,6 +173,18 @@ func (c *Client) GetEvent(ctx context.Context, calendarPath, uid string) (*Event
 		OverrideCount: len(overrides),
 		Alarms:        parseAlarms(obj.Data),
 	}
+	if len(overrides) > 0 {
+		detail.Overrides = make([]OccurrenceRef, 0, len(overrides))
+		for _, o := range overrides {
+			detail.Overrides = append(detail.Overrides, OccurrenceRef{
+				RecurrenceID: o.RecurrenceID,
+				StartTime:    o.StartTime,
+				EndTime:      o.EndTime,
+				Title:        o.Title,
+				IsOverride:   true,
+			})
+		}
+	}
 	// Never leak internal path to callers that serialize EventDetail by hand.
 	detail.Path = ""
 	return detail, nil
@@ -174,9 +192,6 @@ func (c *Client) GetEvent(ctx context.Context, calendarPath, uid string) (*Event
 
 // CreateEvent creates a new event in calendarPath.
 func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEvent) (string, error) {
-	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return "", err
-	}
 	if ne == nil {
 		return "", fmt.Errorf("event cannot be nil")
 	}
@@ -218,7 +233,15 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 			return "", err
 		}
 	}
+	if ne.Timezone != "" {
+		if _, err := time.LoadLocation(ne.Timezone); err != nil {
+			return "", fmt.Errorf("invalid timezone %q", ne.Timezone)
+		}
+	}
 	if err := c.discover(ctx); err != nil {
+		return "", err
+	}
+	if err := c.validateAgentCalendarPath(calendarPath); err != nil {
 		return "", err
 	}
 	uid := ne.ClientUID
@@ -252,14 +275,14 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 // RRULE is never removed. nil = field unchanged; pointer to empty string =
 // clear the field (Title/Location/Notes only).
 func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *EventUpdate) error {
-	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return err
-	}
 	if err := ValidateUID(uid); err != nil {
 		return err
 	}
 	if up == nil {
 		return fmt.Errorf("update cannot be nil")
+	}
+	if err := ValidateIfMatchETag(up.IfMatchETag); err != nil {
+		return err
 	}
 	if up.Title != nil {
 		if err := ValidateTextField("title", *up.Title, MaxTitleLen); err != nil {
@@ -294,6 +317,9 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		}
 	}
 	if err := c.discover(ctx); err != nil {
+		return err
+	}
+	if err := c.validateAgentCalendarPath(calendarPath); err != nil {
 		return err
 	}
 	found, err := c.findEventByUID(ctx, calendarPath, uid)
@@ -437,6 +463,8 @@ var occurrenceCopyProps = map[string]bool{
 
 // applyOccurrenceUpdate creates or replaces a RECURRENCE-ID override VEVENT
 // for recID, applying field patches from up. The master RRULE is preserved.
+// When start is set without end, DTEND is derived as start + duration so
+// agents can move an occurrence start without sending end.
 func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Time, up *EventUpdate) error {
 	var override *ical.Component
 	for _, ch := range cal.Children {
@@ -450,7 +478,9 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 			}
 		}
 	}
+	created := false
 	if override == nil {
+		created = true
 		override = ical.NewEvent().Component
 		for name, props := range master.Props {
 			if !occurrenceCopyProps[name] {
@@ -462,23 +492,49 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 			}
 		}
 		override.Props.Set(setRecurrenceInstantProp(ical.PropRecurrenceID, master, recID))
-		// Default occurrence times = original slot duration on recID.
-		if up.StartTime == nil {
-			if p := master.Props.Get(ical.PropDateTimeStart); p != nil {
-				if _, err := p.DateTime(time.UTC); err == nil {
-					dur := masterEventDuration(master)
-					ov := &ical.Event{Component: override}
-					setEventDateProp(ov, ical.PropDateTimeStart, recID)
-					setEventDateProp(ov, ical.PropDateTimeEnd, recID.Add(dur))
-					// DTEND and DURATION are mutually exclusive (RFC 5545).
-					ov.Props.Del(ical.PropDuration)
-				}
-			}
+		dur := masterEventDuration(master)
+		ov := &ical.Event{Component: override}
+		start := recID
+		if up.StartTime != nil {
+			start = *up.StartTime
 		}
+		end := start.Add(dur)
+		if up.EndTime != nil {
+			end = *up.EndTime
+		}
+		setEventDateProp(ov, ical.PropDateTimeStart, start)
+		setEventDateProp(ov, ical.PropDateTimeEnd, end)
+		// DTEND and DURATION are mutually exclusive (RFC 5545).
+		ov.Props.Del(ical.PropDuration)
 		cal.Children = append(cal.Children, override)
 	}
 	ov := &ical.Event{Component: override}
+	prevDur := masterEventDuration(master)
+	if !created {
+		if sp := ov.Props.Get(ical.PropDateTimeStart); sp != nil {
+			if ep := ov.Props.Get(ical.PropDateTimeEnd); ep != nil {
+				if st, serr := sp.DateTime(time.UTC); serr == nil {
+					if en, eerr := ep.DateTime(time.UTC); eerr == nil && en.After(st) {
+						prevDur = en.Sub(st)
+					}
+				}
+			}
+		}
+	}
 	applyFieldUpdate(ov, up)
+	if up.StartTime != nil && up.EndTime == nil {
+		setEventDateProp(ov, ical.PropDateTimeEnd, up.StartTime.Add(prevDur))
+		ov.Props.Del(ical.PropDuration)
+	}
+	if sp := ov.Props.Get(ical.PropDateTimeStart); sp != nil {
+		if ep := ov.Props.Get(ical.PropDateTimeEnd); ep != nil {
+			newStart, sErr := sp.DateTime(time.UTC)
+			newEnd, eErr := ep.DateTime(time.UTC)
+			if sErr == nil && eErr == nil && !newEnd.After(newStart) {
+				return fmt.Errorf("invalid update: end (%s) must be after start (%s)", newEnd.Format(time.RFC3339), newStart.Format(time.RFC3339))
+			}
+		}
+	}
 	return nil
 }
 
@@ -542,10 +598,12 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 }
 
 // normalizeIfMatch turns a bare, unquoted ETag (as stored by go-webdav after
-// strconv.Unquote) into a valid RFC 7232 entity-tag for an If-Match header:
-// "*" and already-quoted values (including weak W/"...") are passed through.
+// strconv.Unquote) into a valid RFC 7232 entity-tag for an If-Match header.
+// Already-quoted values (including weak W/"...") are passed through.
+// Client-supplied "*" is rejected earlier by ValidateIfMatchETag; this helper
+// must not reintroduce last-writer-wins If-Match: *.
 func normalizeIfMatch(etag string) string {
-	if etag == "" || etag == "*" {
+	if etag == "" {
 		return etag
 	}
 	if strings.HasPrefix(etag, "W/") || strings.HasPrefix(etag, `"`) {
@@ -554,14 +612,46 @@ func normalizeIfMatch(etag string) string {
 	return `"` + etag + `"`
 }
 
+// validateAgentCalendarPath requires a syntactically valid path under the
+// discovered calendar-home-set (defense in depth against in-account path
+// probing outside the principal's home collection).
+func (c *Client) validateAgentCalendarPath(path string) error {
+	if err := ValidateCalendarPath(path); err != nil {
+		return err
+	}
+	if c.homeSetPath == "" {
+		return fmt.Errorf("calendar home-set not discovered")
+	}
+	if !pathUnderHomeSet(path, c.homeSetPath) {
+		return NewValidationError("calendar path is outside the discovered calendar home-set")
+	}
+	return nil
+}
+
+// pathUnderHomeSet reports whether path is the home-set itself or a resource
+// under it (trailing-slash insensitive on the home-set prefix).
+func pathUnderHomeSet(path, homeSet string) bool {
+	home := strings.TrimSuffix(homeSet, "/")
+	if home == "" {
+		return false
+	}
+	p := strings.TrimSuffix(path, "/")
+	if p == home {
+		return true
+	}
+	return strings.HasPrefix(path, home+"/")
+}
+
 // DeleteEvent deletes an event located by UID (or a single occurrence when
 // opts.Scope == ScopeOccurrence). Dry-run performs lookup only: no PUT/DELETE.
 func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
-	if err := ValidateCalendarPath(calendarPath); err != nil {
-		return DeleteResult{}, err
-	}
 	if err := ValidateUID(uid); err != nil {
 		return DeleteResult{}, err
+	}
+	if opts != nil {
+		if err := ValidateIfMatchETag(opts.IfMatchETag); err != nil {
+			return DeleteResult{}, err
+		}
 	}
 	scope := ScopeSeries
 	if opts != nil && opts.Scope != "" {
@@ -576,6 +666,9 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		}
 	}
 	if err := c.discover(ctx); err != nil {
+		return DeleteResult{}, err
+	}
+	if err := c.validateAgentCalendarPath(calendarPath); err != nil {
 		return DeleteResult{}, err
 	}
 	obj, err := c.findEventByUID(ctx, calendarPath, uid)
@@ -635,7 +728,27 @@ func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarOb
 	if err != nil {
 		return err
 	}
-	vevent.Props.Add(setRecurrenceInstantProp(ical.PropExceptionDates, vevent, recID))
+	// Dedupe: skip adding EXDATE when the instant is already excluded.
+	already := false
+	for _, p := range vevent.Props[ical.PropExceptionDates] {
+		prop := p
+		dates, derr := parseExDateProp(&prop)
+		if derr != nil {
+			continue
+		}
+		for _, d := range dates {
+			if d.UTC().Unix() == recID.UTC().Unix() {
+				already = true
+				break
+			}
+		}
+		if already {
+			break
+		}
+	}
+	if !already {
+		vevent.Props.Add(setRecurrenceInstantProp(ical.PropExceptionDates, vevent, recID))
+	}
 	// Drop any override VEVENT whose RECURRENCE-ID matches.
 	var kept []*ical.Component
 	for _, ch := range obj.Data.Children {
@@ -854,7 +967,18 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 		if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
 			etag = etag[1 : len(etag)-1]
 		}
-		objs = append(objs, extcaldav.CalendarObject{Path: hrefPath(r.Href), Data: cal, ETag: etag})
+		objPath := hrefPath(r.Href)
+		// Reject odd/foreign hrefs from a compromised or buggy multistatus
+		// (must stay path-absolute under the discovered home-set).
+		if err := ValidateCalendarPath(objPath); err != nil {
+			slog.Warn("skipping REPORT href failing path validation", "href", r.Href)
+			continue
+		}
+		if c.homeSetPath != "" && !pathUnderHomeSet(objPath, c.homeSetPath) {
+			slog.Warn("skipping REPORT href outside home-set", "href", r.Href)
+			continue
+		}
+		objs = append(objs, extcaldav.CalendarObject{Path: objPath, Data: cal, ETag: etag})
 	}
 	return objs, nil
 }

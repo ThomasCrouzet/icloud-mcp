@@ -83,7 +83,10 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 
 	overrideByRecID := make(map[int64]Event, len(overrides))
 	for _, o := range overrides {
-		overrideByRecID[o.recurrenceID.UTC().Unix()] = o
+		ov := o
+		ov.Recurrence = "" // never present an override as a series master
+		ov.IsOverride = true
+		overrideByRecID[o.RecurrenceID.UTC().Unix()] = ov
 	}
 	used := make(map[int64]bool, len(overrideByRecID))
 
@@ -107,6 +110,11 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 		clone.StartTime = occ
 		clone.EndTime = occ.Add(duration)
 		clone.exDates = nil
+		// Expanded row is not a master: clear RRULE and expose the original
+		// slot as recurrenceId so agents can target scope=occurrence.
+		clone.Recurrence = ""
+		clone.RecurrenceID = occ
+		clone.IsOverride = false
 		out = append(out, clone)
 	}
 

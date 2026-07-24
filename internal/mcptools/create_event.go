@@ -41,7 +41,7 @@ func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("status", mcp.Description("TENTATIVE, CONFIRMED, or CANCELLED (optional)")),
 		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT (optional)")),
 		mcp.WithString("url", mcp.Description("http(s) URL (optional)")),
-		mcp.WithString("timezone", mcp.Description("IANA timezone name (informational; timed events stored as UTC instants)")),
+		mcp.WithString("timezone", mcp.Description("IANA timezone for timed writes (TZID+VTIMEZONE). Required for correct wall-clock recurring series across DST; defaults to ICLOUD_MCP_DEFAULT_TZ when recurrence is set and this is omitted. Non-recurring timed events without timezone stay UTC Z.")),
 		mcp.WithString("client_uid", mcp.Description("Optional client UID for idempotent create; conflict if already exists")),
 		mcp.WithString("idempotency_key", mcp.Description("Alias of client_uid when client_uid omitted")),
 	)
@@ -175,6 +175,12 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			}
 		}
 
+		// Recurring timed events need a wall-clock zone; fall back to DEFAULT_TZ.
+		if timezone == "" && finalRule != "" && !allDay {
+			if deps.DefaultLocation != nil && deps.DefaultLocation != time.UTC {
+				timezone = deps.DefaultLocation.String()
+			}
+		}
 		ne := &icloud.NewEvent{
 			Title:              title,
 			Location:           location,

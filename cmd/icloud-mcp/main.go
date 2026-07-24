@@ -63,6 +63,7 @@ func main() {
 	// Basic-auth material is registered in Std, RawStd, and URL encodings so a
 	// hostile echo cannot slip past via an alternate base64 alphabet.
 	basicUserPass := []byte(cfg.Email + ":" + cfg.Password)
+	pwBytes := []byte(cfg.Password)
 	red := security.NewRedactor(
 		cfg.Password,
 		cfg.Email,
@@ -70,6 +71,11 @@ func main() {
 		base64.RawStdEncoding.EncodeToString(basicUserPass),
 		base64.URLEncoding.EncodeToString(basicUserPass),
 		base64.RawURLEncoding.EncodeToString(basicUserPass),
+		// Password-only encodings (defense in depth if a body echoes just the secret).
+		base64.StdEncoding.EncodeToString(pwBytes),
+		base64.RawStdEncoding.EncodeToString(pwBytes),
+		base64.URLEncoding.EncodeToString(pwBytes),
+		base64.RawURLEncoding.EncodeToString(pwBytes),
 		url.QueryEscape(cfg.Password),
 		url.PathEscape(cfg.Password),
 	)

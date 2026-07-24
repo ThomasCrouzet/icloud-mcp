@@ -421,7 +421,6 @@ func TestNormalizeIfMatch(t *testing.T) {
 		in, want string
 	}{
 		{"", ""},
-		{"*", "*"},
 		{"v1", `"v1"`},           // bare -> quoted
 		{`"v1"`, `"v1"`},         // already quoted -> passthrough
 		{`W/"v1"`, `W/"v1"`},     // weak -> passthrough
@@ -431,6 +430,21 @@ func TestNormalizeIfMatch(t *testing.T) {
 		if got := normalizeIfMatch(c.in); got != c.want {
 			t.Errorf("normalizeIfMatch(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestValidateIfMatchETag(t *testing.T) {
+	if err := ValidateIfMatchETag(""); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if err := ValidateIfMatchETag(`"v1"`); err != nil {
+		t.Fatalf("quoted: %v", err)
+	}
+	if err := ValidateIfMatchETag("*"); err == nil {
+		t.Fatal("expected rejection of etag=*")
+	}
+	if err := ValidateIfMatchETag("a\r\nb"); err == nil {
+		t.Fatal("expected rejection of CRLF etag")
 	}
 }
 

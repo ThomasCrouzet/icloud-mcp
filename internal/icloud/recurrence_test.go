@@ -112,7 +112,7 @@ func TestExpandOccurrences_OverrideReplacesOccurrence(t *testing.T) {
 		Title:        "Follow-up (moved)",
 		StartTime:    mustParse(t, "2026-07-13T16:00:00Z"),
 		EndTime:      mustParse(t, "2026-07-13T17:00:00Z"),
-		recurrenceID: recID,
+		RecurrenceID: recID,
 	}
 
 	out, _, err := ExpandOccurrences(master, []Event{override}, mustParse(t, "2026-07-01T00:00:00Z"), mustParse(t, "2026-08-15T00:00:00Z"), 0)

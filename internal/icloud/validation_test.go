@@ -50,6 +50,7 @@ func TestValidateUID(t *testing.T) {
 		{"too long", strings.Repeat("a", 256), true},
 		{"directory traversal", "../../etc/passwd", true},
 		{"slash", "abc/def", true},
+		{"backslash", `abc\def`, true},
 		{"percent (suspicious encoding)", "abc%2Fdef", true},
 		{"NUL", "abc\x00def", true},
 		{"carriage return", "abc\rdef", true},
@@ -185,6 +186,41 @@ func TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil(t *testing.T) {
 	want := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestParseRecurrenceID(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseRecurrenceID("recurrence_id", "2026-07-08", paris)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("date-only = %v, want %v", got, want)
+	}
+	got2, err := ParseRecurrenceID("recurrence_id", "2026-07-08T10:00:00", paris)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.UTC().Hour() != 8 { // CEST
+		t.Errorf("timed local = %v UTC, want 08:00Z", got2.UTC())
+	}
+}
+
+func TestPathUnderHomeSet(t *testing.T) {
+	home := "/11901403220/calendars/"
+	if !pathUnderHomeSet(home, home) {
+		t.Error("home itself")
+	}
+	if !pathUnderHomeSet("/11901403220/calendars/home/", home) {
+		t.Error("child calendar")
+	}
+	if pathUnderHomeSet("/other/calendars/home/", home) {
+		t.Error("foreign path")
 	}
 }
 

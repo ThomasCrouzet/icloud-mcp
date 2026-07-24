@@ -86,14 +86,14 @@ func TestClient_CreateEvent_AllDayAndRRULE(t *testing.T) {
 	}
 	_ = uid
 
-	// Timed events are written as UTC (Z) whatever the caller's location, so
-	// the absolute instant never depends on the reader's timezone database.
-	// 09:00 Paris (CEST, +0200) on 2026-07-01 is 07:00 UTC.
+	// Recurring timed events with a non-UTC location write TZID + VTIMEZONE
+	// so wall-clock RRULEs stay correct across DST.
 	uid2, err := c.CreateEvent(context.Background(), testHomeCalendar, &NewEvent{
 		Title:      "Standup",
 		StartTime:  time.Date(2026, 7, 1, 9, 0, 0, 0, paris),
 		EndTime:    time.Date(2026, 7, 1, 9, 30, 0, 0, paris),
 		Recurrence: "FREQ=WEEKLY;COUNT=4",
+		Timezone:   "Europe/Paris",
 	})
 	if err != nil {
 		t.Fatalf("rrule CreateEvent: %v", err)
@@ -104,15 +104,29 @@ func TestClient_CreateEvent_AllDayAndRRULE(t *testing.T) {
 	if !strings.Contains(body2, "RRULE:FREQ=WEEKLY;COUNT=4") && !strings.Contains(body2, "FREQ=WEEKLY;COUNT=4") {
 		t.Errorf("PUT missing RRULE, body:\n%s", body2)
 	}
-	if !strings.Contains(body2, "DTSTART:20260701T070000Z") {
-		t.Errorf("PUT must write DTSTART as UTC, body:\n%s", body2)
+	if !strings.Contains(body2, "TZID=Europe/Paris") && !strings.Contains(body2, "TZID:Europe/Paris") {
+		t.Errorf("PUT must write TZID Europe/Paris, body:\n%s", body2)
 	}
-	// A fixed-offset VTIMEZONE would misplace occurrences across a DST
-	// transition; the UTC write path must not emit one.
-	if strings.Contains(body2, "VTIMEZONE") || strings.Contains(body2, "TZID=") {
-		t.Errorf("PUT must not emit TZID/VTIMEZONE, body:\n%s", body2)
+	if !strings.Contains(body2, "VTIMEZONE") {
+		t.Errorf("PUT must emit VTIMEZONE for recurring local series, body:\n%s", body2)
 	}
 	_ = uid2
+
+	// Non-recurring timed without timezone stays absolute UTC Z.
+	_, err = c.CreateEvent(context.Background(), testHomeCalendar, &NewEvent{
+		Title:     "Once",
+		StartTime: time.Date(2026, 7, 1, 9, 0, 0, 0, paris),
+		EndTime:   time.Date(2026, 7, 1, 9, 30, 0, 0, paris),
+	})
+	if err != nil {
+		t.Fatalf("single CreateEvent: %v", err)
+	}
+	m.mu.Lock()
+	body3 := m.puts[len(m.puts)-1].body
+	m.mu.Unlock()
+	if !strings.Contains(body3, "DTSTART:20260701T070000Z") {
+		t.Errorf("single timed PUT must write DTSTART as UTC, body:\n%s", body3)
+	}
 }
 
 // TestClient_UpdateEvent_ReportPathSendsIfMatch: when the object is only

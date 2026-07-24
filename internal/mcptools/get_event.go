@@ -11,7 +11,7 @@ import (
 
 func newGetEventTool() mcp.Tool {
 	return mcp.NewTool("get_event",
-		mcp.WithDescription("Fetches a single iCloud calendar event by calendar path and exact UID. Returns structured fields (title, times, status, transparency, URL, recurrence, alarms, etag). Does not expose internal server paths. Available in read-only mode."),
+		mcp.WithDescription("Fetches a single iCloud calendar event by calendar path and exact UID. Returns structured fields (title, times, status, transparency, URL, recurrence, alarms, etag) plus overrides[] with recurrenceId for exception targeting. Does not expose internal server paths. Available in read-only mode."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),

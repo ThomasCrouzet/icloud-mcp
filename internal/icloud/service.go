@@ -45,12 +45,17 @@ type Event struct {
 	Status     string    `json:"status,omitempty"`
 	Transp     string    `json:"transparency,omitempty"`
 	URL        string    `json:"url,omitempty"`
-	ETag       string    `json:"etag,omitempty"` // concurrency token when known
+	ETag       string `json:"etag,omitempty"` // concurrency token when known
 
-	// recurrenceID identifies, for an override, the master occurrence it
-	// replaces (RECURRENCE-ID property). Zero for a master or a simple
-	// event. Internal field, never serialized.
-	recurrenceID time.Time
+	// RecurrenceID is the master occurrence this row replaces (RECURRENCE-ID).
+	// For an expanded (unmoved) occurrence it equals the original slot start.
+	// Zero for a non-recurring master. Agents must pass this as recurrence_id
+	// when scope=occurrence (do not use a moved override's new start).
+	RecurrenceID time.Time `json:"recurrenceId,omitempty"`
+	// IsOverride is true when this row is a RECURRENCE-ID exception (moved or
+	// patched occurrence), not a plain expansion of the master RRULE.
+	IsOverride bool `json:"isOverride,omitempty"`
+
 	// exDates lists the excluded dates (EXDATE) of a recurring master.
 	// Internal field, never serialized.
 	exDates []time.Time
@@ -65,6 +70,18 @@ type EventDetail struct {
 	IsRecurring bool `json:"isRecurring,omitempty"`
 	// OverrideCount is the number of RECURRENCE-ID overrides on the object.
 	OverrideCount int `json:"overrideCount,omitempty"`
+	// Overrides lists RECURRENCE-ID exceptions (recurrenceId + times) so
+	// agents can target scope=occurrence without guessing.
+	Overrides []OccurrenceRef `json:"overrides,omitempty"`
+}
+
+// OccurrenceRef is a compact RECURRENCE-ID override summary for get_event.
+type OccurrenceRef struct {
+	RecurrenceID time.Time `json:"recurrenceId"`
+	StartTime    time.Time `json:"start"`
+	EndTime      time.Time `json:"end"`
+	Title        string    `json:"title,omitempty"`
+	IsOverride   bool      `json:"isOverride"`
 }
 
 // AlarmInfo is a parsed VALARM for read paths.

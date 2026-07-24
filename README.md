@@ -26,14 +26,14 @@ No other direct dependency (no prometheus, godotenv, uuid, telemetry).
 | Tool | Type | Description |
 |------|------|-------------|
 | `list_calendars` | read | Lists calendars (name, path, color, description). |
-| `search_events` | read | Events over a date range (recurrences expanded, filters, pagination, hard cap of 400). |
-| `get_event` | read | Single event by calendar path + exact UID (includes etag, alarms, status). |
+| `search_events` | read | Events over a date range (recurrences expanded with `recurrenceId`/`etag`, filters, pagination, hard cap of 400). |
+| `get_event` | read | Single event by calendar path + exact UID (includes etag, alarms, status, `overrides[]`). |
 | `find_free_slots` | read | Free time slots computed locally; never reveals busy event titles. |
 | `validate_event` | read | Local validation of create-shaped fields (no network). |
 | `calendar_capabilities` | read | Version, limits, features (no secrets, no paths, no network). |
-| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarms, `all_day`, `rrule`, status, transparency, URL, `client_uid`). |
-| `update_event` | write | Modifies an event by UID (`scope` series/occurrence, optional `etag` If-Match). |
-| `delete_event` | write | Deletes by UID (`scope`, required `etag` when server omits one, optional `dry_run`); echoes `deletedTitle` on MCP success for confirmation (never in audit logs). |
+| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarms, `all_day`, `rrule`, `timezone` for wall-clock series, status, transparency, URL, `client_uid`). |
+| `update_event` | write | Modifies an event by UID (`scope` series/occurrence with `recurrence_id`, optional `etag` If-Match; `etag=*` rejected). |
+| `delete_event` | write | Deletes by UID (`scope`/`recurrence_id`, required `etag` when server omits one, optional `dry_run`); echoes `deletedTitle` on MCP success for confirmation (never in audit logs). |
 
 **`ICLOUD_MCP_READ_ONLY=1`** removes the 3 write tools from `tools/list` (they are
 absent, not merely rejected at execution time). Read tools including

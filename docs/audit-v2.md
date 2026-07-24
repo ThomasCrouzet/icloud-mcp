@@ -104,3 +104,22 @@ Keep default `UTC` for backward compatibility. Document that operators should se
 | L1 Basic-auth base64 RawStd/URL/RawURL redaction | Low | Fixed |
 | L3 `ServerVersion` via Deps (no global) | Low | Fixed |
 | L5 AGENTS layout tool count | Low | Fixed (local) |
+
+## Full audit remediation (2026-07-24, third pass)
+
+| ID | Severity | Status |
+|----|----------|--------|
+| H1 Occurrence start-only DTEND | High | Fixed (`applyOccurrenceUpdate` keeps duration) |
+| H2 Expose `recurrenceId` / `isOverride` | High | Fixed (search DTO + get_event overrides) |
+| H3 Recurring create TZID+VTIMEZONE | High | Fixed (`buildEventCalendar` + DEFAULT_TZ fallback) |
+| M1 Reject `etag=*` | Medium | Fixed (`ValidateIfMatchETag`) |
+| M2 Bind paths to home-set | Medium | Fixed (`validateAgentCalendarPath`) |
+| M3 Search etag from REPORT | Medium | Fixed |
+| M4 All-day `recurrence_id` date-only | Medium | Fixed (`ParseRecurrenceID`) |
+| M5 Clear RRULE on expanded rows | Medium | Fixed |
+| M6 Multi-cal partial failure | Medium | Fixed (soft warnings; auth hard-fail) |
+| M7 Fair multi-cal cap | Medium | Fixed (query all, cap after sort) |
+| L1 Password-only base64 redaction | Low | Fixed |
+| L3 EXDATE dedupe on re-delete | Low | Fixed |
+| L4 REPORT href path validation | Low | Fixed |
+| L5 UID backslash/controls | Low | Fixed |

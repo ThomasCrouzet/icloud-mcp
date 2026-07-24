@@ -204,9 +204,9 @@ func TestSearchEventsHandler_TruncatedByExpansion(t *testing.T) {
 	}
 }
 
-func TestSearchEventsHandler_MultiCalendarEarlyStop(t *testing.T) {
-	// Service returns MaxResults events for the first calendar so the second
-	// calendar is never queried.
+func TestSearchEventsHandler_MultiCalendarFairCap(t *testing.T) {
+	// Each calendar returns MaxResults events; all calendars are still queried
+	// (fairness), then the global list is capped at MaxResults after sort.
 	events := make([]icloud.Event, icloud.MaxResults)
 	for i := range events {
 		events[i] = icloud.Event{
@@ -238,9 +238,12 @@ func TestSearchEventsHandler_MultiCalendarEarlyStop(t *testing.T) {
 	if !payload.Truncated {
 		t.Error("Truncated = false, want true when multi-calendar cap hits")
 	}
-	// Only first calendar searched.
-	if svc.SearchCallCount != 1 {
-		t.Errorf("SearchCallCount = %d, want 1 (early stop before second calendar)", svc.SearchCallCount)
+	// Both calendars searched (no early-stop bias toward the first path).
+	if svc.SearchCallCount != 2 {
+		t.Errorf("SearchCallCount = %d, want 2 (fair multi-calendar query)", svc.SearchCallCount)
+	}
+	if payload.Total < icloud.MaxResults {
+		t.Errorf("Total = %d, want >= %d", payload.Total, icloud.MaxResults)
 	}
 }
 

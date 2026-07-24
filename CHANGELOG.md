@@ -10,11 +10,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tools: `get_event`, `find_free_slots`, `validate_event`, `calendar_capabilities`.
 - `search_events` optional filters: multi-calendar list, UID, status, all-day,
   cancelled, busy-only, compact (omit notes), stable sort by start+UID.
+- `search_events` returns `recurrenceId`, `isOverride`, and REPORT `etag` on
+  each row; all-day times formatted as `YYYY-MM-DD`. Multi-calendar queries
+  always hit every calendar then cap fairly; non-auth failures surface as
+  `partialFailure` + warnings.
+- `get_event` returns `overrides[]` with `recurrenceId` for exception targeting.
 - `create_event` optional status, transparency, URL, timezone, `client_uid` /
   `idempotency_key` (conflict if UID already exists; never silent overwrite).
+- Recurring timed creates write TZID + generated VTIMEZONE (timezone param or
+  `ICLOUD_MCP_DEFAULT_TZ` fallback) so wall-clock RRULEs survive DST.
 - `update_event` / `delete_event` support `scope=series|occurrence`,
   `recurrence_id`, and optional `etag` (If-Match). Occurrence never deletes
   the whole series. `delete_event` supports `dry_run` (zero PUT/DELETE).
+- `ParseRecurrenceID` accepts `YYYY-MM-DD` for all-day occurrence ops.
 - Conditional DELETE with If-Match; structured `conflict` for HTTP 409.
 - Create PUT sends `If-None-Match: *` (hand-rolled) so concurrent same-UID
   creates cannot silently overwrite (412 maps to `conflict`).
@@ -30,8 +38,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   audit). CI: mod verify/tidy, fuzz smoke, pinned govulncheck, binary size
   budget, `InsecureSkipVerify` guard.
 - `CONTRIBUTING.md`; integration runbook in `docs/testing.md`.
+- Redactor also masks password-only Base64 (Std/RawStd/URL/RawURL).
 
 ### Fixed
+- Occurrence update with only `start` keeps duration (DTEND = start + prior length).
+- Client-supplied `etag=*` rejected (no last-writer-wins If-Match).
+- Agent calendar paths bound to the discovered home-set; REPORT hrefs validated.
+- Expanded occurrences no longer carry the master RRULE; EXDATE re-delete is
+  deduped; UID rejects backslash and other controls.
 - Redactor iterates to a fixed point so secrets re-formed across a previous
   `[REDACTED]` boundary are still masked; secrets with newlines are rejected
   at registration (line-buffered writer cannot mask them).

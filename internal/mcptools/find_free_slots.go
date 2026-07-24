@@ -131,6 +131,8 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		var allEvents []icloud.Event
+		multi := len(paths) > 1
+		var softErrs int
 		for _, path := range paths {
 			res, serr := deps.Service.SearchEvents(ctx, path, start, end, nil)
 			if serr != nil {
@@ -141,9 +143,18 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 						return errResult(deps.Redactor, "searching events", serr), nil
 					}
 				}
-				return errResult(deps.Redactor, "searching events", serr), nil
+				if !multi {
+					return errResult(deps.Redactor, "searching events", serr), nil
+				}
+				softErrs++
+				continue
 			}
 			allEvents = append(allEvents, res.Events...)
+		}
+		if multi && softErrs == len(paths) {
+			return errResult(deps.Redactor, "searching events", icloud.NewError(
+				icloud.CodePartialFailure, 0, "all calendars failed while computing free slots", nil,
+			)), nil
 		}
 		busy := icloud.BusyFromEvents(allEvents, opts.IncludeAllDayBusy, opts.BufferBefore, opts.BufferAfter)
 		slots, err := icloud.FindFreeSlots(busy, opts)

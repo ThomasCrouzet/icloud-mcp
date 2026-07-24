@@ -13,7 +13,7 @@ import (
 
 func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
-		mcp.WithDescription("Updates fields of an existing event by UID. scope=series (default) patches the master; scope=occurrence patches/creates a RECURRENCE-ID override (never deletes the series). Optional etag enables If-Match (412 = concurrent_modification). Omitted fields unchanged; empty text clears."),
+		mcp.WithDescription("Updates fields of an existing event by UID. scope=series (default) patches the master; scope=occurrence patches/creates a RECURRENCE-ID override (never deletes the series). Pass recurrence_id from search_events.recurrenceId (YYYY-MM-DD for all-day). Optional etag from get_event/search_events enables If-Match (412 = concurrent_modification); etag=* is rejected. Omitted fields unchanged; empty text clears. Start-only occurrence updates keep the previous duration."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -28,8 +28,8 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT")),
 		mcp.WithString("url", mcp.Description("http(s) URL")),
 		mcp.WithString("scope", mcp.Description("series (default) or occurrence")),
-		mcp.WithString("recurrence_id", mcp.Description(datetimeParamDescription("Occurrence RECURRENCE-ID when scope=occurrence", defaultLoc))),
-		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event")),
+		mcp.WithString("recurrence_id", mcp.Description("Occurrence RECURRENCE-ID when scope=occurrence. Use search_events.recurrenceId (not a moved override's new start). Prefer YYYY-MM-DD for all-day; timed forms follow "+datetimeParamDescription("the same rules as start", defaultLoc))),
+		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event or search_events (opaque token; not *)")),
 	)
 }
 
@@ -63,8 +63,12 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		args := req.GetArguments()
+		etag := req.GetString("etag", "")
+		if err := icloud.ValidateIfMatchETag(etag); err != nil {
+			return deny("etag parameter", err)
+		}
 		update := &icloud.EventUpdate{
-			IfMatchETag: req.GetString("etag", ""),
+			IfMatchETag: etag,
 		}
 
 		optionalString := func(key string) (string, bool, error) {
@@ -162,7 +166,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			if ridStr == "" {
 				return deny("validation", fmt.Errorf("recurrence_id is required when scope=occurrence"))
 			}
-			rid, rerr := icloud.ParseDateTime("recurrence_id", ridStr, deps.DefaultLocation)
+			rid, rerr := icloud.ParseRecurrenceID("recurrence_id", ridStr, deps.DefaultLocation)
 			if rerr != nil {
 				return deny("validation", rerr)
 			}

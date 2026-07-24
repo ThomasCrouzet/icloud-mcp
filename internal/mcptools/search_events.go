@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
-		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Sorted by start then UID, hard-capped at 400 (truncated). Optional filters: calendars (comma-separated), uid, status, all_day, include_cancelled, busy_only, compact (omit notes), expand_recurrence (default true). Auth errors are never soft-warnings."),
+		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Each occurrence includes recurrenceId (use with scope=occurrence) and etag when known; expanded rows omit master RRULE. Sorted by start then UID, hard-capped at 400 (truncated). Multi-calendar: all calendars are queried then capped fairly; non-auth errors become partialFailure+warnings. Optional filters: calendars, uid, status, all_day, include_cancelled, busy_only, compact, expand_recurrence (default true). Auth errors are never soft-warnings."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -36,19 +37,21 @@ func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 }
 
 type searchEventDTO struct {
-	UID          string    `json:"uid"`
-	Title        string    `json:"title"`
-	Location     string    `json:"location,omitempty"`
-	Notes        string    `json:"notes,omitempty"`
-	StartTime    time.Time `json:"start"`
-	EndTime      time.Time `json:"end"`
-	AllDay       bool      `json:"allDay,omitempty"`
-	Recurrence   string    `json:"recurrence,omitempty"`
-	Timezone     string    `json:"timezone,omitempty"`
-	Status       string    `json:"status,omitempty"`
-	Transparency string    `json:"transparency,omitempty"`
-	URL          string    `json:"url,omitempty"`
-	ETag         string    `json:"etag,omitempty"`
+	UID          string `json:"uid"`
+	Title        string `json:"title"`
+	Location     string `json:"location,omitempty"`
+	Notes        string `json:"notes,omitempty"`
+	StartTime    string `json:"start"`
+	EndTime      string `json:"end"`
+	AllDay       bool   `json:"allDay,omitempty"`
+	Recurrence   string `json:"recurrence,omitempty"`
+	RecurrenceID string `json:"recurrenceId,omitempty"`
+	IsOverride   bool   `json:"isOverride,omitempty"`
+	Timezone     string `json:"timezone,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Transparency string `json:"transparency,omitempty"`
+	URL          string `json:"url,omitempty"`
+	ETag         string `json:"etag,omitempty"`
 }
 
 type searchEventsResponse struct {
@@ -59,6 +62,8 @@ type searchEventsResponse struct {
 	Truncated            bool             `json:"truncated"`
 	TruncatedByExpansion bool             `json:"truncatedByExpansion,omitempty"`
 	MultiCalendarCapped  bool             `json:"multiCalendarCapped,omitempty"`
+	PartialFailure       bool             `json:"partialFailure,omitempty"`
+	Warnings             []string         `json:"warnings,omitempty"`
 	Events               []searchEventDTO `json:"events"`
 }
 
@@ -141,15 +146,26 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		var all []icloud.Event
 		var truncatedByExpansion bool
 		var multiCalendarCapped bool
+		var warnings []string
+		var partialFailure bool
+		multi := len(calendarPaths) > 1 || !singleCalendar
 		for _, path := range calendarPaths {
-			if !singleCalendar && len(all) >= icloud.MaxResults {
-				multiCalendarCapped = true
-				break
-			}
 			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
 			if err != nil {
 				// Auth/security must never be masked as a soft warning.
-				return errResult(deps.Redactor, "searching events", err), nil
+				if ie := icloud.AsICloudError(err); ie != nil {
+					switch ie.Code {
+					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
+						icloud.CodeAuthentication, icloud.CodeAuthorization:
+						return errResult(deps.Redactor, "searching events", err), nil
+					}
+				}
+				if !multi {
+					return errResult(deps.Redactor, "searching events", err), nil
+				}
+				partialFailure = true
+				warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf("calendar %s: %v", path, err)))
+				continue
 			}
 			if result.TruncatedByExpansion {
 				truncatedByExpansion = true
@@ -160,6 +176,12 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			}
 			batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
 			all = append(all, batch...)
+		}
+		if multi && partialFailure && len(all) == 0 && len(warnings) > 0 {
+			return errResult(deps.Redactor, "searching events", icloud.NewError(
+				icloud.CodePartialFailure, 0,
+				"all calendars failed: "+strings.Join(warnings, "; "), nil,
+			)), nil
 		}
 
 		// Stable sort: start ascending, then UID, then title.
@@ -191,6 +213,9 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		page := workable[pageStart:pageEnd]
 
+		if total > icloud.MaxResults {
+			multiCalendarCapped = multiCalendarCapped || multi
+		}
 		resp := searchEventsResponse{
 			Count:                len(page),
 			Total:                total,
@@ -199,6 +224,8 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			Truncated:            truncated,
 			TruncatedByExpansion: truncatedByExpansion,
 			MultiCalendarCapped:  multiCalendarCapped,
+			PartialFailure:       partialFailure,
+			Warnings:             warnings,
 			Events:               eventsToDTO(page, compact),
 		}
 		return writeJSON(deps.Redactor, resp), nil
@@ -275,8 +302,8 @@ func eventsToDTO(events []icloud.Event, compact bool) []searchEventDTO {
 			UID:          e.UID,
 			Title:        e.Title,
 			Location:     e.Location,
-			StartTime:    e.StartTime,
-			EndTime:      e.EndTime,
+			StartTime:    icloud.FormatEventTime(e.StartTime, e.AllDay),
+			EndTime:      icloud.FormatEventTime(e.EndTime, e.AllDay),
 			AllDay:       e.AllDay,
 			Recurrence:   e.Recurrence,
 			Timezone:     e.Timezone,
@@ -284,6 +311,10 @@ func eventsToDTO(events []icloud.Event, compact bool) []searchEventDTO {
 			Transparency: e.Transp,
 			URL:          e.URL,
 			ETag:         e.ETag,
+			IsOverride:   e.IsOverride,
+		}
+		if !e.RecurrenceID.IsZero() {
+			dto.RecurrenceID = icloud.FormatEventTime(e.RecurrenceID, e.AllDay)
 		}
 		if !compact {
 			dto.Notes = e.Notes
