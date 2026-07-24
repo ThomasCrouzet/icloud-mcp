@@ -83,6 +83,10 @@ func (t *AllowlistTransport) RoundTrip(req *http.Request) (*http.Response, error
 // hop (defense in depth, redundant with the RoundTripper but at no cost).
 func NewICloudHTTPClient(timeout time.Duration) *http.Client {
 	inner := &http.Transport{
+		// Explicit nil: never honor HTTP(S)_PROXY. The allowlist is the only
+		// egress path; an env proxy would surprise operators and widen the
+		// trust boundary to a local MITM.
+		Proxy:           nil,
 		MaxIdleConns:    10,
 		MaxConnsPerHost: 10,
 		IdleConnTimeout: 30 * time.Second,

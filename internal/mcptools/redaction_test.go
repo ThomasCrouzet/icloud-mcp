@@ -136,12 +136,19 @@ func writeRedactionXML(w http.ResponseWriter, body string) {
 }
 
 // newTestRedactor mirrors exactly the redactor registration done in
-// main.go: raw password, Basic auth base64 form, URL-encoded form.
+// main.go: raw password, email, Basic auth base64 (Std/RawStd/URL/RawURL),
+// query- and path-encoded forms.
 func newTestRedactor(email, password string) *security.Redactor {
+	basic := []byte(email + ":" + password)
 	return security.NewRedactor(
 		password,
-		base64.StdEncoding.EncodeToString([]byte(email+":"+password)),
+		email,
+		base64.StdEncoding.EncodeToString(basic),
+		base64.RawStdEncoding.EncodeToString(basic),
+		base64.URLEncoding.EncodeToString(basic),
+		base64.RawURLEncoding.EncodeToString(basic),
 		url.QueryEscape(password),
+		url.PathEscape(password),
 	)
 }
 

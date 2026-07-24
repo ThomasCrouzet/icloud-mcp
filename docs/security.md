@@ -13,6 +13,7 @@ Companion to [SECURITY.md](../SECURITY.md) with implementation detail for V2.
   (`security.PortAllowed`). httptest fixtures use non-iCloud hosts with random
   ports and are unaffected.
 - Production destinations are not configurable. Tests inject `httptest` via `NewClient`.
+- Production HTTP transport sets `Proxy: nil` (never honors `HTTP(S)_PROXY`).
 
 ## Credentials and PII
 
@@ -20,14 +21,16 @@ Redacted material:
 
 - App-specific password (raw)
 - Apple ID email
-- Basic auth Base64 (`email:password`)
-- URL-escaped password
+- Basic auth Base64 of `email:password` in Std, RawStd, URL, and RawURL encodings
+- Query-escaped password (`url.QueryEscape`)
+- Path-escaped password (`url.PathEscape`)
 
 Insertion points:
 
 1. `RedactingWriter` on stderr (slog + stdlib `log` + audit)
 2. `errResult` on every tool error
-3. `RecoverRedactMiddleware` on panics (stdout JSON-RPC is not covered by stderr redaction alone)
+3. `writeJSON` on every tool success payload
+4. `RecoverRedactMiddleware` on panics (stdout JSON-RPC is not covered by stderr redaction alone)
 
 Config and credential load errors never embed the email or password values.
 Boot failures are logged before the production Redactor is installed, so
@@ -35,6 +38,11 @@ Boot failures are logged before the production Redactor is installed, so
 identity and secrets.
 
 Calendar titles, notes, and locations are never written to audit logs.
+
+`delete_event` may return `deletedTitle` on the MCP success channel so a human
+(or host) can confirm the target before/after a destructive call. That title is
+**not** written to the mutation audit trail. Prefer `dry_run=true` first when the
+host can show a confirmation UI.
 
 ## `file://` secrets (operator trust)
 
@@ -76,8 +84,18 @@ read tools remain available.
 ## Concurrency (ETag)
 
 - `get_event` returns `etag` when known.
-- `update_event` / `delete_event` accept optional `etag` (`If-Match`).
+- `update_event`, series `delete_event`, and occurrence delete always require an
+  ETag (`If-Match`); if the server omits one, the mutation fails closed
+  (`concurrent_modification`) instead of last-writer-wins. Pass `etag` from
+  `get_event` when needed.
 - HTTP 412 maps to structured `concurrent_modification` and is **never** auto-retried.
+
+## Calendar path hardening
+
+Agent-supplied calendar paths must be path-absolute (`/…`). Scheme-relative
+forms (`//host/…`), query/fragment markers, backslashes, and percent-encoded
+`..` are rejected. PUT/REPORT/DELETE also resolve paths with a same-host check
+against the discovered shard (defense in depth beside the allowlist transport).
 
 ## Free slots privacy
 

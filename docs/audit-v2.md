@@ -93,3 +93,14 @@ Keep default `UTC` for backward compatibility. Document that operators should se
 | CONTRIBUTING + main timeout tests | Fixed |
 | golang image digest pin + local lint via `go run` | Fixed |
 | GitHub secret scanning + private vuln reporting | Enabled (ops) |
+
+## Hostile audit follow-up (2026-07-24, second pass)
+
+| ID | Severity | Status |
+|----|----------|--------|
+| M1 Series DELETE fail-closed without ETag | Medium | Fixed |
+| M2 Working-tree hardening commit | Medium | Fixed (this commit) |
+| M3 Document `deletedTitle` on MCP success | Medium | Fixed (docs) |
+| L1 Basic-auth base64 RawStd/URL/RawURL redaction | Low | Fixed |
+| L3 `ServerVersion` via Deps (no global) | Low | Fixed |
+| L5 AGENTS layout tool count | Low | Fixed (local) |

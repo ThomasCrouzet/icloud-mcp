@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
@@ -72,6 +73,29 @@ func TestUpdateEventHandler_NoFieldsProvided(t *testing.T) {
 	}
 	if svc.UpdateCallCount != 0 {
 		t.Errorf("UpdateEvent should not have been called")
+	}
+}
+
+func TestUpdateEventHandler_NonStringFieldRejected(t *testing.T) {
+	svc := &icloud.MockService{}
+	handler := updateEventHandler(testDeps(svc))
+
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"uid":      "uid-1",
+		"calendar": "/cal/home/",
+		"title":    42, // must not coerce to "" and clear
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected type error for non-string title")
+	}
+	if svc.UpdateCallCount != 0 {
+		t.Error("UpdateEvent must not run on bad types")
+	}
+	if !strings.Contains(resultText(t, res), "must be a string") {
+		t.Fatalf("got %s", resultText(t, res))
 	}
 }
 

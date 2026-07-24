@@ -13,7 +13,7 @@
 | Read-only | 2 tools | 6 tools (mutations still hidden) | yes | none |
 | Errors | text / some codes | structured code + retryable | yes | prefer matching `code` |
 | DEFAULT_TZ | UTC if unset | UTC if unset (unchanged) | yes | set `Europe/Paris` if desired |
-| Update concurrency | opportunistic If-Match | same + delete If-Match + get etag | yes | re-read on `concurrent_modification` |
+| Update concurrency | If-Match required (fail closed without etag) | same + delete If-Match + get etag | yes | re-read on `concurrent_modification` |
 
 ## Breaking changes
 

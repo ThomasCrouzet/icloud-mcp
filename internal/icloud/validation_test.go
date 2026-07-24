@@ -19,6 +19,15 @@ func TestValidateCalendarPath(t *testing.T) {
 		{"NUL", "/cal\x00endar/", true},
 		{"CRLF injection", "/calendar/\r\nDELETE-ALL", true},
 		{"too long", "/" + strings.Repeat("a", 1025), true},
+		{"scheme-relative host", "//evil.example.com/calendars/", true},
+		{"scheme-relative shard", "//p99-caldav.icloud.com/other/", true},
+		{"userinfo scheme-relative", "//caldav.icloud.com@attacker.com/", true},
+		{"uid with at-sign", "/121234567/calendars/home/abc@icloud-mcp.ics", false},
+		{"query string", "/calendars/home/?x=1", true},
+		{"fragment", "/calendars/home/#x", true},
+		{"backslash", "/calendars\\home/", true},
+		{"encoded traversal", "/%2e%2e/etc/passwd", true},
+		{"encoded traversal mixed", "/cal/%2E%2e/x", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -121,9 +130,9 @@ func TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally(t *testing.T) {
 }
 
 // TestParseDateTime_NaiveLocalUsesDefaultLocation is the regression lock for
-// the 2026-07-12 "Grand ménage" incident: the user confirmed "10h à 14h"
+// the 2026-07-12 timezone incident: the user confirmed 10:00-14:00
 // (Europe/Paris, CEST = UTC+2), but the calling agent sent the offset-bearing
-// form "2026-07-12T10:00:00Z", which iCloud rendered as 12h, 2h late. The
+// form "2026-07-12T10:00:00Z", which iCloud rendered as 12:00, 2h late. The
 // fix is the no-offset local-time form: given the SAME literal hour the
 // agent should now send ("2026-07-12T10:00:00", no "Z"), the server must
 // itself resolve it against defaultLoc (Europe/Paris) to the correct UTC
@@ -141,7 +150,7 @@ func TestParseDateTime_NaiveLocalUsesDefaultLocation(t *testing.T) {
 		want  time.Time
 	}{
 		{
-			name:  "CEST (summer, UTC+2) - the Grand menage incident",
+			name:  "CEST (summer, UTC+2) - deep clean timezone incident",
 			value: "2026-07-12T10:00:00",
 			want:  time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC),
 		},

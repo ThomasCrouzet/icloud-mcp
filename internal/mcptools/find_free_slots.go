@@ -69,6 +69,17 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if durMin <= 0 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("duration_minutes must be positive")), nil
 		}
+		if durMin > 24*60 {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("duration_minutes must be at most 1440 (24h)")), nil
+		}
+		bufBefore := req.GetInt("buffer_before_minutes", 0)
+		bufAfter := req.GetInt("buffer_after_minutes", 0)
+		if bufBefore < 0 || bufBefore > 24*60 {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("buffer_before_minutes must be between 0 and 1440")), nil
+		}
+		if bufAfter < 0 || bufAfter > 24*60 {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("buffer_after_minutes must be between 0 and 1440")), nil
+		}
 		paths, err := resolveCalendarPaths(ctx, deps, req)
 		if err != nil {
 			return errResult(deps.Redactor, "calendars", err), nil
@@ -86,8 +97,8 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			RangeEnd:          end,
 			Duration:          time.Duration(durMin) * time.Minute,
 			Location:          loc,
-			BufferBefore:      time.Duration(req.GetInt("buffer_before_minutes", 0)) * time.Minute,
-			BufferAfter:       time.Duration(req.GetInt("buffer_after_minutes", 0)) * time.Minute,
+			BufferBefore:      time.Duration(bufBefore) * time.Minute,
+			BufferAfter:       time.Duration(bufAfter) * time.Minute,
 			IncludeAllDayBusy: true,
 			Limit:             req.GetInt("limit", 50),
 		}

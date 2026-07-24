@@ -54,7 +54,7 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			continue // VTODO-only (Reminders) or another component set without VEVENT
 		}
 		out = append(out, Calendar{
-			Path:        r.Href,
+			Path:        hrefPath(r.Href),
 			Name:        prop.DisplayName,
 			Description: prop.CalendarDescription,
 			Color:       prop.CalendarColor,

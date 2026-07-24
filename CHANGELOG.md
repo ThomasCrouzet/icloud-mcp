@@ -39,12 +39,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or filesystem paths (boot failures log before the Redactor is installed).
 - Discovery revalidates port empty-or-443 on production iCloud hostnames
   (principal and home-set), matching the HTTP transport allowlist.
+- Calendar paths reject scheme-relative hosts (`//…`), query/fragment, and
+  percent-encoded `..`; PUT/REPORT/DELETE keep the resolved URL on the shard.
+- `update_event` preserves existing DTSTART/DTEND form (DATE / TZID / Z) instead
+  of forcing UTC Z; occurrence EXDATE/RECURRENCE-ID match the master form.
+- Imported-UID lookup (REPORT) always re-GETs before mutate so VTIMEZONE and
+  VERSION survive the round-trip.
+- `update_event` and series `delete_event` fail closed when no ETag is available
+  (no unconditional PUT/DELETE; pass `etag` from `get_event`).
+- `scope=occurrence` requires a recurring master (RRULE); override copy skips
+  ATTENDEE/ORGANIZER; duration defaults honor DURATION / all-day 24h.
+- `update_event` rejects non-string optional fields (no silent clear).
+- Discovery failures are no longer cached forever (retry after transient errors).
+- MCP success payloads and path-escaped password forms are redacted; free-slot
+  duration/buffers clamped to schema maxes; `validate_event` accepts
+  `idempotency_key`; `list_calendars` normalizes absolute hrefs to paths.
+- Binary version for `calendar_capabilities` is passed via tool deps (no global).
 
 ### Changed
 - Read-only mode now exposes 6 tools (was 2); write tools remain absent.
 - Default `ICLOUD_MCP_DEFAULT_TZ` remains UTC for compatibility (operators
   should set the calendar owner timezone explicitly).
-- Docs: operator trust for `file://` secrets, dual retry budget, CONTRIBUTING.
+- Docs: operator trust for `file://` secrets, dual retry budget, CONTRIBUTING;
+  threat model notes `deletedTitle` on MCP success (never in audit logs).
 - `file://` load failures report a stable reason code (`not_found`,
   `permission_denied`, or `unreadable`) without the path.
 - `make release` pins `golang:1.25` by image digest; `make lint` falls back to
@@ -53,6 +70,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - Account identity is never printed on invalid `ICLOUD_EMAIL` at boot.
 - `file://` credential paths with a `..` segment or an empty path are rejected.
+- Redactor also masks Basic-auth base64 in RawStd, URL, and RawURL encodings.
 
 ## [0.2.0] - 2026-07-18
 

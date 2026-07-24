@@ -39,8 +39,12 @@ func calendarCapabilitiesHandler(deps Deps) server.ToolHandlerFunc {
 		if !deps.ReadOnly {
 			tools = append(tools, "create_event", "update_event", "delete_event")
 		}
+		ver := deps.Version
+		if ver == "" {
+			ver = "dev"
+		}
 		resp := capabilitiesResponse{
-			Version:           ServerVersion,
+			Version:           ver,
 			ReadOnly:          deps.ReadOnly,
 			HealthcheckActive: deps.HealthEnabled,
 			DefaultTimezone:   defaultLocationName(deps.DefaultLocation),

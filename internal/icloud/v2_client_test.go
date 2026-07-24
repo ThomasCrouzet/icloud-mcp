@@ -218,15 +218,14 @@ func TestClient_CreateEvent_EnrichedFields(t *testing.T) {
 
 func TestClient_UpdateEvent_OccurrenceScope(t *testing.T) {
 	m := newMockCalDAV(t)
-	// Use simple event as master; occurrence update should still produce a PUT
-	// with RECURRENCE-ID when scope=occurrence.
-	path := testHomeCalendar + "uid-simple-1.ics"
-	m.objects["uid-simple-1"] = mockObject{path: path, ics: icsSimpleEvent}
+	// Recurring master required for scope=occurrence.
+	path := testHomeCalendar + "uid-recur-1.ics"
+	m.objects["uid-recur-1"] = mockObject{path: path, ics: icsRecurringWithExdate}
 	m.etags[path] = `"e1"`
 	c := m.client()
-	recID := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	recID := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	newTitle := "Only this day"
-	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-simple-1", &EventUpdate{
+	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{
 		Title:        &newTitle,
 		Scope:        ScopeOccurrence,
 		RecurrenceID: &recID,

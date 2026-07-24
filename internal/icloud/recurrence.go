@@ -58,8 +58,13 @@ func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd tim
 
 	// duration MUST be computed before calling Between: it is used to widen
 	// the lower bound (see below) so occurrences starting before rangeStart
-	// but spilling into the range are not lost.
+	// but spilling into the range are not lost. Clamp negative/zero durations
+	// from corrupt End < Start data so the lower bound is never widened the
+	// wrong way.
 	duration := master.EndTime.Sub(master.StartTime)
+	if duration < 0 {
+		duration = 0
+	}
 
 	// Lower bound widened by `duration`: an occurrence starting before
 	// rangeStart can still overlap the range if it spills into it (e.g. an

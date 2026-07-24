@@ -11,8 +11,9 @@ built on the assumption that **the agent driving it can be compromised or manipu
   scheme, or explicit port is rejected before DNS resolution, on every redirect hop, and
   TLS is always verified.
 - **Secret redaction**: the iCloud app-specific password (and its derived Basic-auth
-  and URL-encoded forms) and the account email are redacted from every output: logs,
-  errors, and MCP responses, including the JSON-RPC error path on panic.
+  forms in Std/RawStd/URL/RawURL base64, plus query-encoded and path-encoded forms) and
+  the account email are redacted from every output: logs, errors, and MCP responses
+  (success and error paths, including the JSON-RPC error path on panic).
 - **Read-only by default**: with `ICLOUD_MCP_READ_ONLY=1` the write tools are not even
   registered. Calendar is the only Apple service touched; there is zero `os/exec` and no
   disk writes (the sole disk read is the `file://` credentials at startup).
@@ -23,6 +24,8 @@ built on the assumption that **the agent driving it can be compromised or manipu
 At worst, an attacker controlling the driving agent can read (and, if read-only mode is
 lifted, modify or delete) the configured calendar, nothing else. Credentials cannot be
 exfiltrated, and no pivot to another Apple service or network destination is possible.
+Note: `delete_event` may echo the event title on the MCP success payload
+(`deletedTitle`) for human confirmation; titles never appear in the stderr audit trail.
 
 ## Reporting a vulnerability
 

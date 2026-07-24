@@ -14,26 +14,26 @@ import (
 )
 
 // TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ is the end-to-end
-// regression lock for the 2026-07-12 "Grand ménage" timezone incident: the
-// user confirmed an event "10h à 14h" (Europe/Paris local time), and the
-// calling agent MUST now be able to pass that literal hour with no offset
+// regression lock for the 2026-07-12 timezone incident: the user confirmed
+// an event 10:00-14:00 (Europe/Paris local time), and the calling agent MUST
+// now be able to pass that literal hour with no offset
 // ("2026-07-12T10:00:00") and have the server resolve it, via the
 // deployment's ICLOUD_MCP_DEFAULT_TZ (Deps.DefaultLocation), to the correct
 // UTC instant handed to icloud.Service.CreateEvent (08:00 UTC, CEST = UTC+2)
 // instead of the buggy literal-UTC interpretation (10:00 UTC, which iCloud
-// would have rendered as 12h, 2h late).
+// would have rendered as 12:00, 2h late).
 func TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ(t *testing.T) {
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
 		t.Fatalf("LoadLocation(Europe/Paris): %v", err)
 	}
-	svc := &icloud.MockService{CreatedUID: "grand-menage-uid"}
+	svc := &icloud.MockService{CreatedUID: "deep-clean-uid"}
 	deps := testDeps(svc)
 	deps.DefaultLocation = paris
 	handler := createEventHandler(deps)
 
 	res, err := handler(context.Background(), newReq(map[string]any{
-		"title":    "Grand ménage",
+		"title":    "Deep clean",
 		"start":    "2026-07-12T10:00:00",
 		"end":      "2026-07-12T14:00:00",
 		"calendar": "/cal/home/",
@@ -48,7 +48,7 @@ func TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ(t *testing.T) {
 	if svc.LastCreated == nil {
 		t.Fatal("CreateEvent was not called")
 	}
-	wantStart := time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC) // 10h Paris (CEST, UTC+2) = 08h UTC
+	wantStart := time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC) // 10:00 Paris (CEST, UTC+2) = 08:00 UTC
 	wantEnd := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)  // 14h Paris = 12h UTC
 	if !svc.LastCreated.StartTime.Equal(wantStart) {
 		t.Errorf("StartTime = %v, want %v (2h shift bug: was previously 10:00 UTC instead of 08:00 UTC)", svc.LastCreated.StartTime, wantStart)

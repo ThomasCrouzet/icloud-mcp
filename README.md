@@ -33,7 +33,7 @@ No other direct dependency (no prometheus, godotenv, uuid, telemetry).
 | `calendar_capabilities` | read | Version, limits, features (no secrets, no paths, no network). |
 | `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarms, `all_day`, `rrule`, status, transparency, URL, `client_uid`). |
 | `update_event` | write | Modifies an event by UID (`scope` series/occurrence, optional `etag` If-Match). |
-| `delete_event` | write | Deletes by UID (`scope`, `etag`, optional `dry_run`); echoes title for confirmation. |
+| `delete_event` | write | Deletes by UID (`scope`, required `etag` when server omits one, optional `dry_run`); echoes `deletedTitle` on MCP success for confirmation (never in audit logs). |
 
 **`ICLOUD_MCP_READ_ONLY=1`** removes the 3 write tools from `tools/list` (they are
 absent, not merely rejected at execution time). Read tools including
@@ -254,8 +254,8 @@ to DAV services, and this server only exercises the CalDAV scope of that access.
 |-----------|--------|
 | **Network allowlist** | An `http.RoundTripper` that rejects any host other than `caldav.icloud.com` / `pXX-caldav.icloud.com`, any scheme other than https, and any explicit port, BEFORE DNS resolution; covers every redirect hop (+ `CheckRedirect`). The discovered shard host is re-validated. |
 | **TLS** | Always verified, `MinVersion` TLS 1.2, never `InsecureSkipVerify`. |
-| **Secret redaction** | The password (+ its Basic-auth base64 form and URL-encoded form) and the email are masked from every output: stderr (slog + audit + transport logger, stdlib `log`), and MCP responses (redacted error helper + redacted recover middleware for the JSON-RPC channel). |
-| **Mutation audit** | Every create/update/delete is logged to stderr as structured JSON (timestamp, level, `msg=audit`, tool, calendar, UID, status), **without** title or content (no PII). |
+| **Secret redaction** | The password (+ Basic-auth base64 in Std/RawStd/URL/RawURL encodings, query-encoded, and path-encoded forms) and the email are masked from every output: stderr (slog + audit + transport logger, stdlib `log`), and MCP responses (success JSON, redacted error helper, and redacted recover middleware for the JSON-RPC channel). |
+| **Mutation audit** | Every create/update/delete is logged to stderr as structured JSON (timestamp, level, `msg=audit`, tool, calendar, UID, status), **without** title or content (no PII). `delete_event` may still return `deletedTitle` on the MCP success channel for confirmation. |
 | **Rate limiting** | 60 reads/min, 20 writes/min (`x/time/rate` token bucket), 30s HTTP timeout, 25s per-tool timeout, bounded retries with backoff (idempotent operations only). HTTP 429/502/503/504 from the CalDAV shard are retried with `Retry-After` honoring + exponential backoff/jitter (6 attempts, bounded by the tool timeout). |
 | **Input validation** | RFC3339 dates (offset honored literally) or local time resolved via `ICLOUD_MCP_DEFAULT_TZ`, range ≤ 366 days, UID/paths without `..`/NUL, bounded field sizes. |
 | **Minimal surface** | Stateless, zero `os/exec`, zero disk writes, zero telemetry. The only in-memory state shared across requests is the (immutable-after-boot) discovery cache (`sync.Once` over the shard base + calendar home-set) and the rate-limiter token buckets (a process-wide throttle, not per-client session state). No request depends on a previous request's mutable state: `update_event` re-reads the event fresh via GET, so it never carries state across calls. |
@@ -289,15 +289,18 @@ v0.7.0 loses the shard host), correct EXDATE + RECURRENCE-ID override expansion 
 TZID preservation, handling of a missing DTEND, hard cap of 400 results.
 
 ## Known limitations
-- **Update uses opportunistic If-Match**: `update_event` re-reads the full object
-  (GET on `<uid>.ics`, or REPORT fallback for imported filenames) and sends
-  `If-Match` when an ETag is available (GET header or REPORT `getetag`). When the
-  server omits ETag entirely, the PUT degrades to unconditional last-writer-wins.
-  go-webdav v0.7.0 `PutCalendarObject` does not support `If-Match`, so the
-  conditional PUT is hand-rolled.
+- **Mutations require If-Match**: `update_event` and `delete_event` (series and
+  occurrence) re-read the full object (GET on `<uid>.ics`, or REPORT to discover
+  the href then mandatory GET for imported filenames) and always send
+  `If-Match`. When no ETag is available, the mutation fails closed
+  (`concurrent_modification`) instead of last-writer-wins; pass `etag` from
+  `get_event`. go-webdav v0.7.0 `PutCalendarObject` does not support `If-Match`,
+  so the conditional PUT/DELETE is hand-rolled.
 - **UID fallback window**: if `<uid>.ics` is missing, `findEventByUID` scans about
   ±5 years around now (not 1970-2100). Events entirely outside that window may
   not be found for update/delete.
+- **Occurrence scope** needs a recurring master (RRULE). EXDATE and RECURRENCE-ID
+  are written in the same DATE/TZID/Z form as the master DTSTART.
 - **Recurrence expansion** is capped at 2000 occurrences per series; when the cap
   hits, `search_events` sets `truncatedByExpansion`. Results are also hard-capped
   at 400 events (`truncated`). Multi-calendar search stops starting new calendars

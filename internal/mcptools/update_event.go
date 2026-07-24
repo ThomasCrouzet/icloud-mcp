@@ -67,22 +67,37 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			IfMatchETag: req.GetString("etag", ""),
 		}
 
-		if v, exists := args["title"]; exists {
-			s, _ := v.(string)
+		optionalString := func(key string) (string, bool, error) {
+			v, exists := args[key]
+			if !exists {
+				return "", false, nil
+			}
+			s, ok := v.(string)
+			if !ok {
+				return "", false, fmt.Errorf("%s must be a string", key)
+			}
+			return s, true, nil
+		}
+
+		if s, ok, err := optionalString("title"); err != nil {
+			return deny("title parameter", err)
+		} else if ok {
 			if err := icloud.ValidateTextField("title", s, icloud.MaxTitleLen); err != nil {
 				return deny("title parameter", err)
 			}
 			update.Title = &s
 		}
-		if v, exists := args["location"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("location"); err != nil {
+			return deny("location parameter", err)
+		} else if ok {
 			if err := icloud.ValidateTextField("location", s, icloud.MaxLocationLen); err != nil {
 				return deny("location parameter", err)
 			}
 			update.Location = &s
 		}
-		if v, exists := args["notes"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("notes"); err != nil {
+			return deny("notes parameter", err)
+		} else if ok {
 			if err := icloud.ValidateTextField("notes", s, icloud.MaxNotesLen); err != nil {
 				return deny("notes parameter", err)
 			}
@@ -90,8 +105,9 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		var newStart, newEnd *time.Time
-		if v, exists := args["start"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("start"); err != nil {
+			return deny("start parameter", err)
+		} else if ok {
 			t, err := icloud.ParseDateTime("start", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
@@ -99,8 +115,9 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			update.StartTime = &t
 			newStart = &t
 		}
-		if v, exists := args["end"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("end"); err != nil {
+			return deny("end parameter", err)
+		} else if ok {
 			t, err := icloud.ParseDateTime("end", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
@@ -113,16 +130,19 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				return deny("validation", err)
 			}
 		}
-		if v, exists := args["status"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("status"); err != nil {
+			return deny("status parameter", err)
+		} else if ok {
 			update.Status = &s
 		}
-		if v, exists := args["transparency"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("transparency"); err != nil {
+			return deny("transparency parameter", err)
+		} else if ok {
 			update.Transparency = &s
 		}
-		if v, exists := args["url"]; exists {
-			s, _ := v.(string)
+		if s, ok, err := optionalString("url"); err != nil {
+			return deny("url parameter", err)
+		} else if ok {
 			update.URL = &s
 		}
 		// Same status/transparency/URL policy as create_event / validate_event.

@@ -141,16 +141,102 @@ func setSequence(vevent *ical.Event, n int) {
 	vevent.Props.Set(prop)
 }
 
-// setEventDateProp sets a start/end date while preserving the all-day format
-// (pure date, 8 characters) when the existing property was already a pure
-// date; never convert an all-day event to a datetime during an update.
+// setEventDateProp sets a start/end property while preserving the existing
+// value form: VALUE=DATE stays DATE, TZID stays TZID with local wall clock,
+// UTC (Z) stays Z. Never strip TZID to Z on a timed update (that shifts
+// wall-clock intent across DST and leaves orphan VTIMEZONE components).
 func setEventDateProp(vevent *ical.Event, name string, t time.Time) {
 	existing := vevent.Props.Get(name)
-	if existing != nil && len(existing.Value) == 8 {
-		vevent.Props.SetDate(name, t.UTC())
+	if existing == nil {
+		vevent.Props.SetDateTime(name, t.UTC())
 		return
 	}
+	if isDateOnlyProp(existing) {
+		// All-day: keep calendar date components only.
+		lt := t.UTC()
+		day := time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, time.UTC)
+		vevent.Props.SetDate(name, day)
+		return
+	}
+	if tzid := existing.Params.Get(ical.PropTimezoneID); tzid != "" {
+		loc, err := time.LoadLocation(tzid)
+		if err != nil {
+			// Unknown TZID: fall back to UTC rather than inventing a zone.
+			vevent.Props.SetDateTime(name, t.UTC())
+			return
+		}
+		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
+		vevent.Props.SetDateTime(name, t.In(loc))
+		return
+	}
+	// UTC Z or floating local without TZID: pin as UTC Z.
 	vevent.Props.SetDateTime(name, t.UTC())
+}
+
+// isDateOnlyProp reports whether p is a VALUE=DATE (all-day) property.
+func isDateOnlyProp(p *ical.Prop) bool {
+	if p == nil {
+		return false
+	}
+	if p.ValueType() == ical.ValueDate {
+		return true
+	}
+	return len(p.Value) == 8 && !strings.Contains(p.Value, "T")
+}
+
+// setRecurrenceInstantProp builds a RECURRENCE-ID or EXDATE property whose
+// value form matches the master DTSTART (DATE / TZID / Z). Mismatched forms
+// fail to match on many CalDAV servers (all-day and TZID series).
+func setRecurrenceInstantProp(name string, master *ical.Event, instant time.Time) *ical.Prop {
+	p := ical.NewProp(name)
+	dtstart := master.Props.Get(ical.PropDateTimeStart)
+	if dtstart != nil && isDateOnlyProp(dtstart) {
+		lt := instant.UTC()
+		p.SetDate(time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, time.UTC))
+		return p
+	}
+	if dtstart != nil {
+		if tzid := dtstart.Params.Get(ical.PropTimezoneID); tzid != "" {
+			if loc, err := time.LoadLocation(tzid); err == nil {
+				p.SetDateTime(instant.In(loc))
+				return p
+			}
+		}
+	}
+	p.SetDateTime(instant.UTC())
+	return p
+}
+
+// masterEventDuration returns the master's duration from DTEND, else DURATION,
+// else 24h for all-day, else 1h for timed (occurrence override default).
+func masterEventDuration(master *ical.Event) time.Duration {
+	if master == nil {
+		return time.Hour
+	}
+	stProp := master.Props.Get(ical.PropDateTimeStart)
+	if stProp == nil {
+		return time.Hour
+	}
+	st, err := stProp.DateTime(time.UTC)
+	if err != nil {
+		return time.Hour
+	}
+	if ep := master.Props.Get(ical.PropDateTimeEnd); ep != nil {
+		if en, e2 := ep.DateTime(time.UTC); e2 == nil {
+			if d := en.Sub(st); d > 0 {
+				return d
+			}
+		}
+	}
+	if dp := master.Props.Get(ical.PropDuration); dp != nil {
+		if d, derr := dp.Duration(); derr == nil && d > 0 {
+			return d
+		}
+	}
+	if isDateOnlyProp(stProp) {
+		return 24 * time.Hour
+	}
+	return time.Hour
 }
 
 // parseCalendarObject extracts the Events from a CalDAV object. One object

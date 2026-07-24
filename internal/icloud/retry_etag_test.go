@@ -45,29 +45,55 @@ func TestClient_UpdateEvent_ConditionalPUTSendsIfMatch(t *testing.T) {
 	}
 }
 
-// TestClient_UpdateEvent_FallsBackToUnconditionalPUTWithoutETag. When the
-// server returns no ETag on the GET (the legacy/fallback behavior), the PUT
-// is unconditional (no If-Match): never worse than the previous
-// last-writer-wins behavior. No 412.
-func TestClient_UpdateEvent_FallsBackToUnconditionalPUTWithoutETag(t *testing.T) {
+// TestClient_UpdateEvent_FailsClosedWithoutETag. When the server returns no
+// ETag on the GET, update refuses to PUT unconditionally (no last-writer-wins).
+func TestClient_UpdateEvent_FailsClosedWithoutETag(t *testing.T) {
 	m := newMockCalDAV(t)
 	objPath := testHomeCalendar + "uid-simple-1.ics"
 	m.objects["uid-simple-1"] = mockObject{path: objPath, ics: icsSimpleEvent}
-	// No m.etags entry: the GET serves no ETag.
+	// Explicit empty etag: mock omits the ETag header on GET.
+	m.etags[objPath] = ""
 	c := m.client()
 
 	newTitle := "x"
-	if err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-simple-1", &EventUpdate{Title: &newTitle}); err != nil {
-		t.Fatalf("UpdateEvent() error: %v", err)
+	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-simple-1", &EventUpdate{Title: &newTitle})
+	if err == nil {
+		t.Fatal("expected error when ETag is unavailable")
 	}
-
+	if !strings.Contains(err.Error(), "etag unavailable") {
+		t.Fatalf("got %v", err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.puts) != 1 {
-		t.Fatalf("expected 1 PUT, got %d", len(m.puts))
+	if len(m.puts) != 0 {
+		t.Fatalf("expected 0 PUTs, got %d", len(m.puts))
 	}
-	if m.puts[0].ifMatch != "" {
-		t.Errorf("PUT If-Match = %q, want empty (no ETag to match against)", m.puts[0].ifMatch)
+}
+
+// TestClient_DeleteEvent_FailsClosedWithoutETag. Series delete matches update:
+// no ETag means no unconditional DELETE (no last-writer-wins).
+func TestClient_DeleteEvent_FailsClosedWithoutETag(t *testing.T) {
+	m := newMockCalDAV(t)
+	objPath := testHomeCalendar + "uid-simple-1.ics"
+	m.objects["uid-simple-1"] = mockObject{path: objPath, ics: icsSimpleEvent}
+	m.etags[objPath] = ""
+	c := m.client()
+
+	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-simple-1", nil)
+	if err == nil {
+		t.Fatal("expected error when ETag is unavailable")
+	}
+	if !strings.Contains(err.Error(), "etag unavailable") {
+		t.Fatalf("got %v", err)
+	}
+	ie := AsICloudError(err)
+	if ie == nil || ie.Code != CodeConcurrentModification {
+		t.Fatalf("want concurrent_modification, got %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.deletes) != 0 {
+		t.Fatalf("expected 0 DELETEs, got %d", len(m.deletes))
 	}
 }
 

@@ -49,12 +49,12 @@ type Client struct {
 	http    httpDoer
 	baseURL string
 
-	discoverOnce sync.Once
-	discoverErr  error
-	shardBase    string
-	homeSetPath  string
-	dav          *extcaldav.Client
-	allowHost    func(string) bool
+	discoverMu  sync.Mutex
+	discovered  bool
+	shardBase   string
+	homeSetPath string
+	dav         *extcaldav.Client
+	allowHost   func(string) bool
 }
 
 var _ Service = (*Client)(nil)
@@ -72,8 +72,8 @@ func NewClient(authHTTP httpDoer, baseURL string, allowHost func(string) bool) *
 }
 
 // Discover forces the iCloud shard discovery. Used at boot to validate the
-// credentials before starting the MCP server. Idempotent: the CRUD methods
-// also trigger it automatically via sync.Once.
+// credentials before starting the MCP server. Idempotent after success:
+// CRUD methods also trigger it; failures are retried on the next call.
 func (c *Client) Discover(ctx context.Context) error {
 	return c.discover(ctx)
 }
@@ -309,6 +309,9 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	}
 
 	if scope == ScopeOccurrence {
+		if vevent.Props.Get(ical.PropRecurrenceRule) == nil {
+			return NewValidationError("scope=occurrence requires a recurring master (RRULE)")
+		}
 		if err := applyOccurrenceUpdate(found.Data, vevent, *up.RecurrenceID, up); err != nil {
 			return err
 		}
@@ -341,8 +344,15 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	if up.IfMatchETag != "" {
 		etag = up.IfMatchETag
 	}
-	// Conditional PUT with If-Match when ETag is known. 412 is never
-	// auto-retried (GuardedService does not retry UpdateEvent).
+	// Fail closed without an ETag: unconditional PUT is last-writer-wins and
+	// silently overwrites concurrent edits. Callers should pass etag from
+	// get_event when the server omits it on lookup.
+	if etag == "" {
+		return NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+			"etag unavailable for conditional update; re-read with get_event and pass etag", nil)
+	}
+	// Conditional PUT with If-Match. 412 is never auto-retried
+	// (GuardedService does not retry UpdateEvent).
 	if err := c.putCalendarObjectIfMatch(ctx, found.Path, etag, found.Data); err != nil {
 		return fmt.Errorf("updating event (uid=%s): %w", uid, err)
 	}
@@ -402,6 +412,29 @@ func applyFieldUpdate(vevent *ical.Event, up *EventUpdate) {
 	}
 }
 
+// occurrenceCopyProps are master properties safe to copy onto a new
+// RECURRENCE-ID override. ATTENDEE/ORGANIZER are excluded: copying them can
+// trigger invitation churn on scheduling-capable CalDAV servers. RRULE/EXDATE
+// stay on the master only.
+var occurrenceCopyProps = map[string]bool{
+	ical.PropUID:           true,
+	ical.PropSummary:       true,
+	ical.PropDescription:   true,
+	ical.PropLocation:      true,
+	ical.PropDateTimeStart: true,
+	ical.PropDateTimeEnd:   true,
+	ical.PropDuration:      true,
+	ical.PropStatus:        true,
+	ical.PropTransparency:  true,
+	ical.PropURL:           true,
+	ical.PropClass:         true,
+	ical.PropCategories:    true,
+	ical.PropDateTimeStamp: true,
+	ical.PropCreated:       true,
+	ical.PropLastModified:  true,
+	ical.PropSequence:      true,
+}
+
 // applyOccurrenceUpdate creates or replaces a RECURRENCE-ID override VEVENT
 // for recID, applying field patches from up. The master RRULE is preserved.
 func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Time, up *EventUpdate) error {
@@ -420,7 +453,7 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 	if override == nil {
 		override = ical.NewEvent().Component
 		for name, props := range master.Props {
-			if name == ical.PropRecurrenceRule || name == ical.PropExceptionDates {
+			if !occurrenceCopyProps[name] {
 				continue
 			}
 			for _, p := range props {
@@ -428,21 +461,17 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 				override.Props.Add(&cp)
 			}
 		}
-		rid := ical.NewProp(ical.PropRecurrenceID)
-		rid.Value = recID.UTC().Format("20060102T150405Z")
-		override.Props.Set(rid)
+		override.Props.Set(setRecurrenceInstantProp(ical.PropRecurrenceID, master, recID))
 		// Default occurrence times = original slot duration on recID.
 		if up.StartTime == nil {
 			if p := master.Props.Get(ical.PropDateTimeStart); p != nil {
-				if st, err := p.DateTime(time.UTC); err == nil {
-					dur := time.Hour
-					if ep := master.Props.Get(ical.PropDateTimeEnd); ep != nil {
-						if en, e2 := ep.DateTime(time.UTC); e2 == nil {
-							dur = en.Sub(st)
-						}
-					}
-					setEventDateProp(&ical.Event{Component: override}, ical.PropDateTimeStart, recID)
-					setEventDateProp(&ical.Event{Component: override}, ical.PropDateTimeEnd, recID.Add(dur))
+				if _, err := p.DateTime(time.UTC); err == nil {
+					dur := masterEventDuration(master)
+					ov := &ical.Event{Component: override}
+					setEventDateProp(ov, ical.PropDateTimeStart, recID)
+					setEventDateProp(ov, ical.PropDateTimeEnd, recID.Add(dur))
+					// DTEND and DURATION are mutually exclusive (RFC 5545).
+					ov.Props.Del(ical.PropDuration)
 				}
 			}
 		}
@@ -466,7 +495,7 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
 		return fmt.Errorf("encoding event for update: %w", err)
 	}
-	target, err := resolveRef(c.shardBase, path)
+	target, err := resolvePathOnBase(c.shardBase, path)
 	if err != nil {
 		return fmt.Errorf("invalid event URL (%s): %w", path, err)
 	}
@@ -577,6 +606,11 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 
 	if scope == ScopeOccurrence {
+		if vevent, verr := findMasterVEvent(obj.Data); verr != nil {
+			return DeleteResult{}, verr
+		} else if vevent.Props.Get(ical.PropRecurrenceRule) == nil {
+			return DeleteResult{}, NewValidationError("scope=occurrence requires a recurring master (RRULE)")
+		}
 		if err := c.deleteOccurrence(ctx, obj, *opts.RecurrenceID, opts.IfMatchETag); err != nil {
 			return DeleteResult{}, fmt.Errorf("deleting occurrence (uid=%s): %w", uid, err)
 		}
@@ -595,16 +629,13 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 
 // deleteOccurrence cancels a single occurrence by adding EXDATE to the master
 // (and removing a matching RECURRENCE-ID override if present). It never
-// deletes the series resource.
+// deletes the series resource. EXDATE form matches master DTSTART.
 func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarObject, recID time.Time, ifMatch string) error {
 	vevent, err := findMasterVEvent(obj.Data)
 	if err != nil {
 		return err
 	}
-	// Add EXDATE for the occurrence.
-	ex := ical.NewProp(ical.PropExceptionDates)
-	ex.Value = recID.UTC().Format("20060102T150405Z")
-	vevent.Props.Add(ex)
+	vevent.Props.Add(setRecurrenceInstantProp(ical.PropExceptionDates, vevent, recID))
 	// Drop any override VEVENT whose RECURRENCE-ID matches.
 	var kept []*ical.Component
 	for _, ch := range obj.Data.Children {
@@ -632,19 +663,26 @@ func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarOb
 	if ifMatch != "" {
 		etag = ifMatch
 	}
+	if etag == "" {
+		return NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+			"etag unavailable for conditional update; re-read with get_event and pass etag", nil)
+	}
 	return c.putCalendarObjectIfMatch(ctx, obj.Path, etag, obj.Data)
 }
 
-// deleteCalendarObjectIfMatch DELETEs path with optional If-Match.
+// deleteCalendarObjectIfMatch DELETEs path with If-Match. Empty etag fails
+// closed (same policy as update/occurrence): unconditional DELETE would be
+// last-writer-wins against a concurrent edit. Callers pass etag from get_event
+// when the lookup response omitted one.
 func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, path, etag string) error {
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
 	if etag == "" {
-		// No ETag: fall back to go-webdav RemoveAll (same as pre-V2).
-		return c.dav.RemoveAll(ctx, path)
+		return NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+			"etag unavailable for conditional delete; re-read with get_event and pass etag", nil)
 	}
-	target, err := resolveRef(c.shardBase, path)
+	target, err := resolvePathOnBase(c.shardBase, path)
 	if err != nil {
 		return fmt.Errorf("invalid event URL (%s): %w", path, err)
 	}
@@ -674,6 +712,11 @@ func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, path, etag str
 // findEventByUID locates an event by UID. The .ics file name is NOT
 // guaranteed to equal the UID for imported events (e.g. from another
 // client): never guess a path, always search by UID.
+//
+// Always returns a full object suitable for re-PUT: direct GET on <uid>.ics
+// when possible; otherwise REPORT discovers the href, then GET re-fetches
+// the complete VCALENDAR (VERSION/PRODID/VTIMEZONE). REPORT calendar-data
+// alone can omit components required by go-ical encode.
 func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (*extcaldav.CalendarObject, error) {
 	// iCloud REJECTS calendar-query <prop-filter> (412 Precondition Failed,
 	// observed 2026-07-12), so filtering by UID server-side is impossible. But
@@ -701,9 +744,22 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 		return nil, fmt.Errorf("finding event (uid=%s): %w", uid, err)
 	}
 	for i := range objs {
-		if calendarHasUID(objs[i].Data, uid) {
-			return &objs[i], nil
+		if !calendarHasUID(objs[i].Data, uid) {
+			continue
 		}
+		href := objs[i].Path
+		if href == "" {
+			return nil, fmt.Errorf("finding event (uid=%s): REPORT match has empty path", uid)
+		}
+		// Mandatory re-GET: do not re-PUT filtered REPORT calendar-data.
+		obj, gerr := c.dav.GetCalendarObject(ctx, href)
+		if gerr != nil {
+			return nil, fmt.Errorf("re-fetching event after REPORT (uid=%s): %w", uid, gerr)
+		}
+		if !calendarHasUID(obj.Data, uid) {
+			return nil, fmt.Errorf("event not found (uid=%s)", uid)
+		}
+		return obj, nil
 	}
 	return nil, fmt.Errorf("event not found (uid=%s)", uid)
 }
@@ -743,7 +799,7 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 		filterXML +
 		`</C:calendar-query>`
 
-	target, err := resolveRef(c.shardBase, calendarPath)
+	target, err := resolvePathOnBase(c.shardBase, calendarPath)
 	if err != nil {
 		return nil, fmt.Errorf("invalid calendar URL (%s): %w", calendarPath, err)
 	}
@@ -767,9 +823,13 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 		return nil, fmt.Errorf("REPORT %s: unexpected HTTP status %d", calendarPath, resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReportBodySize))
+	// maxReportBodySize+1 makes overflow detectable (same pattern as PROPFIND).
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReportBodySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading REPORT response (%s): %w", calendarPath, err)
+	}
+	if len(data) > maxReportBodySize {
+		return nil, fmt.Errorf("REPORT response (%s) too large (> %d bytes)", calendarPath, maxReportBodySize)
 	}
 	var ms msMultistatus
 	if err := xml.Unmarshal(data, &ms); err != nil {

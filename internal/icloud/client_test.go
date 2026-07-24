@@ -253,11 +253,15 @@ func (m *mockCalDAV) handleGet(w http.ResponseWriter, r *http.Request) {
 			body = obj.getIcs
 		}
 		w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
-		// When the path has a tracked ETag, return it so the client can do
-		// a conditional PUT (If-Match). Paths without a tracked ETag serve
-		// no ETag header (legacy unconditional behavior).
-		if etag, ok := m.etags[obj.path]; ok {
-			w.Header().Set("ETag", etag)
+		// Always serve an ETag unless the test explicitly registered ""
+		// (empty string = omit header, to exercise fail-closed updates).
+		// Tracked non-empty etags win; otherwise a stable default.
+		if tracked, ok := m.etags[obj.path]; ok {
+			if tracked != "" {
+				w.Header().Set("ETag", tracked)
+			}
+		} else {
+			w.Header().Set("ETag", `"default-etag-1"`)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, body)

@@ -60,11 +60,18 @@ func main() {
 	// 2. Redaction: ALL stderr goes through the RedactingWriter from here on.
 	// The security requirements mandate redacting the password and the email,
 	// so cfg.Email is included on the same footing (defense in depth).
+	// Basic-auth material is registered in Std, RawStd, and URL encodings so a
+	// hostile echo cannot slip past via an alternate base64 alphabet.
+	basicUserPass := []byte(cfg.Email + ":" + cfg.Password)
 	red := security.NewRedactor(
 		cfg.Password,
 		cfg.Email,
-		base64.StdEncoding.EncodeToString([]byte(cfg.Email+":"+cfg.Password)), // Basic Authorization header value
-		url.QueryEscape(cfg.Password), // URL-encoded form
+		base64.StdEncoding.EncodeToString(basicUserPass),
+		base64.RawStdEncoding.EncodeToString(basicUserPass),
+		base64.URLEncoding.EncodeToString(basicUserPass),
+		base64.RawURLEncoding.EncodeToString(basicUserPass),
+		url.QueryEscape(cfg.Password),
+		url.PathEscape(cfg.Password),
 	)
 	stderr := security.NewRedactingWriter(os.Stderr, red)
 	// Structured JSON logs (one object per line): the MCP host can parse them
@@ -113,13 +120,13 @@ func main() {
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)
-	mcptools.ServerVersion = version
 	healthEnabled := *healthAddr != ""
 	mcptools.Register(s, mcptools.Deps{
 		Service:         svc,
 		Audit:           audit,
 		Redactor:        red,
 		DefaultLocation: cfg.DefaultLocation,
+		Version:         version,
 		HealthEnabled:   healthEnabled,
 	}, cfg.ReadOnly)
 

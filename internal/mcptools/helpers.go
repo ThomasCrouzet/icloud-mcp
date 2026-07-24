@@ -82,11 +82,14 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 }
 
 // writeJSON serializes payload as indented JSON and builds a success
-// CallToolResult. A serialization failure is itself routed through errResult.
+// CallToolResult. The body is always run through the Redactor so secrets
+// never leave on the MCP success channel either (defense in depth if a
+// password string appears in calendar text or a buggy upstream echo).
+// A serialization failure is itself routed through errResult.
 func writeJSON(red *security.Redactor, payload any) *mcp.CallToolResult {
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return errResult(red, "formatting response", err)
 	}
-	return mcp.NewToolResultText(string(b))
+	return mcp.NewToolResultText(red.Redact(string(b)))
 }

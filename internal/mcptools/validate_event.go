@@ -36,6 +36,7 @@ func newValidateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithNumber("alarm_minutes_before", mcp.Min(0), mcp.Max(maxAlarmMinutesBefore), mcp.Description("Legacy single alarm minutes before start")),
 		mcp.WithString("alarms_minutes", mcp.Description("Comma-separated alarm offsets in minutes (max 5 total)")),
 		mcp.WithString("client_uid", mcp.Description("Optional client-supplied UID for idempotent create validation")),
+		mcp.WithString("idempotency_key", mcp.Description("Alias of client_uid (same as create_event)")),
 	)
 }
 
@@ -103,6 +104,9 @@ func validateEventHandler(deps Deps) server.ToolHandlerFunc {
 			Alarms:       alarms,
 			Structured:   structured,
 			ClientUID:    req.GetString("client_uid", ""),
+		}
+		if in.ClientUID == "" {
+			in.ClientUID = req.GetString("idempotency_key", "")
 		}
 		res := icloud.ValidateEventInput(in, deps.DefaultLocation)
 		return writeJSON(deps.Redactor, res), nil

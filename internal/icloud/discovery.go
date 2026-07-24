@@ -38,15 +38,22 @@ const propfindHomeSetBody = `<?xml version="1.0" encoding="UTF-8"?>
   </A:prop>
 </A:propfind>`
 
-// discover runs the iCloud discovery sequence (2 PROPFINDs) only once per
-// session (sync.Once) and fills shardBase/homeSetPath/dav. Every CRUD
-// method calls discover(ctx) first; concurrent calls (stdio worker pool)
-// share the same cached result.
+// discover runs the iCloud discovery sequence (2 PROPFINDs) and fills
+// shardBase/homeSetPath/dav. Success is cached for the process lifetime.
+// Failures are NOT cached: a canceled boot context or transient network
+// error must not poison every later tool call. Concurrent callers serialize
+// on discoverMu; after the first success they return immediately.
 func (c *Client) discover(ctx context.Context) error {
-	c.discoverOnce.Do(func() {
-		c.discoverErr = c.doDiscover(ctx)
-	})
-	return c.discoverErr
+	c.discoverMu.Lock()
+	defer c.discoverMu.Unlock()
+	if c.discovered {
+		return nil
+	}
+	if err := c.doDiscover(ctx); err != nil {
+		return err
+	}
+	c.discovered = true
+	return nil
 }
 
 func (c *Client) doDiscover(ctx context.Context) error {
@@ -172,6 +179,8 @@ func (c *Client) validateDiscoveryURL(u *url.URL, kind string) error {
 }
 
 // resolveRef resolves a reference (absolute or relative) against base.
+// Used for discovery principal/home-set URLs (host may legitimately change
+// to a shard). For agent-supplied calendar/event paths use resolvePathOnBase.
 func resolveRef(base, ref string) (string, error) {
 	b, err := url.Parse(base)
 	if err != nil {
@@ -182,4 +191,30 @@ func resolveRef(base, ref string) (string, error) {
 		return "", err
 	}
 	return b.ResolveReference(r).String(), nil
+}
+
+// resolvePathOnBase resolves a path-absolute ref against base and requires
+// the result to stay on base's host and port. Defense in depth if a path
+// ever bypasses ValidateCalendarPath (scheme-relative //host rewrite).
+func resolvePathOnBase(base, path string) (string, error) {
+	if err := ValidateCalendarPath(path); err != nil {
+		return "", err
+	}
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	r, err := url.Parse(path)
+	if err != nil {
+		return "", err
+	}
+	// Force path-only resolution: clear any accidental authority on ref.
+	if r.Scheme != "" || r.Host != "" || r.User != nil {
+		return "", fmt.Errorf("calendar path must not include a host or scheme")
+	}
+	out := b.ResolveReference(r)
+	if out.Scheme != b.Scheme || out.Host != b.Host {
+		return "", fmt.Errorf("calendar path resolves outside base host")
+	}
+	return out.String(), nil
 }

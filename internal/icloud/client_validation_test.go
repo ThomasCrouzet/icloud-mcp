@@ -116,20 +116,16 @@ func TestClient_CreateEvent_AllDayAndRRULE(t *testing.T) {
 }
 
 // TestClient_UpdateEvent_ReportPathSendsIfMatch: when the object is only
-// reachable via REPORT (filename != UID), getetag from REPORT must drive
-// If-Match on the subsequent PUT.
+// reachable via REPORT (filename != UID), a mandatory re-GET supplies the
+// ETag used for If-Match on the subsequent PUT (not the REPORT getetag).
 func TestClient_UpdateEvent_ReportPathSendsIfMatch(t *testing.T) {
 	m := newMockCalDAV(t)
 	// Object stored under a path that is NOT <uid>.ics so direct GET fails.
 	objPath := testHomeCalendar + "imported-file.ics"
 	m.objects["uid-imported-1"] = mockObject{path: objPath, ics: strings.ReplaceAll(icsSimpleEvent, "uid-simple-1", "uid-imported-1")}
-	// handleGet looks up by path; objects map is keyed by UID for REPORT.
-	// The mock iterates objects by path for GET: path is imported-file.ics,
-	// so GET on uid-imported-1.ics 404s. REPORT returns the object with etag.
+	m.etags[objPath] = `"from-get-after-report"`
 	c := m.client()
 
-	// Patch report handler: default reportResponseFragment already includes etag.
-	// Ensure GET on wrong path 404s (default).
 	newTitle := "Imported updated"
 	if err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-imported-1", &EventUpdate{Title: &newTitle}); err != nil {
 		t.Fatalf("UpdateEvent via REPORT: %v", err)
@@ -139,8 +135,18 @@ func TestClient_UpdateEvent_ReportPathSendsIfMatch(t *testing.T) {
 	if len(m.puts) != 1 {
 		t.Fatalf("expected 1 PUT, got %d", len(m.puts))
 	}
-	if m.puts[0].ifMatch != `"report-etag-1"` {
-		t.Errorf("PUT If-Match = %q, want %q from REPORT getetag", m.puts[0].ifMatch, `"report-etag-1"`)
+	if m.puts[0].ifMatch != `"from-get-after-report"` {
+		t.Errorf("PUT If-Match = %q, want %q from re-GET ETag", m.puts[0].ifMatch, `"from-get-after-report"`)
+	}
+	// Prove REPORT discovery then re-GET on the imported path.
+	foundGET := false
+	for _, g := range m.gets {
+		if g == objPath {
+			foundGET = true
+		}
+	}
+	if !foundGET {
+		t.Fatalf("expected GET on imported path, got %v", m.gets)
 	}
 }
 

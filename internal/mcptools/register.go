@@ -9,10 +9,6 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// ServerVersion is set by main via RegisterOptions when available; used by
-// calendar_capabilities. Empty means "dev".
-var ServerVersion = "dev"
-
 // Deps groups the dependencies shared by all tool handlers.
 type Deps struct {
 	Service  icloud.Service
@@ -24,6 +20,11 @@ type Deps struct {
 	// nil is treated as UTC by icloud.ParseDateTime and by
 	// datetimeParamDescription.
 	DefaultLocation *time.Location
+
+	// Version is the binary version (main.version); empty is treated as "dev"
+	// by calendar_capabilities. Set once at Register; not a process-wide
+	// mutable global.
+	Version string
 
 	// ReadOnly and HealthEnabled are surfaced by calendar_capabilities only
 	// (never email, secrets, shard, or paths).

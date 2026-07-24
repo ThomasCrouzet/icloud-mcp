@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,9 +21,13 @@ const (
 	MaxResults     = 400 // hard limit from the spec
 )
 
-// ValidateCalendarPath checks that a calendar path is plausible: non-empty,
-// starts with '/', no directory traversal or control characters, bounded
-// length.
+// ValidateCalendarPath checks that a calendar path is a path-absolute CalDAV
+// path: non-empty, starts with a single '/', no scheme-relative form (//host),
+// no directory traversal (including percent-encoded), no userinfo/query/
+// fragment markers, no control characters, bounded length.
+//
+// Scheme-relative inputs like "//evil.example/x" would otherwise pass a naive
+// "starts with /" check and rewrite the host under url.ResolveReference.
 func ValidateCalendarPath(path string) error {
 	if path == "" {
 		return fmt.Errorf("calendar path cannot be empty")
@@ -33,10 +38,35 @@ func ValidateCalendarPath(path string) error {
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("calendar path must start with '/'")
 	}
+	// Reject scheme-relative URLs (//host/...) and backslash variants.
+	// Note: '@' is allowed in path segments (event UIDs often contain '@');
+	// host rewrite via userinfo only applies to scheme-relative refs, already
+	// rejected above.
+	if strings.HasPrefix(path, "//") || strings.Contains(path, "\\") {
+		return fmt.Errorf("calendar path must be path-absolute (no host or scheme)")
+	}
+	// Reject query/fragment markers that change URL semantics under ResolveReference.
+	if strings.ContainsAny(path, "?#") {
+		return fmt.Errorf("calendar path contains invalid characters")
+	}
+	if strings.ContainsAny(path, "\x00\n\r") {
+		return fmt.Errorf("calendar path contains invalid characters")
+	}
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("calendar path contains a directory traversal sequence ('..')")
 	}
-	if strings.ContainsAny(path, "\x00\n\r") {
+	// Percent-decoded form must also be free of ".." and scheme-relative shape.
+	decoded := path
+	if d, err := url.PathUnescape(path); err == nil {
+		decoded = d
+	}
+	if strings.Contains(decoded, "..") {
+		return fmt.Errorf("calendar path contains a directory traversal sequence ('..')")
+	}
+	if strings.HasPrefix(decoded, "//") || strings.Contains(decoded, "\\") {
+		return fmt.Errorf("calendar path must be path-absolute (no host or scheme)")
+	}
+	if strings.ContainsAny(decoded, "?#\x00\n\r") {
 		return fmt.Errorf("calendar path contains invalid characters")
 	}
 	return nil
@@ -93,16 +123,16 @@ const naiveDateTimeLayout = "2006-01-02T15:04:05"
 //
 // The no-offset form exists because converting a stated local hour to the
 // correct UTC offset is precisely the step an LLM agent gets wrong: on
-// 2026-07-12, asked to create "Grand ménage" from 10h to 14h (Europe/Paris,
-// confirmed in French with the user), the calling agent sent
-// start=2026-07-12T10:00:00Z / end=2026-07-12T14:00:00Z, i.e. literal UTC.
-// iCloud rendered that 2h later than intended (CEST = UTC+2) once displayed
-// in the user's Europe/Paris calendar. Accepting a bare local time and
-// resolving the DST-aware offset server-side (via defaultLoc, see
-// ICLOUD_MCP_DEFAULT_TZ in internal/config) removes that arithmetic from
-// the agent's job entirely; the tool description steers callers toward this
-// form for "the time the user said" and reserves the explicit-offset form
-// for a deliberately different timezone (e.g. a call with someone abroad).
+// 2026-07-12, asked to create a "Deep clean" event from 10:00 to 14:00
+// (Europe/Paris), the calling agent sent start=2026-07-12T10:00:00Z /
+// end=2026-07-12T14:00:00Z, i.e. literal UTC. iCloud rendered that 2h later
+// than intended (CEST = UTC+2) once displayed in the user's Europe/Paris
+// calendar. Accepting a bare local time and resolving the DST-aware offset
+// server-side (via defaultLoc, see ICLOUD_MCP_DEFAULT_TZ in internal/config)
+// removes that arithmetic from the agent's job entirely; the tool description
+// steers callers toward this form for "the time the user said" and reserves
+// the explicit-offset form for a deliberately different timezone (e.g. a call
+// with someone abroad).
 func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
