@@ -45,7 +45,7 @@ type Event struct {
 	Status     string    `json:"status,omitempty"`
 	Transp     string    `json:"transparency,omitempty"`
 	URL        string    `json:"url,omitempty"`
-	ETag       string `json:"etag,omitempty"` // concurrency token when known
+	ETag       string    `json:"etag,omitempty"` // concurrency token when known
 
 	// RecurrenceID is the master occurrence this row replaces (RECURRENCE-ID).
 	// For an expanded (unmoved) occurrence it equals the original slot start.

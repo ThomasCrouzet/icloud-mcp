@@ -186,7 +186,7 @@ func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	if strings.Contains(body, "19700101T000000Z") || strings.Contains(body, "21000101T000000Z") {
 		t.Fatalf("fallback REPORT still uses 1970-2100 window; body=%s", body)
 	}
-	// Window should be roughly now±5y: year must be in a modern range.
+	// Window should be roughly now±10y: year must be in a modern range.
 	if !strings.Contains(body, "time-range") {
 		t.Fatalf("REPORT body missing time-range: %s", body)
 	}

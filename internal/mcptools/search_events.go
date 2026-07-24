@@ -29,7 +29,7 @@ func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithBoolean("all_day", mcp.Description("If set, keep only all-day (true) or timed (false) events")),
 		mcp.WithBoolean("include_cancelled", mcp.Description("Include CANCELLED events (default true)")),
 		mcp.WithBoolean("busy_only", mcp.Description("If true, exclude TRANSPARENT events")),
-		mcp.WithBoolean("compact", mcp.Description("If true, omit notes from results")),
+		mcp.WithBoolean("compact", mcp.Description("If true, omit notes from results. Prefer true for wide ranges to reduce PII in the agent context; default false keeps notes for detail views.")),
 		mcp.WithBoolean("expand_recurrence", mcp.Description("Expand RRULE occurrences (default true; false still returns masters overlapping the range via server time-range)")),
 		mcp.WithNumber("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Maximum number of results per page (max 400)")),
 		mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0), mcp.Description("Pagination offset")),

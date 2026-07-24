@@ -77,11 +77,22 @@ Keep default `UTC` for backward compatibility. Document that operators should se
 ## Residual risks
 
 - `this-and-future` recurrence scope not implemented (safety).
-- Wide-scan UID fallback still misses events outside ±5 years (documented in
+- Wide-scan UID fallback still misses events outside ±10 years (documented in
   `docs/caldav-compatibility.md`).
-- Real iCloud integration not run without credentials (manual runbook in
-  `docs/testing.md`).
-- Occurrence updates on non-recurring masters still create a RECURRENCE-ID override (server may accept or reject).
+- Real iCloud integration not run in CI (manual runbook in `docs/testing.md`;
+  operator smoke via live MCP host + `go test -tags=integration`).
+- Occurrence updates on non-recurring masters are rejected (require RRULE).
+
+## Follow-up audit remediation (2026-07-24, fourth pass)
+
+| ID | Severity | Status |
+|----|----------|--------|
+| F1 gofmt Event.ETag | Medium (CI) | Fixed |
+| F2 UID window ±5y | Medium | Fixed (±10y) |
+| F5 main wiring tests | Low | Fixed (timeouts, redactor set, RO register) |
+| F9 rate limit burns tool timeout | Low | Fixed (2s fail-fast `rate_limited`) |
+| Retry PUT body rewind | Low | Fixed (`GetBody` each attempt) |
+| Integration + live MCP smoke | Ops | Verified (real iCloud + MCP host smoke) |
 
 ## Follow-up audit (2026-07-24)
 

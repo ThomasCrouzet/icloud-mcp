@@ -336,3 +336,33 @@ func TestGuardedService_SearchEvents_RateLimitBlocksAfterBurst(t *testing.T) {
 		t.Fatal("expected rate limit error after read burst exhausted")
 	}
 }
+
+// TestGuardedService_WriteRateLimitFailsFastWhenDelayExceedsCap: after the
+// write burst (3), the next token is ~3s away (20/min), which exceeds
+// maxRateWait (2s). The call must return immediately with CodeRateLimited
+// rather than blocking toward the tool timeout.
+func TestGuardedService_WriteRateLimitFailsFastWhenDelayExceedsCap(t *testing.T) {
+	inner := &countingService{}
+	g := NewGuardedService(inner, 0, time.Millisecond)
+	for i := 0; i < 3; i++ {
+		if _, err := g.CreateEvent(context.Background(), "/cal/", &NewEvent{Title: "x"}); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	start := time.Now()
+	_, err := g.CreateEvent(context.Background(), "/cal/", &NewEvent{Title: "y"})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected rate_limited after write burst")
+	}
+	ie := AsICloudError(err)
+	if ie == nil || ie.Code != CodeRateLimited {
+		t.Fatalf("err = %v, want CodeRateLimited", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("waited %v, want fail-fast under 500ms", elapsed)
+	}
+	if inner.createCalls != 3 {
+		t.Errorf("createCalls = %d, want 3 (4th never reached inner)", inner.createCalls)
+	}
+}

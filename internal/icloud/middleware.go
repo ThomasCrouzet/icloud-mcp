@@ -10,6 +10,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// maxRateWait is the longest a tool call may block waiting for a local rate
+// limiter token. Beyond that, fail fast with CodeRateLimited so the 25s tool
+// timeout is not burned on queueing under burst contention.
+const maxRateWait = 2 * time.Second
+
 // GuardedService decorates a Service with rate limiting (two independent
 // budgets: read and write) and bounded retry with exponential backoff.
 // Only idempotent operations are retried (reads + DeleteEvent);
@@ -61,17 +66,45 @@ type RateLimits struct {
 }
 
 func (g *GuardedService) waitRead(ctx context.Context) error {
-	if err := g.readLimit.Wait(ctx); err != nil {
-		return fmt.Errorf("read rate limit exceeded: %w", err)
-	}
-	return nil
+	return waitLimiter(ctx, g.readLimit, "read")
 }
 
 func (g *GuardedService) waitWrite(ctx context.Context) error {
-	if err := g.writeLimit.Wait(ctx); err != nil {
-		return fmt.Errorf("write rate limit exceeded: %w", err)
+	return waitLimiter(ctx, g.writeLimit, "write")
+}
+
+// waitLimiter reserves one token. If the delay exceeds maxRateWait, the
+// reservation is cancelled and a typed rate_limited error is returned so
+// callers can surface a stable code without sitting on the tool timeout.
+func waitLimiter(ctx context.Context, lim *rate.Limiter, kind string) error {
+	res := lim.Reserve()
+	if !res.OK() {
+		return NewError(CodeRateLimited, 429,
+			fmt.Sprintf("%s rate limit exceeded", kind), nil)
 	}
-	return nil
+	delay := res.DelayFrom(time.Now())
+	if delay > maxRateWait {
+		res.Cancel()
+		return &Error{
+			Code:      CodeRateLimited,
+			Status:    429,
+			Message:   fmt.Sprintf("%s rate limit exceeded: retry later", kind),
+			Retryable: true,
+		}
+	}
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		res.Cancel()
+		return NewError(CodeRateLimited, 429,
+			fmt.Sprintf("%s rate limit exceeded: %v", kind, ctx.Err()), ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 // retry retries fn up to maxRetries times with exponential backoff

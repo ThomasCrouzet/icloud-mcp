@@ -481,3 +481,70 @@ func TestNewRetryClassifierReturnsWorkingDoer(t *testing.T) {
 		t.Errorf("err = %v, want authentication_refused", err)
 	}
 }
+
+// bodyCaptureDoer records request body lengths per attempt and returns 429
+// then 200 so the retryClassifier must rewind the body between calls.
+type bodyCaptureDoer struct {
+	mu    sync.Mutex
+	lens  []int
+	calls int
+}
+
+func (d *bodyCaptureDoer) Do(req *http.Request) (*http.Response, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	n := 0
+	if req.Body != nil {
+		b, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		n = len(b)
+		_ = req.Body.Close()
+	}
+	d.lens = append(d.lens, n)
+	status := http.StatusTooManyRequests
+	if d.calls >= 2 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func TestRetryClassifier_RewindsPUTBodyOnRetry(t *testing.T) {
+	payload := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+	req, err := http.NewRequest(http.MethodPut, "https://p42-caldav.icloud.com/cal/x.ics", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.GetBody == nil {
+		t.Fatal("expected GetBody to be set for strings.Reader")
+	}
+	doer := &bodyCaptureDoer{}
+	rc := &retryClassifier{
+		inner:     doer,
+		maxTries:  4,
+		baseDelay: time.Millisecond,
+		maxDelay:  5 * time.Millisecond,
+		now:       time.Now,
+		rand:      func() float64 { return 0 },
+	}
+	resp, err := rc.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_ = resp.Body.Close()
+	if doer.calls != 2 {
+		t.Fatalf("calls = %d, want 2", doer.calls)
+	}
+	want := len(payload)
+	for i, n := range doer.lens {
+		if n != want {
+			t.Errorf("attempt %d body len = %d, want %d (body must be rewound)", i+1, n, want)
+		}
+	}
+}

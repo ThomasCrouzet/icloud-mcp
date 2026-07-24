@@ -297,7 +297,7 @@ TZID preservation, handling of a missing DTEND, hard cap of 400 results.
   `get_event`. go-webdav v0.7.0 `PutCalendarObject` does not support `If-Match`,
   so the conditional PUT/DELETE is hand-rolled.
 - **UID fallback window**: if `<uid>.ics` is missing, `findEventByUID` scans about
-  ±5 years around now (not 1970-2100). Events entirely outside that window may
+  ±10 years around now (not 1970-2100). Events entirely outside that window may
   not be found for update/delete.
 - **Occurrence scope** needs a recurring master (RRULE). EXDATE and RECURRENCE-ID
   are written in the same DATE/TZID/Z form as the master DTSTART.

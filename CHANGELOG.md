@@ -41,6 +41,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Redactor also masks password-only Base64 (Std/RawStd/URL/RawURL).
 
 ### Fixed
+- Local rate limiter fails fast (`rate_limited`) when the next token is more
+  than 2s away, instead of blocking toward the 25s tool timeout.
+- HTTP retry layer explicitly rewinds request bodies via `GetBody` before each
+  429/5xx attempt (PUT/REPORT safe under retry).
+- Imported-UID fallback scan window widened from ±5 years to ±10 years.
+- `gofmt` alignment on `Event.ETag` field.
 - Occurrence update with only `start` keeps duration (DTEND = start + prior length).
 - Client-supplied `etag=*` rejected (no last-writer-wins If-Match).
 - Agent calendar paths bound to the discovered home-set; REPORT hrefs validated.
@@ -74,8 +80,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only mode now exposes 6 tools (was 2); write tools remain absent.
 - Default `ICLOUD_MCP_DEFAULT_TZ` remains UTC for compatibility (operators
   should set the calendar owner timezone explicitly).
-- Docs: operator trust for `file://` secrets, dual retry budget, CONTRIBUTING;
-  threat model notes `deletedTitle` on MCP success (never in audit logs).
+- Docs: operator trust for `file://` secrets, dual retry budget (body rewind +
+  2s local rate-limit cap), CONTRIBUTING; threat model notes `deletedTitle`
+  on MCP success (never in audit logs).
 - `file://` load failures report a stable reason code (`not_found`,
   `permission_denied`, or `unreadable`) without the path.
 - `make release` pins `golang:1.25` by image digest; `make lint` falls back to

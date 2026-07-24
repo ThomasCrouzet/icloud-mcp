@@ -64,12 +64,16 @@ Two layers may retry, both bounded by the per-tool context (25s in production):
    honoring `Retry-After` (capped at 10s) with backoff + jitter. Safe for
    writes because those statuses mean the server did not apply the request.
    Transport/network errors are not retried (a PUT may have landed).
-   Exhausted retryable statuses become a typed `*icloud.Error`.
+   Exhausted retryable statuses become a typed `*icloud.Error`. Each attempt
+   rewinds `req.Body` via `GetBody` so PUT/REPORT bodies are not sent empty
+   after a prior retry.
 2. **`GuardedService`**: additional retries on **idempotent reads** (and
    series delete) for non-classified transient errors only (e.g. short
    connection blips). Create/update and occurrence-scoped deletes are never
    retried at this layer. Typed `*icloud.Error` values, including exhausted
    HTTP 503s, are returned immediately and are not retried again here.
+   Local rate limit waits are capped at 2s; longer delays fail fast with
+   `rate_limited` instead of burning the tool timeout.
 
 Prolonged 503s are therefore capped by the HTTP layer alone (6 attempts).
 The outer layer only multiplies attempts for unclassified transport failures

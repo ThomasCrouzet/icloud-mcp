@@ -54,6 +54,9 @@ func NewRetryClassifier(inner httpDoer) httpDoer {
 // Do implements httpDoer.
 func (r *retryClassifier) Do(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
+		if err := rewindRequestBody(req); err != nil {
+			return nil, err
+		}
 		resp, err := r.inner.Do(req)
 		if err != nil {
 			// Network/transport error: do not replay (unsafe for writes).
@@ -77,6 +80,21 @@ func (r *retryClassifier) Do(req *http.Request) (*http.Response, error) {
 		_ = resp.Body.Close()
 		return nil, classifyStatus(resp.StatusCode)
 	}
+}
+
+// rewindRequestBody restores req.Body from GetBody before each attempt so a
+// PUT/REPORT body consumed on a prior 429/5xx retry is not sent empty.
+// No-op when there is no body or GetBody is unset (GET/DELETE).
+func rewindRequestBody(req *http.Request) error {
+	if req == nil || req.GetBody == nil {
+		return nil
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("rewinding request body for retry: %w", err)
+	}
+	req.Body = body
+	return nil
 }
 
 // isRetryStatus reports whether a status is an idempotent "try again later"

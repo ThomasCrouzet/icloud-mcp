@@ -27,10 +27,10 @@ const maxReportBodySize = 32 << 20 // 32 MiB
 
 // uidLookupWindow is the half-range used by findEventByUID when the direct
 // GET on <uid>.ics fails (imported events whose filename differs from the
-// UID). ±5 years keeps the REPORT tractable under the 25s tool timeout while
+// UID). ±10 years keeps the REPORT tractable under the 25s tool timeout while
 // covering ordinary calendar content. Events entirely outside this window
 // are reported as not found on the fallback path.
-const uidLookupWindow = 5 * 365 * 24 * time.Hour
+const uidLookupWindow = 10 * 365 * 24 * time.Hour
 
 // httpDoer is the minimal slice of an HTTP client used by the hand-rolled
 // discovery, compatible with both *http.Client and the return value of
