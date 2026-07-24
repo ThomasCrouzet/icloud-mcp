@@ -92,11 +92,12 @@ func loadDefaultLocation(tz string) (*time.Location, error) {
 }
 
 // Validate checks the email format and the minimum password length. Error
-// messages NEVER contain the password (not even an excerpt); the email is
-// tolerated in the format error message.
+// messages NEVER contain the password or the email (not even an excerpt):
+// boot failures are logged before the production Redactor is installed, so
+// every config error string must be free of credentials and account identity.
 func (c *Config) Validate() error {
 	if _, err := mail.ParseAddress(c.Email); err != nil {
-		return fmt.Errorf("invalid ICLOUD_EMAIL (%q): %w", c.Email, err)
+		return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
 	}
 	if len(c.Password) < 8 {
 		return fmt.Errorf("ICLOUD_PASSWORD must be at least 8 characters: use an app-specific password generated on appleid.apple.com")
@@ -107,17 +108,52 @@ func (c *Config) Validate() error {
 // loadCredential reads an environment variable. If its value starts with
 // "file://", the secret is read from the referenced file (Docker secrets
 // pattern); this is the ONLY disk read the program is allowed to perform.
+// The path is fully trusted to the operator who set the env (no chroot): a
+// process that can set ICLOUD_* can already read the same files. A path
+// segment equal to ".." is rejected as a footgun guard, not as a security
+// boundary (no chroot, no symlink resolution).
 func loadCredential(envVar string) (string, error) {
 	val := os.Getenv(envVar)
 	if strings.HasPrefix(val, "file://") {
 		path := strings.TrimPrefix(val, "file://")
+		if path == "" {
+			return "", fmt.Errorf("reading %s: file:// path is empty", envVar)
+		}
+		if hasDotDotSegment(path) {
+			return "", fmt.Errorf("reading %s: file:// path must not contain '..'", envVar)
+		}
 		data, err := os.ReadFile(path) // #nosec G304 -- path controlled by the operator via env
 		if err != nil {
-			return "", fmt.Errorf("reading %s from file %s: %w", envVar, path, err)
+			// Do not wrap the OS error: it embeds the path, and boot logging
+			// happens before the Redactor is ready. Reason codes only.
+			return "", fmt.Errorf("reading %s from file:// failed (%s)", envVar, fileReadReason(err))
 		}
 		return strings.TrimSpace(string(data)), nil
 	}
 	return val, nil
+}
+
+// hasDotDotSegment reports whether path has a ".." component (slash-separated).
+// Substring matches like "app..pwd" are allowed; only a full segment is rejected.
+func hasDotDotSegment(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// fileReadReason maps an OS read error to a stable, path-free reason code.
+func fileReadReason(err error) string {
+	switch {
+	case os.IsNotExist(err):
+		return "not_found"
+	case os.IsPermission(err):
+		return "permission_denied"
+	default:
+		return "unreadable"
+	}
 }
 
 // parseBool interprets "1" and "true" (case-insensitive) as true;

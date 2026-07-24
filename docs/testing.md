@@ -42,3 +42,39 @@ make release              # static linux/arm64 via golang:1.25 container
 
 Never run in CI. Requires explicit credentials and preferably a disposable calendar.
 Without credentials, integration is honestly "not run".
+
+### Manual runbook (operators)
+
+1. Create an **app-specific password** on [appleid.apple.com](https://appleid.apple.com)
+   (Sign-In and Security → App-Specific Passwords). Prefer a dedicated Apple ID
+   or a disposable calendar so writes cannot harm a production calendar.
+2. Export credentials for one shell session only (never commit them):
+
+   ```bash
+   export ICLOUD_EMAIL='you@icloud.com'
+   export ICLOUD_PASSWORD='xxxx-xxxx-xxxx-xxxx'
+   export ICLOUD_MCP_READ_ONLY=1
+   export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'   # owner IANA TZ
+   ```
+
+   Or use `file://` secrets mounted read-only:
+
+   ```bash
+   export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
+   export ICLOUD_PASSWORD='file:///run/secrets/icloud-password'
+   ```
+
+3. Build and run the integration package (build tag `integration`):
+
+   ```bash
+   go test -tags=integration -count=1 -v -timeout=120s .
+   ```
+
+4. Optional smoke against a live MCP host: start with `ICLOUD_MCP_READ_ONLY=1`,
+   call `list_calendars` then `search_events` on a short window, then lift
+   read-only only if write tools are needed. Revoke the app-specific password
+   when finished.
+
+5. Expected failures without credentials: tests skip or fail fast at discovery
+   with `authentication_refused` (401). Do not disable TLS or the allowlist
+   to "make it pass".

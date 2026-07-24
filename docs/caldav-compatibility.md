@@ -13,14 +13,19 @@ Observations against real iCloud CalDAV (2026-07) that constrain the client.
 
 - Partial `calendar-data` with nested `<comp>` returns empty VEVENTs on iCloud.
 - Only bare `<C:calendar-data/>` works reliably.
-- `prop-filter` by UID returns 412; UID lookup uses GET on `<uid>.ics` then a bounded time-range REPORT fallback.
+- `prop-filter` by UID returns 412; UID lookup uses GET on `<uid>.ics` then a
+  bounded time-range REPORT fallback (±5 years around now). Events whose
+  filename is not `<uid>.ics` and that lie entirely outside that window are
+  reported as not found on the fallback path.
 - Request `D:getetag` with calendar-data so If-Match works on the REPORT path.
 
 ## Writes
 
 - PUT `text/calendar` objects named `<uid>.ics` for server-created events.
 - Imported events may use a different filename; always resolve by UID before mutate.
-- If-Match for optimistic concurrency; 412 = concurrent modification.
+- Create always sends `If-None-Match: *` (hand-rolled PUT) so a concurrent
+  create of the same UID cannot silently overwrite; 412 maps to `conflict`.
+- If-Match for optimistic concurrency on update/delete; 412 = concurrent modification.
 - Update always GET full object first (preserves VERSION/PRODID/VTIMEZONE).
 
 ## Recurrence

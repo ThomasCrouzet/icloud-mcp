@@ -5,6 +5,11 @@ BIN_DIR     := bin
 INSTALL_DIR ?= $(HOME)/.local/bin
 GO          ?= go
 
+# Pin the release builder image by digest so make release is reproducible
+# (floating golang:1.25 tags move). Bump via: docker pull golang:1.25 &&
+# docker image inspect golang:1.25 --format '{{index .RepoDigests 0}}'.
+GOLANG_IMAGE ?= golang:1.25@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980
+
 # Release targets: linux/amd64, linux/arm64, darwin/arm64. All static
 # (CGO_ENABLED=0), trimmed, stripped. The binaries embed the version via
 # -X main.version=$(VERSION) (override with: make release VERSION=v0.2.0).
@@ -18,13 +23,13 @@ build: ## Local binary (dev), host toolchain.
 	$(GO) build -o $(BIN_DIR)/$(PROJECT) ./cmd/$(PROJECT)
 
 # release builds a single target (default linux/arm64, the original pinned
-# platform) INSIDE a golang:1.25 container so no host Go toolchain is assumed
-# for the deliverable. release-all uses the host toolchain to cross-compile
-# every TARGETS pair without Docker (CGO=0 pure-Go cross-compile).
-release: ## Static linux/arm64 binary via a golang:1.25 container (no host toolchain required).
+# platform) INSIDE a pinned golang:1.25 container so no host Go toolchain is
+# assumed for the deliverable. release-all uses the host toolchain to
+# cross-compile every TARGETS pair without Docker (CGO=0 pure-Go cross-compile).
+release: ## Static linux/arm64 binary via pinned golang:1.25 container (no host toolchain required).
 	docker run --rm -v $(PWD):/src -w /src \
 		-e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
-		golang:1.25 \
+		$(GOLANG_IMAGE) \
 		go build -trimpath -ldflags='$(LDFLAGS)' -o $(DIST_DIR)/$(PROJECT) ./cmd/$(PROJECT)
 
 release-all: ## Cross-compile all TARGETS (linux/amd64, linux/arm64, darwin/arm64) with the host toolchain.
@@ -56,11 +61,12 @@ vet: ## go vet.
 # Pin golangci-lint so local make lint and CI do not drift on @latest.
 GOLANGCI_LINT_VERSION ?= v2.1.6
 
-lint: vet ## go vet + golangci-lint (pinned version).
+lint: vet ## go vet + golangci-lint (pinned version via go run when not on PATH).
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run --timeout=5m ./...; \
 	else \
-		echo "golangci-lint not on PATH; install $(GOLANGCI_LINT_VERSION) or rely on CI"; \
+		echo "golangci-lint not on PATH; running pinned $(GOLANGCI_LINT_VERSION) via go run"; \
+		$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --timeout=5m ./...; \
 	fi
 
 clean: ## Remove build artifacts.

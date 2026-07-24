@@ -43,9 +43,9 @@ config.Load → Redactor → AllowlistHTTP+TLS → BasicAuth → RetryClassifier
 | A05 | Medium | MCP | helpers.go | Error codes incomplete vs objective list | Agents cannot branch on validation/timeout | Expand `Code` + MCP payload | contract |
 | A06 | Low | Functional | create | Single alarm; no status/transp/URL/client UID | Limited write surface | Enrich `NewEvent` | unit |
 | A07 | Medium | Search | search_events | No status/all-day/busy/UID filters; notes always returned | Over-fetch / weak filtering | Optional filters + compact | pagination |
-| A08 | Low | Local | — | No offline validate/capabilities | Agent must hit network to sanity-check | `validate_event`, `calendar_capabilities` | failing RT |
-| A09 | Medium | Test | — | No native fuzz targets | Parser/path edge cases unfuzzed | Fuzz suites | fuzz smoke |
-| A10 | Medium | Test | — | No MCP stdio/in-memory E2E | Registration/RO drift possible | harness + register tests | E2E |
+| A08 | Low | Local | n/a | No offline validate/capabilities | Agent must hit network to sanity-check | `validate_event`, `calendar_capabilities` | failing RT |
+| A09 | Medium | Test | n/a | No native fuzz targets | Parser/path edge cases unfuzzed | Fuzz suites | fuzz smoke |
+| A10 | Medium | Test | n/a | No MCP stdio/in-memory E2E | Registration/RO drift possible | harness + register tests | E2E |
 | A11 | Low | Network | retry.go | Retry-After not hard-capped below maxDelay for huge values | Long sleep within tool timeout | already capDelay(max 10s) | unit (existing) |
 | A12 | Info | Compat | config | DEFAULT_TZ default UTC not Europe/Paris | Documented intentional compat | Keep UTC; migration note | docs |
 
@@ -77,6 +77,19 @@ Keep default `UTC` for backward compatibility. Document that operators should se
 ## Residual risks
 
 - `this-and-future` recurrence scope not implemented (safety).
-- Wide-scan UID fallback still misses events outside ±5 years.
-- Real iCloud integration not run without credentials.
+- Wide-scan UID fallback still misses events outside ±5 years (documented in
+  `docs/caldav-compatibility.md`).
+- Real iCloud integration not run without credentials (manual runbook in
+  `docs/testing.md`).
 - Occurrence updates on non-recurring masters still create a RECURRENCE-ID override (server may accept or reject).
+
+## Follow-up audit (2026-07-24)
+
+| ID | Status |
+|----|--------|
+| Boot config / `file://` no path or email in errors | Fixed |
+| Discovery port revalidation on prod iCloud hosts | Fixed |
+| Create `If-None-Match: *` | Fixed |
+| CONTRIBUTING + main timeout tests | Fixed |
+| golang image digest pin + local lint via `go run` | Fixed |
+| GitHub secret scanning + private vuln reporting | Enabled (ops) |

@@ -74,8 +74,11 @@ func TestLoad_DefaultTZInvalid(t *testing.T) {
 }
 
 func TestLoad_InvalidEmail(t *testing.T) {
+	// Boot logging happens before the Redactor exists; Validate must never
+	// put the account identity into the error string.
 	clearEnv(t)
-	t.Setenv("ICLOUD_EMAIL", "not-an-email")
+	bad := "not a valid address at all"
+	t.Setenv("ICLOUD_EMAIL", bad)
 	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
 
 	_, err := Load()
@@ -84,6 +87,9 @@ func TestLoad_InvalidEmail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ICLOUD_EMAIL") {
 		t.Errorf("expected error mentioning ICLOUD_EMAIL: %v", err)
+	}
+	if strings.Contains(err.Error(), bad) {
+		t.Fatalf("email value leaked into config error: %v", err)
 	}
 }
 
@@ -124,6 +130,73 @@ func TestLoad_ErrorNeverContainsPassword(t *testing.T) {
 	if strings.Contains(err.Error(), sentinel) {
 		t.Fatalf("the sentinel password appears in the error: %v", err)
 	}
+	if strings.Contains(err.Error(), "not-a-valid-email") {
+		t.Fatalf("the invalid email appears in the error: %v", err)
+	}
+}
+
+func TestLoad_FileCredentialRejectsDotDot(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "file:///tmp/../etc/passwd")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected: file:// path with '..' rejected")
+	}
+	if !strings.Contains(err.Error(), "..") {
+		t.Errorf("expected error about '..': %v", err)
+	}
+}
+
+func TestHasDotDotSegment(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/tmp/../etc/passwd", true},
+		{"../secret", true},
+		{"/run/secrets/app..pwd", false},
+		{"/run/secrets/icloud-password", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := hasDotDotSegment(tt.path); got != tt.want {
+			t.Errorf("hasDotDotSegment(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestLoad_FileCredentialEmptyPath(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "file://")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected: empty file:// path rejected")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected empty-path error: %v", err)
+	}
+}
+
+func TestLoad_FileCredentialMissingFileOmitsPath(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	missing := "/does/not/exist/app-password-sentinel"
+	t.Setenv("ICLOUD_PASSWORD", "file://"+missing)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected: file read error")
+	}
+	if strings.Contains(err.Error(), missing) {
+		t.Fatalf("missing file path must not appear in error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not_found") {
+		t.Errorf("expected not_found reason code: %v", err)
+	}
 }
 
 func TestLoad_FileCredentials(t *testing.T) {
@@ -162,6 +235,9 @@ func TestLoad_FileCredentialMissingFile(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected: file read error")
+	}
+	if !strings.Contains(err.Error(), "file://") {
+		t.Errorf("expected file:// mention: %v", err)
 	}
 }
 

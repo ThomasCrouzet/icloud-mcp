@@ -82,9 +82,10 @@ type mockCalDAV struct {
 }
 
 type mockPut struct {
-	path    string
-	body    string
-	ifMatch string
+	path        string
+	body        string
+	ifMatch     string
+	ifNoneMatch string
 }
 
 func newMockCalDAV(t *testing.T) *mockCalDAV {
@@ -116,6 +117,20 @@ func (m *mockCalDAV) client() *Client {
 // successful write and reject a stale If-Match.
 func nextEtag(path string, n int) string {
 	return fmt.Sprintf("v%d-%s", n, path)
+}
+
+// mockPathExists reports whether path is already a known object or etag entry
+// (used for If-None-Match: * on create).
+func mockPathExists(m *mockCalDAV, path string) bool {
+	if _, ok := m.etags[path]; ok {
+		return true
+	}
+	for _, obj := range m.objects {
+		if obj.path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // basicAuthDoer sets a Basic Authorization header, a minimal equivalent of
@@ -177,7 +192,16 @@ func (m *mockCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPut:
 		body, _ := io.ReadAll(r.Body)
 		ifMatch := r.Header.Get("If-Match")
-		m.puts = append(m.puts, mockPut{path: r.URL.Path, body: string(body), ifMatch: ifMatch})
+		ifNoneMatch := r.Header.Get("If-None-Match")
+		m.puts = append(m.puts, mockPut{
+			path: r.URL.Path, body: string(body),
+			ifMatch: ifMatch, ifNoneMatch: ifNoneMatch,
+		})
+		// If-None-Match: * (create): reject when the path already exists.
+		if ifNoneMatch == "*" && mockPathExists(m, r.URL.Path) {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
 		// If the path has a tracked ETag, enforce If-Match (conditional
 		// PUT). A missing/empty If-Match on a tracked path is also a
 		// 412 per RFC 7232 (the resource is not "unmapped"), but iCloud's
@@ -618,6 +642,46 @@ func TestClient_Discover_ShardOutsideAllowlist(t *testing.T) {
 	}
 }
 
+func TestClient_Discover_RejectsNon443ICloudPort(t *testing.T) {
+	m := newMockCalDAV(t)
+	m.homeSetHrefFunc = func(string) string {
+		return "https://p12-caldav.icloud.com:8443/121234567/calendars/"
+	}
+	// allowHost is permissive (httptest principal is 127.0.0.1); port is
+	// enforced only because the home-set hostname is a production iCloud host.
+	authHTTP := basicAuthDoer{inner: m.srv.Client(), user: "u@x.com", pass: "app-password"}
+	c := NewClient(authHTTP, m.URL(), func(string) bool { return true })
+
+	err := c.Discover(context.Background())
+	if err == nil {
+		t.Fatal("expected: non-443 iCloud home-set port rejected")
+	}
+	if !strings.Contains(err.Error(), "port") {
+		t.Errorf("expected port error, got: %v", err)
+	}
+}
+
+func TestClient_Discover_AllowsExplicit443ICloudPort(t *testing.T) {
+	m := newMockCalDAV(t)
+	// Absolute home-set on a production-shaped host with explicit :443 must
+	// pass discovery validation. Subsequent CalDAV calls stay on the mock
+	// only if shardBase is used; here we only assert Discover succeeds.
+	m.homeSetHrefFunc = func(string) string {
+		return "https://p12-caldav.icloud.com:443/121234567/calendars/"
+	}
+	authHTTP := basicAuthDoer{inner: m.srv.Client(), user: "u@x.com", pass: "app-password"}
+	c := NewClient(authHTTP, m.URL(), func(host string) bool {
+		return true
+	})
+
+	if err := c.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover with :443 should succeed: %v", err)
+	}
+	if c.shardBase != "https://p12-caldav.icloud.com:443" {
+		t.Errorf("shardBase = %q, want https://p12-caldav.icloud.com:443", c.shardBase)
+	}
+}
+
 // TestClient_Discover_PrincipalOutsideAllowlist. The principal (discovery
 // step 1, current-user-principal) must be revalidated (https + allowHost)
 // just like the home-set (step 3, shard); at some point only the home-set
@@ -901,6 +965,9 @@ func TestClient_CreateEvent(t *testing.T) {
 		t.Fatalf("expected 1 PUT, got %d", len(m.puts))
 	}
 	put := m.puts[0]
+	if put.ifNoneMatch != "*" {
+		t.Errorf("create PUT If-None-Match = %q, want *", put.ifNoneMatch)
+	}
 	if !strings.HasPrefix(put.path, testHomeCalendar) || !strings.HasSuffix(put.path, uid+".ics") {
 		t.Errorf("PUT path = %q, want prefix %q and suffix %q", put.path, testHomeCalendar, uid+".ics")
 	}

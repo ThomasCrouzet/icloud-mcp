@@ -175,11 +175,47 @@ func TestStructuredToRRULE_RejectsBothCountAndUntil(t *testing.T) {
 }
 
 func TestValidateEventURL(t *testing.T) {
-	if err := validateEventURL("https://ok.example/x"); err != nil {
+	if err := ValidateEventURL("https://ok.example/x"); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateEventURL("javascript:alert(1)"); err == nil {
+	if err := ValidateEventURL("javascript:alert(1)"); err == nil {
 		t.Fatal()
+	}
+	if err := ValidateEventURL("http://ok.example/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEventURL("/relative"); err == nil {
+		t.Fatal("expected host required")
+	}
+}
+
+func TestStructuredRecurrenceToRRULE(t *testing.T) {
+	rule, ex, err := StructuredRecurrenceToRRULE(&StructuredRecurrence{
+		Frequency: "weekly", Interval: 1, Count: 4, ByDay: []string{"MO", "WE"},
+	}, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rule == "" {
+		t.Fatal("expected RRULE")
+	}
+	if ex != nil {
+		t.Fatalf("unexpected exdates: %v", ex)
+	}
+	_, _, err = StructuredRecurrenceToRRULE(&StructuredRecurrence{Frequency: "secondly"}, time.UTC)
+	if err == nil {
+		t.Fatal("expected invalid frequency")
+	}
+	rule, _, err = StructuredRecurrenceToRRULE(nil, time.UTC)
+	if err != nil || rule != "" {
+		t.Fatalf("nil: rule=%q err=%v", rule, err)
+	}
+}
+
+func TestDefaultSearchOptions(t *testing.T) {
+	opts := DefaultSearchOptions()
+	if !opts.ExpandRecurrence {
+		t.Fatal("ExpandRecurrence should default true")
 	}
 }
 

@@ -16,6 +16,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `recurrence_id`, and optional `etag` (If-Match). Occurrence never deletes
   the whole series. `delete_event` supports `dry_run` (zero PUT/DELETE).
 - Conditional DELETE with If-Match; structured `conflict` for HTTP 409.
+- Create PUT sends `If-None-Match: *` (hand-rolled) so concurrent same-UID
+  creates cannot silently overwrite (412 maps to `conflict`).
 - Expanded structured error codes (`validation`, `authentication`,
   `authorization`, `timeout`, `unavailable`, `partial_failure`,
   `protocol_error`, `internal_error`) with optional `retryable` /
@@ -27,16 +29,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Docs under `docs/` (architecture, security, CalDAV, testing, V2 migration,
   audit). CI: mod verify/tidy, fuzz smoke, pinned govulncheck, binary size
   budget, `InsecureSkipVerify` guard.
+- `CONTRIBUTING.md`; integration runbook in `docs/testing.md`.
 
 ### Fixed
 - Redactor iterates to a fixed point so secrets re-formed across a previous
   `[REDACTED]` boundary are still masked; secrets with newlines are rejected
   at registration (line-buffered writer cannot mask them).
+- Config validation and `file://` load errors no longer embed email, password,
+  or filesystem paths (boot failures log before the Redactor is installed).
+- Discovery revalidates port empty-or-443 on production iCloud hostnames
+  (principal and home-set), matching the HTTP transport allowlist.
 
 ### Changed
 - Read-only mode now exposes 6 tools (was 2); write tools remain absent.
 - Default `ICLOUD_MCP_DEFAULT_TZ` remains UTC for compatibility (operators
   should set the calendar owner timezone explicitly).
+- Docs: operator trust for `file://` secrets, dual retry budget, CONTRIBUTING.
+- `file://` load failures report a stable reason code (`not_found`,
+  `permission_denied`, or `unreadable`) without the path.
+- `make release` pins `golang:1.25` by image digest; `make lint` falls back to
+  pinned `golangci-lint` via `go run` when not on PATH.
+
+### Security
+- Account identity is never printed on invalid `ICLOUD_EMAIL` at boot.
+- `file://` credential paths with a `..` segment or an empty path are rejected.
 
 ## [0.2.0] - 2026-07-18
 

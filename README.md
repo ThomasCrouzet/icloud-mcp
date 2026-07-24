@@ -320,9 +320,10 @@ TZID preservation, handling of a missing DTEND, hard cap of 400 results.
 
 ## Contributing
 
-Before opening a PR, please run `gofmt`, `make test` (`go test -race`), and `make lint`
-(`go vet` + `golangci-lint`). Keep the dependency list minimal; any new direct
-dependency needs justification. PRs welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, please run `gofmt`,
+`make test` (`go test -race`), and `make lint` (`go vet` + `golangci-lint`).
+Keep the dependency list minimal; any new direct dependency needs justification.
+PRs welcome.
 
 ### MCP SDK (`mark3labs/mcp-go`) watching
 

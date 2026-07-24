@@ -30,12 +30,13 @@ func IsICloudHost(host string) bool {
 	return host == "caldav.icloud.com" || shardHostRe.MatchString(host)
 }
 
-// portAllowed accepts an empty port (implicit 443) or an explicit "443".
+// PortAllowed accepts an empty port (implicit 443) or an explicit "443".
 // iCloud returns the shard URL with an EXPLICIT 443 port (e.g.
 // p120-caldav.icloud.com:443); rejecting it broke every tool call after
 // discovery. Any other port is still refused (never legitimate for iCloud,
-// possible bypass signal).
-func portAllowed(port string) bool {
+// possible bypass signal). Exported so discovery can revalidate shard URLs
+// with the same rule as the HTTP transport.
+func PortAllowed(port string) bool {
 	return port == "" || port == "443"
 }
 
@@ -65,7 +66,7 @@ func (t *AllowlistTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// other port is never legitimate for iCloud and could signal a bypass
 	// attempt (third-party service on an otherwise authorized host).
 	// Rejected as defense in depth.
-	if !portAllowed(req.URL.Port()) {
+	if !PortAllowed(req.URL.Port()) {
 		return nil, fmt.Errorf("network allowlist: port %q rejected (443 only)", req.URL.Port())
 	}
 	host := req.URL.Hostname()
@@ -92,7 +93,7 @@ func NewICloudHTTPClient(timeout time.Duration) *http.Client {
 		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			if req.URL.Scheme != "https" || !IsICloudHost(req.URL.Hostname()) || !portAllowed(req.URL.Port()) {
+			if req.URL.Scheme != "https" || !IsICloudHost(req.URL.Hostname()) || !PortAllowed(req.URL.Port()) {
 				return fmt.Errorf("network allowlist: redirect to %q rejected", req.URL.Host)
 			}
 			return nil

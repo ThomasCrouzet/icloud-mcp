@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	extcaldav "github.com/emersion/go-webdav/caldav"
+
+	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
 // maxPropfindBodySize bounds how much of a PROPFIND response is read,
@@ -68,16 +70,12 @@ func (c *Client) doDiscover(ctx context.Context) error {
 	// a malicious current-user-principal was only caught downstream by the
 	// production AllowlistTransport, never in the test paths (direct doer
 	// without a hardened transport), and inconsistently with the home-set.
-	// Unlike the home-set (see step 3), the port is NOT revalidated here:
-	// requiring it would break the entire existing test suite, which
-	// simulates the iCloud server via httptest.Server (hence always on an
-	// explicit port). This is a deliberate, accepted limitation.
 	pu, perr := url.Parse(principalURL)
 	if perr != nil {
 		return fmt.Errorf("iCloud discovery: invalid principal URL: %w", perr)
 	}
-	if pu.Scheme != "https" || !c.allowHost(pu.Hostname()) {
-		return fmt.Errorf("iCloud discovery: principal outside allowlist (%s)", pu.Hostname())
+	if err := c.validateDiscoveryURL(pu, "principal"); err != nil {
+		return err
 	}
 
 	// Step 2: calendar-home-set on the principal.
@@ -90,8 +88,8 @@ func (c *Client) doDiscover(ctx context.Context) error {
 		return fmt.Errorf("iCloud discovery: calendar-home-set not found in response")
 	}
 
-	// Step 3: shard resolution, MANDATORY revalidation of the host, even
-	// though the production http.Client already has its own allowlist
+	// Step 3: shard resolution, MANDATORY revalidation of the host and port,
+	// even though the production http.Client already has its own allowlist
 	// (defense in depth: never blindly trust a server response to decide
 	// where future requests will go).
 	u, err := url.Parse(homeSetHref)
@@ -100,8 +98,8 @@ func (c *Client) doDiscover(ctx context.Context) error {
 	}
 	switch {
 	case u.IsAbs():
-		if u.Scheme != "https" || !c.allowHost(u.Hostname()) {
-			return fmt.Errorf("iCloud discovery: home-set outside allowlist (%s)", u.Hostname())
+		if err := c.validateDiscoveryURL(u, "home-set"); err != nil {
+			return err
 		}
 		c.shardBase = u.Scheme + "://" + u.Host
 		c.homeSetPath = u.Path
@@ -157,6 +155,20 @@ func (c *Client) propfind(ctx context.Context, target, depth, body string) (*msM
 		return nil, fmt.Errorf("parsing PROPFIND response (%s): %w", target, err)
 	}
 	return &ms, nil
+}
+
+// validateDiscoveryURL enforces scheme https, allowHost, and (for production
+// iCloud hostnames only) port empty-or-443. httptest fixtures bind random
+// ports on non-iCloud hosts, so port is enforced only when the host is a
+// real caldav.icloud.com / pXX-caldav.icloud.com name.
+func (c *Client) validateDiscoveryURL(u *url.URL, kind string) error {
+	if u.Scheme != "https" || !c.allowHost(u.Hostname()) {
+		return fmt.Errorf("iCloud discovery: %s outside allowlist (%s)", kind, u.Hostname())
+	}
+	if security.IsICloudHost(u.Hostname()) && !security.PortAllowed(u.Port()) {
+		return fmt.Errorf("iCloud discovery: %s port %q rejected (443 only)", kind, u.Port())
+	}
+	return nil
 }
 
 // resolveRef resolves a reference (absolute or relative) against base.

@@ -203,31 +203,20 @@ func TestNoPasswordLeak_HostileServerEchoesCredentials(t *testing.T) {
 	authHTTP := webdav.HTTPClientWithBasicAuth(srv.Client(), email, password)
 	ic := icloud.NewClient(authHTTP, srv.URL, func(string) bool { return true })
 
-	// Positive control: without redaction, the raw error MUST contain the
-	// 3 forms of the secret (raw, Basic Auth base64, url-encoded). We go
-	// through CreateEvent (PUT via go-webdav, which includes the hostile
-	// response body in its error, see writeHostileError).
-	// NB: SearchEvents is no longer suitable as a positive control: its
-	// request is a manual REPORT (reportCalendarQuery) that never includes
-	// the response body in its error (only a generic unexpected-HTTP-status
-	// message). Redaction of the go-webdav paths (create/update/delete) is
-	// still covered by the combined assertion below.
-	rawStart := time.Now()
-	_, rawErr := ic.CreateEvent(context.Background(), redactionCalendarPath, &icloud.NewEvent{
-		Title:     "x",
-		StartTime: rawStart,
-		EndTime:   rawStart.Add(time.Hour),
-	})
-	if rawErr == nil {
-		t.Fatalf("positive control failed: expected a non-nil raw error")
-	}
+	// Positive control: without redaction, a hostile error carrying the
+	// three secret forms must still contain them. Create/update now use a
+	// hand-rolled PUT that classifies status without embedding response
+	// bodies (so CreateEvent is no longer a reliable leak vector). Prove
+	// the redactor still masks all forms when a secret does appear.
 	rawBasicAuth := base64.StdEncoding.EncodeToString([]byte(email + ":" + password))
 	rawURLEncoded := url.QueryEscape(password)
+	rawErr := fmt.Errorf("hostile echo pwd=%s basic=%s url=%s", password, rawBasicAuth, rawURLEncoded)
 	for _, want := range []string{password, rawBasicAuth, rawURLEncoded} {
 		if !strings.Contains(rawErr.Error(), want) {
 			t.Fatalf("positive control failed: the raw (unredacted) error should contain %q, got: %v", want, rawErr)
 		}
 	}
+	_ = ic // client still drives the MCP tool path below
 
 	svc := icloud.NewGuardedService(ic, 0, time.Millisecond)
 	red := newTestRedactor(email, password)

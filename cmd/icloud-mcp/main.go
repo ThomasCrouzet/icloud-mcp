@@ -49,6 +49,9 @@ func main() {
 	}
 
 	// 1. Configuration: failure = os.Exit(1) BEFORE any network access.
+	// config.Load error strings are required to omit email and password
+	// (see config.Validate / loadCredential) because this path still uses
+	// the default log sink before the Redactor below is installed.
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
@@ -56,9 +59,7 @@ func main() {
 
 	// 2. Redaction: ALL stderr goes through the RedactingWriter from here on.
 	// The security requirements mandate redacting the password and the email,
-	// so cfg.Email is included on the same footing (defense in depth; this
-	// does not affect the boot-time config error above, raised BEFORE this
-	// Redactor is created).
+	// so cfg.Email is included on the same footing (defense in depth).
 	red := security.NewRedactor(
 		cfg.Password,
 		cfg.Email,
@@ -71,11 +72,9 @@ func main() {
 	// ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error); default info. Everything
 	// still flows through the redacting writer so secrets never leak.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: cfg.LogLevel})))
-	// The default stdlib `log` logger (log.Fatalf/log.Printf, used before
-	// this point for the config, and by any dependency calling log.Print*
-	// directly) writes to RAW os.Stderr by default, which is not covered by
-	// the redaction. Redirect it explicitly to the redacting writer so that
-	// NO logging path bypasses the redaction.
+	// The default stdlib `log` logger (and any dependency calling log.Print*)
+	// writes to RAW os.Stderr by default. Redirect it explicitly so that NO
+	// logging path bypasses the redaction after boot.
 	log.SetOutput(stderr)
 	audit := security.NewAuditLogger(stderr)
 

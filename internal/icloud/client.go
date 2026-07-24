@@ -230,17 +230,17 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 		}
 	}
 	path := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
-	// Idempotent create: if client-supplied UID already exists, refuse to
-	// overwrite (no silent last-writer-wins on create retry).
+	// Fast path: if client-supplied UID already exists, refuse before encode.
+	// The PUT below still sends If-None-Match: * so a concurrent create of
+	// the same UID cannot silently overwrite (go-webdav PutCalendarObject
+	// does not expose conditional headers).
 	if ne.ClientUID != "" {
 		if existing, gerr := c.dav.GetCalendarObject(ctx, path); gerr == nil && existing != nil {
-			return "", NewError(CodeConflict, 409, "event already exists for client UID; not overwriting", nil)
+			return "", NewError(CodeConflict, http.StatusConflict, "event already exists for client UID; not overwriting", nil)
 		}
 	}
 	cal := buildEventCalendar(uid, ne)
-	// If-None-Match: * would be ideal; go-webdav PutCalendarObject does not
-	// expose it. We already rejected existing UID above when ClientUID set.
-	if _, err := c.dav.PutCalendarObject(ctx, path, cal); err != nil {
+	if err := c.putCalendarObjectIfMatch(ctx, path, "", cal, "*"); err != nil {
 		return "", fmt.Errorf("creating event: %w", err)
 	}
 	return uid, nil
@@ -453,12 +453,12 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 	return nil
 }
 
-// putCalendarObjectIfMatch encodes cal and PUTs it to path, adding an
-// If-Match header when etag is non-empty. A 412 Precondition Failed is
-// mapped to a typed concurrent_modification error so the MCP layer can
-// advise the caller to re-read and retry. Other non-2xx statuses are
-// classified; a 2xx response is a success.
-func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string, cal *ical.Calendar) error {
+// putCalendarObjectIfMatch encodes cal and PUTs it to path. When etag is
+// non-empty, If-Match is set (update concurrency). When ifNoneMatch is
+// non-empty (create uses "*"), If-None-Match is set so an existing resource
+// yields 412 mapped to conflict rather than a silent overwrite. A 412 with
+// only If-Match maps to concurrent_modification.
+func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string, cal *ical.Calendar, ifNoneMatch ...string) error {
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
@@ -482,6 +482,13 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 		// validator, or "*". Re-quote a bare unquoted value.
 		req.Header.Set("If-Match", normalizeIfMatch(etag))
 	}
+	noneMatch := ""
+	if len(ifNoneMatch) > 0 {
+		noneMatch = ifNoneMatch[0]
+	}
+	if noneMatch != "" {
+		req.Header.Set("If-None-Match", noneMatch)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -494,6 +501,9 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 
 	switch {
 	case resp.StatusCode == http.StatusPreconditionFailed:
+		if noneMatch != "" && etag == "" {
+			return NewError(CodeConflict, http.StatusConflict, "event already exists; not overwriting", nil)
+		}
 		return classifyStatus(resp.StatusCode)
 	case resp.StatusCode/100 == 2:
 		return nil

@@ -158,6 +158,35 @@ func TestClient_CreateEvent_ClientUIDConflict(t *testing.T) {
 	}
 }
 
+// TestClient_CreateEvent_IfNoneMatchConflict covers the race where the
+// pre-PUT GET misses an existing object but If-None-Match: * still blocks
+// overwrite (412 -> conflict).
+func TestClient_CreateEvent_IfNoneMatchConflict(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "race-uid.ics"
+	// Path known only via etags (no GET body): simulates existence for
+	// If-None-Match without a successful GetCalendarObject.
+	m.etags[path] = `"existing"`
+	c := m.client()
+
+	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	_, err := c.CreateEvent(context.Background(), testHomeCalendar, &NewEvent{
+		Title: "x", StartTime: start, EndTime: start.Add(time.Hour),
+		ClientUID: "race-uid",
+	})
+	if err == nil {
+		t.Fatal("expected conflict from If-None-Match")
+	}
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeConflict {
+		t.Errorf("want conflict, got %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.puts) != 1 || m.puts[0].ifNoneMatch != "*" {
+		t.Fatalf("expected one PUT with If-None-Match=*, got %+v", m.puts)
+	}
+}
+
 func TestClient_CreateEvent_EnrichedFields(t *testing.T) {
 	m := newMockCalDAV(t)
 	c := m.client()
