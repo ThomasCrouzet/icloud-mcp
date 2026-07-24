@@ -34,9 +34,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   generative tests). Local event validation shared by create/validate tools.
 - Native Go fuzz targets (paths, UIDs, RRULE, dates, redaction, hosts) and
   MCP in-process E2E registration tests.
-- Docs under `docs/` (architecture, security, CalDAV, testing, V2 migration,
-  audit). CI: mod verify/tidy, fuzz smoke, pinned govulncheck, binary size
-  budget, `InsecureSkipVerify` guard.
+- Docs under `docs/` (architecture, security, CalDAV, testing). CI: mod
+  verify/tidy, fuzz smoke, pinned govulncheck, binary size budget,
+  `InsecureSkipVerify` guard.
 - `CONTRIBUTING.md`; integration runbook in `docs/testing.md`.
 - Redactor also masks password-only Base64 (Std/RawStd/URL/RawURL).
 
@@ -82,7 +82,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   should set the calendar owner timezone explicitly).
 - Docs: operator trust for `file://` secrets, dual retry budget (body rewind +
   2s local rate-limit cap), CONTRIBUTING; threat model notes `deletedTitle`
-  on MCP success (never in audit logs).
+  on MCP success (never in audit logs). README and `docs/` refreshed to match
+  current behavior (fair multi-calendar search, TZID+VTIMEZONE recurring
+  creates, structured recurrence/alarms). Removed internal audit and V2
+  migration notes from the tree.
 - `file://` load failures report a stable reason code (`not_found`,
   `permission_denied`, or `unreadable`) without the path.
 - `make release` pins `golang:1.25` by image digest; `make lint` falls back to

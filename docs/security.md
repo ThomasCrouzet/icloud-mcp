@@ -1,6 +1,6 @@
-# Security
+# Security (implementation)
 
-Companion to [SECURITY.md](../SECURITY.md) with implementation detail for V2.
+Companion to [SECURITY.md](../SECURITY.md) with implementation detail.
 
 ## Network allowlist
 
@@ -8,11 +8,11 @@ Companion to [SECURITY.md](../SECURITY.md) with implementation detail for V2.
 - Hosts: `caldav.icloud.com` or `p\d{1,3}-caldav.icloud.com` (case-sensitive).
 - Port: empty or 443 only.
 - Validation runs before DNS (`RoundTripper`) and on every redirect hop.
-- Discovery also revalidates principal and home-set URLs (scheme + host). For
-  production iCloud hostnames, port empty-or-443 is enforced at discovery too
-  (`security.PortAllowed`). httptest fixtures use non-iCloud hosts with random
-  ports and are unaffected.
-- Production destinations are not configurable. Tests inject `httptest` via `NewClient`.
+- Discovery revalidates principal and home-set URLs (scheme + host). Production
+  iCloud hostnames also enforce empty-or-443 port (`security.PortAllowed`).
+  httptest fixtures use non-iCloud hosts and are unaffected.
+- Production destinations are not configurable. Tests inject `httptest` via
+  `NewClient`.
 - Production HTTP transport sets `Proxy: nil` (never honors `HTTP(S)_PROXY`).
 
 ## Credentials and PII
@@ -22,39 +22,36 @@ Redacted material:
 - App-specific password (raw)
 - Apple ID email
 - Basic auth Base64 of `email:password` in Std, RawStd, URL, and RawURL encodings
-- Query-escaped password (`url.QueryEscape`)
-- Path-escaped password (`url.PathEscape`)
+- Password-only Base64 in the same four encodings
+- Query-escaped and path-escaped password
 
 Insertion points:
 
 1. `RedactingWriter` on stderr (slog + stdlib `log` + audit)
 2. `errResult` on every tool error
 3. `writeJSON` on every tool success payload
-4. `RecoverRedactMiddleware` on panics (stdout JSON-RPC is not covered by stderr redaction alone)
+4. `RecoverRedactMiddleware` on panics (stdout JSON-RPC is not covered by
+   stderr redaction alone)
 
-Config and credential load errors never embed the email or password values.
-Boot failures are logged before the production Redactor is installed, so
-`config.Validate` and `loadCredential` keep error strings free of account
-identity and secrets.
+Config and credential load errors never embed email or password values. Boot
+failures log before the production Redactor is installed, so `config.Validate`
+and `loadCredential` keep error strings free of account identity and secrets.
 
 Calendar titles, notes, and locations are never written to audit logs.
 
 `delete_event` may return `deletedTitle` on the MCP success channel so a human
-(or host) can confirm the target before/after a destructive call. That title is
-**not** written to the mutation audit trail. Prefer `dry_run=true` first when the
-host can show a confirmation UI.
+(or host) can confirm the target. That title is **not** written to the mutation
+audit trail. Prefer `dry_run=true` first when the host can show a confirmation UI.
 
 ## `file://` secrets (operator trust)
 
-`ICLOUD_EMAIL` / `ICLOUD_PASSWORD` may use a `file://` prefix (Docker-style
-secrets). The process reads that path once at startup. There is no chroot or
-directory allowlist: **whoever can set the process environment is already
-trusted** to choose which file is loaded. A path segment equal to `..` is
-rejected as a footgun guard only (substring names like `app..pwd` are fine).
-Missing or unreadable files fail with a stable reason code (`not_found`,
-`permission_denied`, or `unreadable`) and never echo the path. Do not point
-`file://` at shared or world-readable locations; mount secrets read-only for
-the service user.
+`ICLOUD_EMAIL` / `ICLOUD_PASSWORD` may use a `file://` prefix. The process reads
+that path once at startup. There is no chroot or directory allowlist: **whoever
+can set the process environment is already trusted** to choose which file is
+loaded. A path segment equal to `..` is rejected as a footgun guard only
+(substring names like `app..pwd` are fine). Missing or unreadable files fail
+with a stable reason code (`not_found`, `permission_denied`, or `unreadable`)
+and never echo the path. Mount secrets read-only for the service user.
 
 ## Retry budget
 
@@ -68,47 +65,43 @@ Two layers may retry, both bounded by the per-tool context (25s in production):
    rewinds `req.Body` via `GetBody` so PUT/REPORT bodies are not sent empty
    after a prior retry.
 2. **`GuardedService`**: additional retries on **idempotent reads** (and
-   series delete) for non-classified transient errors only (e.g. short
-   connection blips). Create/update and occurrence-scoped deletes are never
-   retried at this layer. Typed `*icloud.Error` values, including exhausted
-   HTTP 503s, are returned immediately and are not retried again here.
-   Local rate limit waits are capped at 2s; longer delays fail fast with
-   `rate_limited` instead of burning the tool timeout.
+   series delete) for non-classified transient errors only. Create/update and
+   occurrence-scoped deletes are never retried here. Typed `*icloud.Error`
+   values, including exhausted HTTP 503s, return immediately. Local rate limit
+   waits are capped at 2s; longer delays fail fast with `rate_limited`.
 
-Prolonged 503s are therefore capped by the HTTP layer alone (6 attempts).
-The outer layer only multiplies attempts for unclassified transport failures
-on reads / series delete, still within the tool timeout.
+Prolonged 503s are capped by the HTTP layer alone (6 attempts).
 
 ## Read-only mode
 
-`ICLOUD_MCP_READ_ONLY=1` removes `create_event`, `update_event`, and `delete_event`
-from `tools/list`. Local tools (`validate_event`, `calendar_capabilities`) and
-read tools remain available.
+`ICLOUD_MCP_READ_ONLY=1` removes `create_event`, `update_event`, and
+`delete_event` from `tools/list`. Local tools (`validate_event`,
+`calendar_capabilities`) and read tools remain available.
 
 ## Concurrency (ETag)
 
-- `get_event` returns `etag` when known.
-- `update_event`, series `delete_event`, and occurrence delete always require an
-  ETag (`If-Match`); if the server omits one, the mutation fails closed
+- `get_event` / `search_events` return `etag` when known.
+- `update_event`, series `delete_event`, and occurrence delete always require
+  an ETag (`If-Match`); if the server omits one, the mutation fails closed
   (`concurrent_modification`) instead of last-writer-wins. Pass `etag` from
-  `get_event` when needed.
-- HTTP 412 maps to structured `concurrent_modification` and is **never** auto-retried.
+  `get_event` when needed. Client-supplied `etag=*` is rejected.
+- Create sends `If-None-Match: *`; HTTP 412 maps to `conflict`.
+- HTTP 412 on update/delete maps to `concurrent_modification` and is **never**
+  auto-retried.
 
 ## Calendar path hardening
 
 Agent-supplied calendar paths must be path-absolute (`/…`). Scheme-relative
 forms (`//host/…`), query/fragment markers, backslashes, and percent-encoded
-`..` are rejected. PUT/REPORT/DELETE also resolve paths with a same-host check
-against the discovered shard (defense in depth beside the allowlist transport).
+`..` are rejected. Paths are bound to the discovered home-set. PUT/REPORT/DELETE
+also resolve paths with a same-host check against the discovered shard.
 
 ## Free slots privacy
 
-`find_free_slots` returns only free intervals. Busy event titles, notes, UIDs, and
-locations are never included in the response.
+`find_free_slots` returns only free intervals. Busy event titles, notes, UIDs,
+and locations are never included in the response.
 
 ## Structured errors
-
-Payload shape:
 
 ```json
 {"code":"concurrent_modification","message":"...","retryable":false}

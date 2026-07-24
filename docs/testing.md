@@ -4,12 +4,12 @@
 
 ```bash
 make test                 # go test ./... -race -cover
+make lint                 # go vet + golangci-lint (pinned)
 go test ./... -count=1
 go test ./... -race -count=1
-go test ./... -race -count=10
 go test ./... -race -shuffle=on -count=10
 go test ./internal/icloud/ -run=^$ -fuzz=FuzzValidateUID -fuzztime=10s
-make release              # static linux/arm64 via golang:1.25 container
+make release              # static linux/arm64 via pinned golang:1.25 container
 ```
 
 ## Layers
@@ -35,26 +35,39 @@ make release              # static linux/arm64 via golang:1.25 container
 
 ## Dry-run proof
 
-`delete_event` with `dry_run=true` must leave `MockService.RecordedMutations` empty
-(no PUT/DELETE recorded).
+`delete_event` with `dry_run=true` must leave `MockService.RecordedMutations`
+empty (no PUT/DELETE recorded).
+
+## CI gates
+
+`.github/workflows/ci.yml`:
+
+- gofmt, go vet, golangci-lint v2.1.6
+- `go test -race` with coverage threshold (78%)
+- govulncheck, `go mod verify` + tidy diff
+- fuzz smoke (icloud + security targets, 3s each)
+- security greps: no `os/exec`, no unauthorized URLs, no production
+  `InsecureSkipVerify`
+- multi-arch build (linux/amd64 + linux/arm64), 20 MiB size budget
+- gitleaks on the working tree
 
 ## Real iCloud
 
-Never run in CI. Requires explicit credentials and preferably a disposable calendar.
-Without credentials, integration is honestly "not run".
+Never run in CI. Requires explicit credentials and preferably a disposable
+calendar. Without credentials, integration is honestly "not run".
 
-### Manual runbook (operators)
+### Manual runbook
 
-1. Create an **app-specific password** on [appleid.apple.com](https://appleid.apple.com)
-   (Sign-In and Security → App-Specific Passwords). Prefer a dedicated Apple ID
-   or a disposable calendar so writes cannot harm a production calendar.
+1. Create an **app-specific password** on
+   [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security →
+   App-Specific Passwords). Prefer a dedicated Apple ID or a disposable calendar.
 2. Export credentials for one shell session only (never commit them):
 
    ```bash
    export ICLOUD_EMAIL='you@icloud.com'
    export ICLOUD_PASSWORD='xxxx-xxxx-xxxx-xxxx'
    export ICLOUD_MCP_READ_ONLY=1
-   export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'   # owner IANA TZ
+   export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'
    ```
 
    Or use `file://` secrets mounted read-only:

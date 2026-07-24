@@ -3,61 +3,67 @@
 [![CI](https://github.com/ThomasCrouzet/icloud-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ThomasCrouzet/icloud-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A **stdio MCP server** written in Go that exposes the **Apple (iCloud) calendar** over
-CalDAV: reading and writing events, with a minimal, auditable scope. A single static
-binary, designed to run as a child process of any MCP host or agent gateway, speaking
-JSON-RPC over stdin/stdout. No network listener, no extra setup.
+A **stdio MCP server** in Go that exposes the **Apple iCloud calendar** over CalDAV.
+Single static binary, JSON-RPC on stdin/stdout, no network listener. Designed to run
+as a child process of any MCP host.
 
-**Calendar ONLY**: never mail, contacts, reminders or any other Apple service.
+**Calendar only**: never mail, contacts, reminders, or any other Apple service.
 
 ## Stack
 
-- **Go 1.25+**, modules. Only 5 direct dependencies:
-  - `github.com/emersion/go-webdav` (+`/caldav`): CalDAV client
-  - `github.com/emersion/go-ical`: iCalendar parsing
-  - `github.com/mark3labs/mcp-go`: official Go MCP SDK (stdio transport)
-  - `github.com/teambition/rrule-go`: recurrence expansion
-  - `golang.org/x/time`: rate limiting
+Go 1.25+, modules. Five direct dependencies only:
 
-No other direct dependency (no prometheus, godotenv, uuid, telemetry).
+| Dependency | Role |
+|------------|------|
+| `github.com/emersion/go-webdav` (+`/caldav`) | CalDAV client |
+| `github.com/emersion/go-ical` | iCalendar parse/encode |
+| `github.com/mark3labs/mcp-go` | MCP stdio SDK |
+| `github.com/teambition/rrule-go` | Recurrence expansion |
+| `golang.org/x/time` | Rate limiting |
+
+No prometheus, godotenv, uuid, or telemetry. Any new direct dependency needs a
+written justification in this README.
 
 ## MCP tools
 
-| Tool | Type | Description |
+| Tool | Mode | Description |
 |------|------|-------------|
-| `list_calendars` | read | Lists calendars (name, path, color, description). |
-| `search_events` | read | Events over a date range (recurrences expanded with `recurrenceId`/`etag`, filters, pagination, hard cap of 400). |
-| `get_event` | read | Single event by calendar path + exact UID (includes etag, alarms, status, `overrides[]`). |
-| `find_free_slots` | read | Free time slots computed locally; never reveals busy event titles. |
-| `validate_event` | read | Local validation of create-shaped fields (no network). |
-| `calendar_capabilities` | read | Version, limits, features (no secrets, no paths, no network). |
-| `create_event` | write | Creates an event (title, start, end, calendar; optional location/notes/alarms, `all_day`, `rrule`, `timezone` for wall-clock series, status, transparency, URL, `client_uid`). |
-| `update_event` | write | Modifies an event by UID (`scope` series/occurrence with `recurrence_id`, optional `etag` If-Match; `etag=*` rejected). |
-| `delete_event` | write | Deletes by UID (`scope`/`recurrence_id`, required `etag` when server omits one, optional `dry_run`); echoes `deletedTitle` on MCP success for confirmation (never in audit logs). |
+| `list_calendars` | read | Calendars (name, path, color, description). |
+| `search_events` | read | Range search with expanded recurrences (`recurrenceId`, `etag`, filters, pagination, hard cap 400). |
+| `get_event` | read | One event by calendar path + UID (`etag`, alarms, status, `overrides[]`). |
+| `find_free_slots` | read | Free intervals only; never returns busy titles. |
+| `validate_event` | read | Local create-shaped validation (no network). |
+| `calendar_capabilities` | read | Version, limits, features (no secrets, no network). |
+| `create_event` | write | Create (timed/all-day, alarms, RRULE or structured recurrence, status/transp/URL, `client_uid`). |
+| `update_event` | write | Patch by UID (`scope` series/occurrence, optional `etag` If-Match; `etag=*` rejected). |
+| `delete_event` | write | Delete by UID (`scope`/`recurrence_id`, optional `etag`, `dry_run`); may echo `deletedTitle` on MCP success (never in audit). |
 
-**`ICLOUD_MCP_READ_ONLY=1`** removes the 3 write tools from `tools/list` (they are
-absent, not merely rejected at execution time). Read tools including
-`get_event`, `find_free_slots`, `validate_event`, and `calendar_capabilities`
-remain available. This is the recommended initial deployment mode.
+`ICLOUD_MCP_READ_ONLY=1` removes the three write tools from `tools/list` (absent,
+not rejected at call time). Recommended for first deploy.
 
 Further docs: [architecture](docs/architecture.md), [security](docs/security.md),
-[CalDAV compatibility](docs/caldav-compatibility.md), [testing](docs/testing.md),
-[V2 migration](docs/v2-migration.md).
+[CalDAV compatibility](docs/caldav-compatibility.md), [testing](docs/testing.md).
+Vulnerability reporting and threat model: [SECURITY.md](SECURITY.md).
 
-## Installation
+### Recommended agent flow
 
-### Install via `go install`
+1. `calendar_capabilities` once per session.
+2. `list_calendars` for paths.
+3. `search_events` / `get_event` / `find_free_slots` for reads.
+4. `validate_event` before risky writes.
+5. Mutations with human confirmation for deletes (`dry_run` first).
+6. On `concurrent_modification`, re-`get_event` and retry with a fresh `etag`.
+
+## Install
 
 ```bash
 go install github.com/ThomasCrouzet/icloud-mcp/cmd/icloud-mcp@latest
 ```
 
-The binary lands in `$(go env GOPATH)/bin`; make sure that directory is on your
-`PATH`.
+Binary lands in `$(go env GOPATH)/bin`. Or build from source: `make build`
+(dev) / `make release` (static linux/arm64 in a pinned `golang:1.25` container).
 
-### Configure it in an MCP host
-
-Example configuration, valid for any MCP host that launches stdio servers:
+### MCP host config
 
 ```json
 {
@@ -75,40 +81,13 @@ Example configuration, valid for any MCP host that launches stdio servers:
 }
 ```
 
-`ICLOUD_PASSWORD` MUST be an **app-specific password** generated on
-[appleid.apple.com](https://appleid.apple.com), never your main Apple ID password.
-Start with `ICLOUD_MCP_READ_ONLY=1` and lift it only once you trust your setup.
-Set `ICLOUD_MCP_DEFAULT_TZ` to the calendar owner's IANA timezone so bare local
-`start`/`end` times (no offset) resolve correctly; the default is UTC.
+Prefer an absolute `command` path if the host has a sparse `PATH`. Restart the
+host after saving.
 
-Most stdio MCP hosts store this block in a JSON config file (the exact path
-and the UI to add a server vary by host). Use an absolute `command` path so the
-host finds the binary regardless of its working directory:
+`ICLOUD_PASSWORD` **must** be an [app-specific password](https://appleid.apple.com),
+never the main Apple ID password. Start with `ICLOUD_MCP_READ_ONLY=1`.
 
-```json
-{
-  "mcpServers": {
-    "icloud-calendar": {
-      "command": "/usr/local/bin/icloud-mcp",
-      "env": {
-        "ICLOUD_EMAIL": "you@icloud.com",
-        "ICLOUD_PASSWORD": "your-app-specific-password",
-        "ICLOUD_MCP_READ_ONLY": "1",
-        "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
-      }
-    }
-  }
-}
-```
-
-After saving, restart the host. Once the server is connected, `list_calendars`
-and `search_events` are available immediately (the write tools stay hidden while
-`ICLOUD_MCP_READ_ONLY=1`).
-
-#### Secret files (Docker / 12-factor)
-
-The `file://` prefix reads a secret from a file path without putting the value
-in the host config or the process environment:
+#### `file://` secrets (containers)
 
 ```json
 {
@@ -125,149 +104,130 @@ in the host config or the process environment:
 }
 ```
 
-This is the recommended mode for containerised deployments (mount the secret
-files read-only). It is the only disk read the binary performs, at startup.
+Only disk read the binary performs, and only at startup. Mount secrets read-only.
 
 ## Configuration
 
-Environment variables (see `.env.example`):
-
 | Variable | Role |
 |----------|------|
-| `ICLOUD_EMAIL` | Apple ID (email). Supports the `file://` prefix. |
-| `ICLOUD_PASSWORD` | Apple **app-specific password**. Supports the `file://` prefix. |
-| `ICLOUD_MCP_READ_ONLY` | `1`/`true` → read-only mode (write tools not registered). |
-| `ICLOUD_MCP_LOG_LEVEL` | `debug`/`info`/`warn`/`error` for the structured JSON logs on stderr (default `info`). |
-| `ICLOUD_MCP_DEFAULT_TZ` | IANA timezone (e.g. `Europe/Paris`) used to interpret a `start`/`end` value with no explicit RFC3339 offset. Default `UTC`. See "Dates and timezones" below. |
+| `ICLOUD_EMAIL` | Apple ID email. Supports `file://`. |
+| `ICLOUD_PASSWORD` | App-specific password. Supports `file://`. |
+| `ICLOUD_MCP_READ_ONLY` | `1`/`true`: write tools not registered. |
+| `ICLOUD_MCP_LOG_LEVEL` | `debug`/`info`/`warn`/`error` (stderr JSON, default `info`). |
+| `ICLOUD_MCP_DEFAULT_TZ` | IANA TZ for bare local `start`/`end` (no offset). Default `UTC`. |
 
-The `file://` prefix reads the secret from a file (Docker-secret-like pattern):
-`ICLOUD_PASSWORD=file:///path/to/app-password`. This is the **only** disk read the
-program performs, and only at startup.
+Optional flag `-health <addr>`: loopback-only HTTP `/healthz` (off by default;
+`0.0.0.0` and bare `:port` rejected). `-version` prints the build version.
 
-The password MUST be an **app-specific password** generated on
-[appleid.apple.com](https://appleid.apple.com), never the account's main password.
-Optional flag `-health <addr>`: HTTP `/healthz` healthcheck (disabled by default; never
-bind to `0.0.0.0`).
+See `.env.example`.
 
 ### Dates and timezones
 
-`start`/`end` values (`create_event`, `update_event`, `search_events`) accept two forms:
+`start`/`end` accept:
 
-- **RFC3339 with an explicit offset**, e.g. `2026-07-01T14:00:00+02:00` or
-  `2026-07-01T14:00:00Z`. Parsed literally: the offset is a deliberate choice by the
-  caller and is always honored as-is.
-- **A local wall-clock time with no offset**, e.g. `2026-07-01T14:00:00`. Interpreted
-  in `ICLOUD_MCP_DEFAULT_TZ` (DST-aware), UTC if that variable is unset.
+- **RFC3339 with offset** (`2026-07-01T14:00:00+02:00` or `...Z`): honored literally.
+- **Local wall clock without offset** (`2026-07-01T14:00:00`): interpreted in
+  `ICLOUD_MCP_DEFAULT_TZ` (DST-aware), else UTC.
 
-The no-offset form is the recommended one for "the time the user said": it removes
-timezone-offset arithmetic from the calling agent entirely, which is exactly the kind
-of computation an LLM tends to get wrong. Set `ICLOUD_MCP_DEFAULT_TZ` to the IANA
-timezone of the calendar's owner (e.g. `Europe/Paris`) so a bare local hour resolves
-correctly across DST changes without the agent doing any conversion. Reserve the
-explicit-offset form for a value that is deliberately in a different, specific
-timezone (e.g. a call scheduled in UTC, or in another city's local time).
+Prefer the no-offset form for "the time the user said". Set
+`ICLOUD_MCP_DEFAULT_TZ` to the calendar owner's zone.
 
-## Troubleshooting (CalDAV / iCloud)
+**Storage:** non-recurring timed creates default to UTC `Z`. Timed recurring
+creates (or any create with an explicit `timezone`) write **TZID + generated
+VTIMEZONE** so wall-clock RRULEs survive DST. All-day uses `VALUE=DATE`.
+`ICLOUD_MCP_DEFAULT_TZ` always governs input parsing; it also backs recurring
+writes when `timezone` is omitted.
 
-The server validates credentials against iCloud at boot (`Discover` runs two
-PROPFINDs). If startup fails, the error is printed to stderr as JSON and the
-process exits non-zero. Set `ICLOUD_MCP_LOG_LEVEL=debug` for the full
-discovery trace.
+## Troubleshooting
+
+Boot runs CalDAV discovery (two PROPFINDs). Failure prints JSON on stderr and
+exits non-zero. Use `ICLOUD_MCP_LOG_LEVEL=debug` for the discovery trace.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `authentication_refused` (HTTP 401) at boot | Wrong/revoked app-specific password, or typo in `ICLOUD_EMAIL`. Use the email of the iCloud account whose calendar you want. | Regenerate an app-specific password on [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. It is NOT the main Apple ID password. |
-| `forbidden` (HTTP 403) | App-specific password revoked, or the calendar holds the maximum of 50,000 events (Apple quota). | Revoke and regenerate the password; or delete events to get back under the quota. |
-| Discovery succeeds but a shard (`pXX-caldav.icloud.com`) is unreachable mid-session | Transient Apple shard outage. | The server retries `502`/`503`/`504` with `Retry-After` + backoff; if the shard stays down it surfaces `server_unavailable`. Retry later. |
-| `rate_limited` (HTTP 429) | Apple is throttling. The built-in 60 reads/min + 20 writes/min limits usually prevent this, but a burst across many calendars can still trip Apple. | Reduce concurrency / request frequency. The HTTP layer already retries 429 with `Retry-After`. |
-| `concurrent_modification` (HTTP 412 on `update_event`) | Another client (Calendar app, another agent) modified the event between your read and your update. | Re-read with `search_events` and re-apply the update. `update_event` sends `If-Match` (ETag) so the conflict is detected rather than silently overwriting. |
-| Events appear with wrong times around a DST change | TZID was lost in a manual edit (forcing `.UTC()` on a `Dtstart`). | This server preserves TZID through GET-then-PUT; never edit the raw `text/calendar` outside the server. See `internal/icloud/recurrence.go`. |
-| A newly created event is off by 1 to 2 hours from the time the user asked for | The calling agent sent an RFC3339 `start`/`end` with an explicit offset (often `Z`/UTC) instead of the intended local time; the offset is always honored literally. | Have the agent send the local wall-clock time with no offset (e.g. `2026-07-01T14:00:00`) and set `ICLOUD_MCP_DEFAULT_TZ` to the calendar owner's IANA timezone; see "Dates and timezones" above. |
-| `search_events` returns no events for a known recurring series | An `EXDATE` excludes the occurrences, or a `RECURRENCE-ID` override replaces them. | Inspect the master object; the override appears as its own occurrence with the moved time. |
+| `authentication_refused` (401) | Bad/revoked app password or wrong email | Regenerate app-specific password on appleid.apple.com |
+| `forbidden` (403) | Revoked password, or calendar at Apple's ~50k event quota | Regenerate password or free quota |
+| Shard unreachable mid-session | Transient Apple outage | Retries 502/503/504; surfaces `server_unavailable` if persistent |
+| `rate_limited` (429) | Apple or local throttle (60 reads / 20 writes per min) | Slow down; HTTP layer honors `Retry-After` |
+| `concurrent_modification` (412) | Another client won the race | Re-read (`get_event`) and retry with fresh `etag` |
+| Wrong times around DST | TZID stripped in a manual edit | Server preserves TZID on GET-then-PUT; do not hand-edit ICS |
+| Create off by 1-2h | Agent sent `Z`/wrong offset instead of local wall clock | Send bare local time + set `ICLOUD_MCP_DEFAULT_TZ` |
+| Missing recurring occurrence | `EXDATE` or `RECURRENCE-ID` override | Inspect master; override is its own row with moved time |
 
-### Apple CalDAV limits to keep in mind
+Apple limits: one Apple ID per process; ~50k events/calendar; search window
+capped at 366 days; expansion capped at 2000 occurrences/series. iCloud rejects
+server-side `prop-filter` (412), so UID lookup is GET `<uid>.ics` then a
+±10 year REPORT fallback.
 
-- One iCloud account per server instance (single Apple ID).
-- 50,000 events per calendar (Apple quota; above that, writes return 403).
-- Recurrence expansion is bounded (protection against infinite RRULEs); the
-  `search_events` window is capped at 366 days.
-- `update_event` modifies the master VEVENT only; `RECURRENCE-ID` overrides
-  are left unchanged.
-- iCloud rejects server-side `prop-filter` queries (returns 412), so
-  `findEventByUID` does a direct GET on `<uid>.ics` then falls back to a
-  wide time-range scan for imported events whose file name differs from the UID.
-
-For the security model, threat model, and how to report a vulnerability, see
-[SECURITY.md](SECURITY.md).
-
-## Build & test
+## Build and test
 
 ```bash
-make build      # local binary (dev), host toolchain
-make test       # go test ./... -race -cover
-make lint       # go vet + golangci-lint
-make release    # static linux/arm64 binary via a golang:1.25 container
-make install    # release + copy to $(HOME)/.local/bin/icloud-mcp
+make build        # local binary (dev), host toolchain
+make test         # go test ./... -race -cover
+make lint         # go vet + golangci-lint (pinned)
+make release      # static linux/arm64 via pinned golang:1.25 container
+make release-all  # cross-compile linux/amd64, linux/arm64, darwin/arm64 (host Go)
+make install      # release + copy to $(HOME)/.local/bin
 ```
 
-The production binary is compiled **inside a `golang:1.25` container**
-(`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 -trimpath -ldflags='-s -w'`); no Go toolchain
-is assumed present on the host. Expected binary: static, stripped, < 15 MB.
+Production deliverable: `make release` (`CGO_ENABLED=0`, `-trimpath`, stripped).
+No host Go required for that path. CI also builds multi-arch and enforces a
+20 MiB size budget (typical arm64 binary is well under).
 
-## Threat model
+## Threat model (summary)
 
-This server runs as a stdio child process inside an agent's process or container,
-driven by an LLM. The threat model assumes **the agent driving this server can be
-compromised or manipulated** (prompt injection, etc.).
+The server is a stdio child driven by an LLM-powered host. Assume **the agent
+can be compromised** (prompt injection). Blast radius is calendar-only for one
+Apple ID:
 
-### What the server CAN do
-- Connect to **a single** network destination: `https://caldav.icloud.com` and its
-  shards `pXX-caldav.icloud.com` (hardcoded allowlist, TLS always verified, every other
-  destination rejected, including via HTTP redirection).
-- Read the calendars and events of the configured iCloud account.
-- In write mode (READ_ONLY disabled): create, modify, delete events.
+- Hard allowlist: `https://caldav.icloud.com` and `pXX-caldav.icloud.com` only
+  (HTTPS, TLS verified, non-443 ports rejected, every redirect hop).
+- Password and email redacted from logs, errors, and MCP success/error paths
+  (including panic recover on JSON-RPC).
+- No `os/exec`, no disk writes, no telemetry. Sole disk read: boot `file://`
+  secrets.
+- Mutations audited on stderr without title/location/notes.
+- App-specific password is revocable on appleid.apple.com without touching the
+  main account.
 
-### What the server CANNOT do
-- Access any other Apple service: **never** mail, contacts, reminders, photos, files.
-  CalDAV (calendar) only.
-- Reach any network destination outside iCloud (strict allowlist, non-standard ports
-  rejected).
-- Execute commands (zero `os/exec`), write to disk (stateless; the only disk read is
-  the `file://` credentials at startup), or emit telemetry.
-- Leak the password: it is redacted from every output (logs, errors, MCP responses,
-  including the protocol error path on panic).
-
-### If the agent driving the server is compromised
-At worst, an attacker can **read and (if READ_ONLY is lifted) modify or delete the
-calendar** of the configured account, nothing else. It cannot exfiltrate the
-credentials (redacted), nor pivot to another service or network destination.
-
-**Revocation**: `ICLOUD_PASSWORD` is an **app-specific password** (never the main Apple
-password). It can be revoked at any time on
-[appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific
-Passwords, with no impact on the account. An app-specific password only grants access
-to DAV services, and this server only exercises the CalDAV scope of that access.
+Details: [SECURITY.md](SECURITY.md) and [docs/security.md](docs/security.md).
 
 ## Security model (implementation)
 
 | Mechanism | Detail |
 |-----------|--------|
-| **Network allowlist** | An `http.RoundTripper` that rejects any host other than `caldav.icloud.com` / `pXX-caldav.icloud.com`, any scheme other than https, and any explicit port, BEFORE DNS resolution; covers every redirect hop (+ `CheckRedirect`). The discovered shard host is re-validated. |
-| **TLS** | Always verified, `MinVersion` TLS 1.2, never `InsecureSkipVerify`. |
-| **Secret redaction** | The password (+ Basic-auth base64 in Std/RawStd/URL/RawURL encodings, query-encoded, and path-encoded forms) and the email are masked from every output: stderr (slog + audit + transport logger, stdlib `log`), and MCP responses (success JSON, redacted error helper, and redacted recover middleware for the JSON-RPC channel). |
-| **Mutation audit** | Every create/update/delete is logged to stderr as structured JSON (timestamp, level, `msg=audit`, tool, calendar, UID, status), **without** title or content (no PII). `delete_event` may still return `deletedTitle` on the MCP success channel for confirmation. |
-| **Rate limiting** | 60 reads/min, 20 writes/min (`x/time/rate` token bucket), 30s HTTP timeout, 25s per-tool timeout, bounded retries with backoff (idempotent operations only). HTTP 429/502/503/504 from the CalDAV shard are retried with `Retry-After` honoring + exponential backoff/jitter (6 attempts, bounded by the tool timeout). |
-| **Input validation** | RFC3339 dates (offset honored literally) or local time resolved via `ICLOUD_MCP_DEFAULT_TZ`, range ≤ 366 days, UID/paths without `..`/NUL, bounded field sizes. |
-| **Minimal surface** | Stateless, zero `os/exec`, zero disk writes, zero telemetry. The only in-memory state shared across requests is the (immutable-after-boot) discovery cache (`sync.Once` over the shard base + calendar home-set) and the rate-limiter token buckets (a process-wide throttle, not per-client session state). No request depends on a previous request's mutable state: `update_event` re-reads the event fresh via GET, so it never carries state across calls. |
+| Network allowlist | `RoundTripper` + redirect checks before DNS; shard revalidated after discovery; `Proxy: nil`. |
+| TLS | Verified, min TLS 1.2, never `InsecureSkipVerify`. |
+| Redaction | Password, email, Basic-auth Base64 (Std/RawStd/URL/RawURL), query/path-escaped forms; stderr writer, tool errors, success JSON, panic middleware. |
+| Mutation audit | stderr JSON (`tool`, calendar, UID, status); no PII. `deletedTitle` may appear on MCP success only. |
+| Rate limits | 60 reads/min, 20 writes/min; HTTP 30s; tool 25s; retries bounded (429/502/503/504 with `Retry-After`). |
+| Input validation | Dates, range ≤ 366d, path/UID hardening, field bounds; re-checked on Client. |
+| Concurrency | Mutations fail closed without ETag (`If-Match`); create uses `If-None-Match: *`. |
+| Surface | Stateless after boot (discovery cache + rate buckets only). |
+
+## Known limitations
+
+- **If-Match required** for update/delete (series and occurrence). Missing ETag
+  fails closed (`concurrent_modification`); pass `etag` from `get_event` /
+  `search_events`. Conditional PUT/DELETE is hand-rolled (go-webdav v0.7.0 has
+  no If-Match API).
+- **UID fallback** scans ±10 years around now when `<uid>.ics` is missing.
+- **Occurrence scope** needs a recurring master (RRULE). EXDATE/RECURRENCE-ID
+  match the master DATE/TZID/Z form.
+- **Expansion** capped at 2000/series (`truncatedByExpansion`); results hard-capped
+  at 400 (`truncated`). Multi-calendar search queries every calendar then caps
+  fairly after sort (`multiCalendarCapped`).
+- **RDATE** not expanded (RRULE + EXDATE + RECURRENCE-ID only).
+- **`this-and-future`** and attendees/invitations are not implemented.
+- **Single iCloud account** per process.
+- Tool errors: `{"code","message",...}` when classified; plain validation may
+  omit `code`.
 
 ## Tests
 
-Table-driven tests against a mocked CalDAV server (`httptest`) covering: the full
-list/search/create/update/delete cycle, shard discovery, auth errors (401), rate
-limiting, RRULE/EXDATE/override expansion (including TZID preservation across a DST
-change), the network allowlist, and **end-to-end redaction** (the sentinel password
-never appears in any output, with a positive control). A real integration test
-(`//go:build integration`) hits actual iCloud, skipped by default, never run in CI.
+Table-driven unit tests, mocked CalDAV (`httptest`), MCP in-process E2E,
+native fuzz targets, redaction end-to-end (sentinel password never appears).
+Real iCloud: `//go:build integration`, never CI. See [docs/testing.md](docs/testing.md).
 
 ```bash
 go test ./... -race -cover
@@ -275,72 +235,21 @@ go test ./... -race -cover
 
 ## Attribution
 
-This project is inspired by the tool structure, the rate-limit/retry decorator
-pattern, the cached shard discovery (`sync.Once`), and the pointer-based
-`EventUpdate` pattern of
+Inspired by the tool shape, rate-limit/retry decorator, cached discovery
+(`sync.Once`), and pointer-based `EventUpdate` pattern of
 [`github.com/roygabriel/mcp-icloud-calendar`](https://github.com/roygabriel/mcp-icloud-calendar)
-(MIT license, © 2026 Gabe). The code is **rewritten, not copied**. Not carried over:
-multi-account support, godotenv, prometheus/metrics, google/uuid, mTLS, request-id
-middleware.
+(MIT, © 2026 Gabe). Code is rewritten, not copied. Not carried over: multi-account,
+godotenv, prometheus, google/uuid, mTLS, request-id middleware.
 
-Notable deviations and fixes: single account, **hard network allowlist** (absent from
-the reference), secret redaction, custom shard discovery via PROPFIND (go-webdav
-v0.7.0 loses the shard host), correct EXDATE + RECURRENCE-ID override expansion with
-TZID preservation, handling of a missing DTEND, hard cap of 400 results.
-
-## Known limitations
-- **Mutations require If-Match**: `update_event` and `delete_event` (series and
-  occurrence) re-read the full object (GET on `<uid>.ics`, or REPORT to discover
-  the href then mandatory GET for imported filenames) and always send
-  `If-Match`. When no ETag is available, the mutation fails closed
-  (`concurrent_modification`) instead of last-writer-wins; pass `etag` from
-  `get_event`. go-webdav v0.7.0 `PutCalendarObject` does not support `If-Match`,
-  so the conditional PUT/DELETE is hand-rolled.
-- **UID fallback window**: if `<uid>.ics` is missing, `findEventByUID` scans about
-  ±10 years around now (not 1970-2100). Events entirely outside that window may
-  not be found for update/delete.
-- **Occurrence scope** needs a recurring master (RRULE). EXDATE and RECURRENCE-ID
-  are written in the same DATE/TZID/Z form as the master DTSTART.
-- **Recurrence expansion** is capped at 2000 occurrences per series; when the cap
-  hits, `search_events` sets `truncatedByExpansion`. Results are also hard-capped
-  at 400 events (`truncated`). Multi-calendar search stops starting new calendars
-  once 400 *matching* events are held (`multiCalendarCapped`); optional `query`
-  is applied per calendar before that budget so non-matches cannot hide later
-  calendars.
-- **RDATE** (additional recurrence dates) is not expanded; only RRULE + EXDATE +
-  RECURRENCE-ID overrides.
-- **create_event** can write all-day events and an optional RRULE (master only).
-  Timed events are always written as UTC, never with TZID + VTIMEZONE: emitting
-  a correct VTIMEZONE needs a full DST transition table, and a fixed-offset one
-  would misplace any occurrence on the other side of a transition.
-  `ICLOUD_MCP_DEFAULT_TZ` therefore governs how bare input times are read, not
-  how events are stored.
-- **Optional `-health`**: only loopback binds are accepted (`127.0.0.1`, `::1`,
-  `localhost`); `0.0.0.0` / bare `:port` are rejected.
-- **Single iCloud account** per instance.
-- Tool errors are JSON objects `{"code":"...","message":"..."}` when a classified
-  CalDAV error applies (`code` omitted for plain validation errors).
+Notable differences: hard network allowlist, secret redaction, custom PROPFIND
+discovery (go-webdav v0.7.0 loses the shard host), EXDATE/RECURRENCE-ID with
+TZID preservation, missing-DTEND handling, result caps, series/occurrence scope.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, please run `gofmt`,
-`make test` (`go test -race`), and `make lint` (`go vet` + `golangci-lint`).
-Keep the dependency list minimal; any new direct dependency needs justification.
-PRs welcome.
-
-### MCP SDK (`mark3labs/mcp-go`) watching
-
-This server pins `mark3labs/mcp-go` and uses only stable APIs: `NewMCPServer`,
-`WithToolCapabilities`/`WithRecovery`/`WithInstructions`/`ToolHandlerMiddleware`,
-`AddTool`, `ServeStdio`, `WithErrorLogger`. It does **not** rely on the
-`initialize` handshake or on any MCP-level authorization (the only
-authentication is Basic Auth at the CalDAV HTTP layer). Before upgrading
-`mcp-go` to a new minor/major, check the changelog for removal of
-`initialize` or a new authorization model, and run `make test`. Dependabot
-opens upgrade PRs; review them against the pinned-dependency policy above.
-The server MUST stay 100% stateless (no per-request mutable state carried
-across calls): see the "Minimal surface" row in the security model table.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `gofmt`, `make test`, and `make lint`
+before opening a PR. Keep the five direct dependencies unless justified here.
 
 ## License
 
-MIT. See the [LICENSE](LICENSE) file.
+MIT. See [LICENSE](LICENSE).

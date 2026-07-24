@@ -9,7 +9,9 @@ make build   # local binary under bin/
 ```
 
 Go 1.25+ is required. Production release binaries are built with
-`make release` inside `golang:1.25` (static linux/arm64).
+`make release` inside a digest-pinned `golang:1.25` image (static linux/arm64).
+`make release-all` cross-compiles linux/amd64, linux/arm64, and darwin/arm64
+with the host toolchain.
 
 ## Rules
 
@@ -20,6 +22,8 @@ Go 1.25+ is required. Production release binaries are built with
   updated with a written justification for a new one.
 - Do not add `os/exec`, disk writes (beyond boot `file://` secret reads),
   telemetry, or network destinations outside the CalDAV allowlist.
+- Do not "simplify" hand-rolled CalDAV discovery, REPORT, or conditional
+  PUT/DELETE; see [docs/caldav-compatibility.md](docs/caldav-compatibility.md).
 
 ## Security
 
