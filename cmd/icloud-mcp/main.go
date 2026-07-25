@@ -49,9 +49,21 @@ func init() {
 // request times out on its own.
 const toolTimeout = 25 * time.Second
 
+// toolTimeoutGrace is how long the middleware waits after cancel for a handler
+// that already finished (or fails fast on cancelled I/O) before returning a
+// synthetic timeout. Prefer a real result over a false timeout when possible.
+const toolTimeoutGrace = 2 * time.Second
+
+// maxTimedOutHandlers caps abandoned handler goroutines after a preemptive
+// timeout so a stuck dependency cannot grow without bound.
+const maxTimedOutHandlers = 32
+
 // discoveryTimeout bounds the iCloud discovery performed at boot to validate
 // the credentials before starting the MCP server.
 const discoveryTimeout = 20 * time.Second
+
+// timedOutHandlerSlots limits concurrent post-timeout handler drain goroutines.
+var timedOutHandlerSlots = make(chan struct{}, maxTimedOutHandlers)
 
 func main() {
 	healthAddr := flag.String("health", "", "HTTP healthcheck address (e.g. 127.0.0.1:8797), disabled if empty")
@@ -206,8 +218,11 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 	)
 }
 
-// timeoutMiddleware bounds the execution time of each tool call. It returns
-// when the deadline fires even if the handler ignores ctx cancellation.
+// timeoutMiddleware bounds the execution time of each tool call. It cancels
+// the handler context at the deadline, waits a short grace for a real result
+// (cancelled I/O or just-finished work), then returns a synthetic timeout.
+// Mutation tools get reconciliation guidance because a late server apply is
+// still possible after the client-visible deadline.
 func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -226,11 +241,50 @@ func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 			case out := <-ch:
 				return out.res, out.err
 			case <-ctx.Done():
-				// Fixed non-secret payload; the handler goroutine may still run
-				// until its own I/O observes cancellation.
-				return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded","retryable":false}`), nil
+				grace := time.NewTimer(toolTimeoutGrace)
+				select {
+				case out := <-ch:
+					if !grace.Stop() {
+						<-grace.C
+					}
+					// Prefer a real handler result after cancel (success or
+					// classified error) over a synthetic timeout.
+					return out.res, out.err
+				case <-grace.C:
+					// Drain the abandoned handler under a bounded slot budget.
+					select {
+					case timedOutHandlerSlots <- struct{}{}:
+						go func() {
+							defer func() { <-timedOutHandlerSlots }()
+							<-ch
+						}()
+					default:
+						// Slot exhausted: leave the buffered send in next() to
+						// complete without blocking the handler forever.
+						go func() { <-ch }()
+					}
+					return toolTimeoutResult(req.Params.Name), nil
+				}
 			}
 		}
+	}
+}
+
+func toolTimeoutResult(toolName string) *mcp.CallToolResult {
+	if isMutationToolName(toolName) {
+		return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded after a mutation may have been dispatched","retryable":false,"reconciliation":"Re-read the target before retrying. Prefer client_uid, idempotency_key, and etag on writes."}`)
+	}
+	return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded","retryable":false}`)
+}
+
+func isMutationToolName(name string) bool {
+	switch name {
+	case "create_event", "update_event", "delete_event",
+		"create_contact", "update_contact", "delete_contact",
+		"set_message_flags", "move_message", "trash_message", "send_message":
+		return true
+	default:
+		return false
 	}
 }
 

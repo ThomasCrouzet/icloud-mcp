@@ -2,15 +2,15 @@ package mcptools
 
 import (
 	"github.com/mark3labs/mcp-go/server"
-
-	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
 // RegisterContacts registers the Contacts read tools and, when allowWrites is
 // true, the Contacts mutation tools. It returns the names actually registered.
 func RegisterContacts(s *server.MCPServer, deps ContactsDeps, allowWrites bool) []string {
 	if deps.Redactor == nil {
-		deps.Redactor = security.NewRedactor()
+		// An empty redactor redacts nothing useful; production wiring must pass
+		// a secret-aware redactor (RegisterUnified already panics on nil).
+		panic("mcptools: Contacts tools require a non-nil redactor")
 	}
 	s.AddTool(newListAddressBooksTool(), listAddressBooksHandler(deps))
 	s.AddTool(newSearchContactsTool(), searchContactsHandler(deps))

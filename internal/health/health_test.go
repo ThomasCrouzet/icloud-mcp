@@ -149,6 +149,25 @@ func TestStart_RejectsNonLoopback(t *testing.T) {
 	}
 }
 
+func TestStart_StatusFnPanicDoesNotCrash(t *testing.T) {
+	const addr = "127.0.0.1:18802"
+	h, err := Start(addr, "test", nil, func() any {
+		panic("status probe boom")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = h.Close() }()
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
 // TestStart_AcceptsLoopback: 127.0.0.1 and localhost remain valid.
 func TestStart_AcceptsLoopback(t *testing.T) {
 	for _, addr := range []string{

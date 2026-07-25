@@ -26,7 +26,7 @@ same public code vocabulary.
 | `conflict` | no | Create UID exists or state conflict; choose a new key or abort. |
 | `concurrent_modification` | no | Re-read with `get_*`, then patch with fresh `etag`. |
 | `rate_limited` | yes | Wait `retry_after_seconds` (default 5) then retry. |
-| `timeout` | domain-specific | Calendar tool timeouts are non-retryable by default. Contacts/Mail may set `retryable`. Prefer re-read after mutations. |
+| `timeout` | no (tool deadline) | Tool middleware deadline is non-retryable. After cancel it waits a short grace for a real result. Mutation tools include `reconciliation` because a late server apply is still possible. Prefer re-read; use `client_uid` / `idempotency_key` / `etag`. |
 | `unavailable` | yes | Back off with `retry_after_seconds` (default 2). |
 | `partial_failure` | no | Inspect warnings; do not assume full success. |
 | `protocol_error` | no | Library/server protocol gap (e.g. CONDSTORE flags). |

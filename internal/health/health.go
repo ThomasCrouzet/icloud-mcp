@@ -79,7 +79,10 @@ func Start(addr, version string, domains map[string]DomainStatus, statusFn func(
 		}
 		var rate any
 		if statusFn != nil {
-			rate = statusFn()
+			func() {
+				defer func() { _ = recover() }()
+				rate = statusFn()
+			}()
 		}
 		body, _ := json.Marshal(Snapshot(version, domains, rate))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

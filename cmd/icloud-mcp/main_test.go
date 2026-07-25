@@ -36,9 +36,9 @@ func TestToolAndDiscoveryTimeoutsOrdered(t *testing.T) {
 
 func TestTimeoutMiddleware(t *testing.T) {
 	mw := timeoutMiddleware(30 * time.Millisecond)
-	// Handler ignores cancellation; middleware must still return at the deadline.
+	// Handler ignores cancellation past the grace window.
 	slow := mw(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(toolTimeoutGrace + 500*time.Millisecond)
 		return mcp.NewToolResultText("late"), nil
 	})
 	start := time.Now()
@@ -50,8 +50,49 @@ func TestTimeoutMiddleware(t *testing.T) {
 	if res == nil || !res.IsError {
 		t.Fatalf("result = %+v, want isError timeout payload", res)
 	}
-	if elapsed > 200*time.Millisecond {
-		t.Fatalf("elapsed = %v, want preemptive return near 30ms", elapsed)
+	// deadline 30ms + grace 2s; must not wait for the full handler sleep.
+	if elapsed > toolTimeoutGrace+300*time.Millisecond {
+		t.Fatalf("elapsed = %v, want near deadline+grace", elapsed)
+	}
+	if elapsed < toolTimeoutGrace {
+		t.Fatalf("elapsed = %v, want at least grace window", elapsed)
+	}
+}
+
+func TestTimeoutMiddlewarePrefersLateSuccessWithinGrace(t *testing.T) {
+	mw := timeoutMiddleware(20 * time.Millisecond)
+	h := mw(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		time.Sleep(40 * time.Millisecond) // after deadline, within grace
+		return mcp.NewToolResultText("made-it"), nil
+	})
+	res, err := h(context.Background(), mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || res.IsError {
+		t.Fatalf("want success within grace, got %+v", res)
+	}
+	text, ok := mcp.AsTextContent(res.Content[0])
+	if !ok || text.Text != "made-it" {
+		t.Fatalf("result text = %+v", res.Content)
+	}
+}
+
+func TestTimeoutMiddlewareMutationReconciliation(t *testing.T) {
+	mw := timeoutMiddleware(10 * time.Millisecond)
+	h := mw(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		time.Sleep(toolTimeoutGrace + 100*time.Millisecond)
+		return mcp.NewToolResultText("late"), nil
+	})
+	var req mcp.CallToolRequest
+	req.Params.Name = "update_event"
+	res, err := h(context.Background(), req)
+	if err != nil || res == nil || !res.IsError {
+		t.Fatalf("result=%+v err=%v", res, err)
+	}
+	text, _ := mcp.AsTextContent(res.Content[0])
+	if text.Text == "" || !strings.Contains(text.Text, "reconciliation") || !strings.Contains(text.Text, "timeout") {
+		t.Fatalf("mutation timeout payload = %q", text.Text)
 	}
 }
 

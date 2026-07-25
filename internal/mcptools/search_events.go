@@ -162,7 +162,7 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		var warnings []string
 		var partialFailure bool
 		multi := len(calendarPaths) > 1 || !singleCalendar
-		for _, path := range calendarPaths {
+		for i, path := range calendarPaths {
 			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
 			if err != nil {
 				// Auth/security must never be masked as a soft warning.
@@ -178,7 +178,11 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 					return errResult(deps.Redactor, "searching events", err), nil
 				}
 				partialFailure = true
-				warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf("calendar %s: %v", path, err)))
+				// Do not echo full calendar paths in warnings (audit policy).
+				// Agents already know selected calendars from args or
+				// list_calendars; index correlates multi-calendar failures.
+				warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf(
+					"calendar[%d] query failed: %v", i, err)))
 				continue
 			}
 			if result.TruncatedByExpansion {
