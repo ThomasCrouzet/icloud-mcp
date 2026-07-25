@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -251,6 +252,31 @@ func TestReadCredentialFileAcceptsExactLimit(t *testing.T) {
 	}
 	if len(data) != maxCredentialFileBytes {
 		t.Fatalf("read %d bytes, want %d", len(data), maxCredentialFileBytes)
+	}
+}
+
+func TestReadCredentialFileRejectsGroupOrWorldReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "world-readable-credential-path-sentinel")
+	if err := os.WriteFile(path, []byte("app-specific-password"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readCredentialFile(path)
+	if err == nil || !errors.Is(err, errCredentialFileInsecurePerms) {
+		t.Fatalf("error = %v, want insecure permissions", err)
+	}
+	if reason := fileReadReason(err); reason != "insecure_permissions" {
+		t.Fatalf("reason = %q, want insecure_permissions", reason)
+	}
+
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "file://"+path)
+	_, loadErr := Load()
+	if loadErr == nil || !strings.Contains(loadErr.Error(), "insecure_permissions") {
+		t.Fatalf("Load error = %v, want insecure_permissions", loadErr)
+	}
+	if strings.Contains(loadErr.Error(), path) || strings.Contains(loadErr.Error(), "world-readable-credential-path-sentinel") {
+		t.Fatalf("credential path leaked in error: %v", loadErr)
 	}
 }
 

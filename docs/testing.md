@@ -139,12 +139,20 @@ guards. Package coverage floors are:
 | Package | Floor |
 |---------|-------|
 | `internal/config` | 85% |
+| `internal/health` | 90% |
 | `internal/security` | 80% |
 | `internal/icloud` | 78% |
 | `internal/mcptools` | 75% |
 | `internal/contacts` | 65% |
 | `internal/mail` | 65% |
 | `internal/mail/imapadapter` | 60% |
+| `cmd/icloud-mcp` | 55% |
+
+Tag releases publish only after the CI and gitleaks jobs succeed on the same
+ref (`release` job in `.github/workflows/ci.yml`). GitHub archives use
+`make release-all` with Go 1.25.12 pinned (`check-latest: false`). Local
+`make release` remains the digest-pinned container path for linux/arm64.
+CI also smoke-builds `windows/amd64` (not packaged in GitHub Release archives).
 
 Live iCloud credentials and the `integration` build tag are never used in CI.
 
@@ -172,11 +180,13 @@ export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'
 go test -tags=integration -count=1 -v -timeout=120s .
 ```
 
-`file://` values are also supported:
+`file://` values are also supported (regular file, at most 4 KiB, mode 0600 or
+stricter):
 
 ```bash
 export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
 export ICLOUD_PASSWORD='file:///run/secrets/icloud-password'
+# chmod 600 the secret files before boot
 go test -tags=integration -count=1 -v -timeout=120s .
 ```
 

@@ -11,9 +11,11 @@ GO          ?= go
 # docker image inspect golang:1.25.12 --format '{{index .RepoDigests 0}}'.
 GOLANG_IMAGE ?= golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980
 
-# Release targets: linux/amd64, linux/arm64, darwin/arm64. All static
-# (CGO_ENABLED=0), trimmed, stripped. The binaries embed the version via
-# -X main.version=$(VERSION) (override with: make build VERSION=v0.3.0).
+# Release archives: linux/amd64, linux/arm64, darwin/arm64. All static
+# (CGO_ENABLED=0), trimmed, stripped. CI also smoke-builds windows/amd64 without
+# packaging it. Binaries embed the version via -X main.version=$(VERSION)
+# (override with: make build VERSION=v0.3.0). GitHub tag releases use
+# release-all after green CI; local make release stays digest-pinned Docker.
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 BUILDFLAGS := -trimpath -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64

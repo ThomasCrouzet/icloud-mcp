@@ -40,7 +40,8 @@ configurations remain the stronger isolation option.
   Contacts write, every Mail mutation, and Mail send from `tools/list`.
 - **Independent Mail gates:** Mail read grants neither mutation nor send. SMTP
   send additionally requires an exact-address recipient allowlist; literal `*`
-  is an explicit allow-all policy.
+  is an explicit allow-all policy and emits a boot warning. Prefer exact
+  addresses in production.
 - **Secret redaction:** configured identities, passwords, Basic-auth variants,
   SASL PLAIN variants, and URL-escaped forms are redacted from stderr, tool
   errors, success payloads, and panic responses.
@@ -64,7 +65,8 @@ configurations remain the stronger isolation option.
   bodies, Message-IDs, and attachment names.
 - **Minimal local surface:** there is no `os/exec`, telemetry, plugin loading,
   runtime code download, or disk write. The only disk access is optional
-  boot-time `file://` secret loading from regular files capped at 4 KiB. The
+  boot-time `file://` secret loading from regular files capped at 4 KiB and
+  required to be mode 0600 or stricter (not group or world accessible). The
   optional health listener is loopback-only and accepts no arbitrary hostname.
 - **Revocable credentials:** use app-specific passwords, never the main Apple
   Account password. They can be revoked independently at appleid.apple.com.

@@ -23,8 +23,10 @@ used.
 ## Boot and lifecycle
 
 1. `config.Load` reads and validates the 12-variable environment contract. It
-   resolves boot-only `file://` values for configured identities/passwords.
-   Configuration failure occurs before network access.
+   resolves boot-only `file://` values for configured identities/passwords
+   (regular file, at most 4 KiB, mode 0600 or stricter). Configuration failure
+   occurs before network access. Literal SMTP recipient policy `*` is accepted
+   when send is requested and emits a boot warning on stderr.
 2. A shared `security.Redactor` is built from the enabled credential pairs,
    including Basic-auth and SASL PLAIN encodings. All stderr and stdlib logging
    is redirected through `RedactingWriter`.
@@ -54,14 +56,14 @@ alter another domain client.
 | Package | Role |
 |---------|------|
 | `cmd/icloud-mcp` | Configuration wiring, domain construction, eager Calendar discovery, capability plan, timeouts, stdio |
-| `internal/config` | Strict booleans, environment validation, `file://` secret loading, Mail recipient policy |
+| `internal/config` | Strict booleans, environment validation, `file://` secrets (0600+, 4 KiB), Mail recipient policy |
 | `internal/security` | DAV and socket allowlists, TLS policy, redaction, process-local audit tokens |
-| `internal/icloud` | Calendar CalDAV, iCalendar, recurrence, free slots, validation, Calendar retry/rate policy |
+| `internal/icloud` | Calendar CalDAV, iCalendar, recurrence, free slots, validation, Calendar retry/rate policy; per-calendar search materialization 2,500; multi-calendar filtered materialization 10,000; imported-UID REPORT +/-50y |
 | `internal/contacts` | Lazy CardDAV discovery, bounded DAV/XML, vCard model, search, conditional writes |
 | `internal/mail` | Mail service, MIME handling, IMAP mutation policy, SMTP submission |
 | `internal/mail/imapadapter` | Narrow beta go-imap boundary and decode-time protocol guard |
 | `internal/mcptools` | Compositional schemas, handlers, capability reporting, redacted results, mutation audit |
-| `internal/health` | Optional loopback-only `/healthz` for Calendar process health/rate state |
+| `internal/health` | Optional loopback-only `/healthz` and `/status` with version, domain enablement, and multi-domain rate limits |
 
 `internal/icloud` retains its historical name but is scoped to Calendar. Shared
 code may provide pure redaction, audit formatting, result sizing, and limiter
@@ -106,7 +108,11 @@ bounded `Retry-After`/backoff and rewinds read request bodies; it does not retry
 transport errors. PUT and DELETE are never replayed, including full-series
 delete. A transport failure or gateway 502/503/504 after mutation dispatch maps
 to `outcome_unknown`. Update and delete re-read full objects and use conditional
-requests.
+requests. Multi-calendar `search_events` queries every selected calendar, then
+sorts and applies the fair 400-event return cap; filtered materialization above
+10,000 events fails closed with `payload_too_large` (per-calendar REPORT
+materialization is 2,500). Imported-UID REPORT fallback uses a +/-50-year window
+around now when `<uid>.ics` is missing.
 
 ### Contacts
 

@@ -63,7 +63,8 @@ Use the host's "custom MCP server" / "stdio MCP" entry. JSON-style example:
 ```
 
 Reload the host after env changes. Never commit the password into a shared
-config repo; prefer OS secret stores or boot-only `file://` secrets.
+config repo; prefer OS secret stores or boot-only `file://` secrets (regular
+file, at most 4 KiB, mode 0600 or stricter).
 
 ## OpenClaw and other orchestrators
 

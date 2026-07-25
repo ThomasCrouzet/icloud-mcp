@@ -20,9 +20,9 @@ policies; see [CardDAV compatibility](carddav-compatibility.md) and
 - Partial `calendar-data` with nested `<comp>` returns empty VEVENTs on iCloud.
 - Only bare `<C:calendar-data/>` works reliably.
 - `prop-filter` by UID returns 412; UID lookup uses GET on `<uid>.ics` then a
-  bounded time-range REPORT fallback (+/-10 years around now). Events whose
+  bounded time-range REPORT fallback (+/-50 years around now). Events whose
   filename is not `<uid>.ics` and that lie entirely outside that window are
-  reported as not found on the fallback path.
+  reported as not found on the fallback path (error text states the window).
 - Request `D:getetag` with calendar-data so If-Match works on the REPORT path.
 - Imported-UID lookup always re-GETs before mutate so VERSION/PRODID/VTIMEZONE
   survive the round-trip (REPORT payloads are incomplete for go-ical encode).
@@ -78,9 +78,11 @@ policies; see [CardDAV compatibility](carddav-compatibility.md) and
   alarms, and 2,000 EXDATE values. One remote property value is capped at 1 MiB.
 - PROPFIND and single-object GET bodies are capped at 8 MiB; REPORT is capped at
   32 MiB.
-- A search materializes at most 10,000 events. Recurrence work is capped at
-  100,000 iterator advances per series and 250,000 across one search, including
-  selector reachability proof work reserved before iteration.
+- A single-calendar search materializes at most 2,500 events. Multi-calendar
+  `search_events` still queries every selected calendar, then fails closed at
+  10,000 filtered events before the public 400-event sort-cap. Recurrence work
+  is capped at 100,000 iterator advances per series and 250,000 across one
+  search, including selector reachability proof work reserved before iteration.
 - Calendar network concurrency is capped independently at four reads and two
   writes.
 

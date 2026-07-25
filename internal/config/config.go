@@ -27,8 +27,9 @@ const (
 )
 
 var (
-	errCredentialFileNotRegular = errors.New("credential file is not a regular file")
-	errCredentialFileTooLarge   = errors.New("credential file exceeds byte limit")
+	errCredentialFileNotRegular    = errors.New("credential file is not a regular file")
+	errCredentialFileTooLarge      = errors.New("credential file exceeds byte limit")
+	errCredentialFileInsecurePerms = errors.New("credential file is group or world accessible")
 )
 
 // defaultTZEnvVar names the environment variable used to resolve
@@ -397,7 +398,8 @@ func loadCredential(envVar string) (string, error) {
 	return val, nil
 }
 
-// readCredentialFile accepts only a small regular file. The checks around the
+// readCredentialFile accepts only a small regular file that is not group or
+// world accessible (mode must be 0600 or stricter). The checks around the
 // nonblocking open prevent a path swap from turning the read into a FIFO or
 // device wait while still allowing symlinks to regular secret files.
 func readCredentialFile(path string) ([]byte, error) {
@@ -407,6 +409,9 @@ func readCredentialFile(path string) ([]byte, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errCredentialFileNotRegular
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, errCredentialFileInsecurePerms
 	}
 	if info.Size() > maxCredentialFileBytes {
 		return nil, errCredentialFileTooLarge
@@ -424,6 +429,9 @@ func readCredentialFile(path string) ([]byte, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errCredentialFileNotRegular
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, errCredentialFileInsecurePerms
 	}
 	if info.Size() > maxCredentialFileBytes {
 		return nil, errCredentialFileTooLarge
@@ -457,6 +465,8 @@ func fileReadReason(err error) string {
 		return "not_regular"
 	case errors.Is(err, errCredentialFileTooLarge):
 		return "too_large"
+	case errors.Is(err, errCredentialFileInsecurePerms):
+		return "insecure_permissions"
 	case os.IsNotExist(err):
 		return "not_found"
 	case os.IsPermission(err):

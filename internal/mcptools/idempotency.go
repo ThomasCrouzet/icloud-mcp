@@ -13,10 +13,10 @@ import (
 // conflict; identical params return the cached success payload. Concurrent
 // same-key requests single-flight: waiters observe the first outcome.
 const (
-	idempotencyTTL          = 15 * time.Minute
-	maxIdempotencyEntries   = 1024
-	maxIdempotencyPayload   = 256 << 10
-	maxIdempotencyKeyBytes  = 512
+	idempotencyTTL         = 15 * time.Minute
+	maxIdempotencyEntries  = 1024
+	maxIdempotencyPayload  = 256 << 10
+	maxIdempotencyKeyBytes = 512
 )
 
 type idempotencyEntry struct {

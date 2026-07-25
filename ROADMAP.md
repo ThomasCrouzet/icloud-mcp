@@ -30,7 +30,7 @@ v0.3.x. This file tracks agent maturity work and longer-horizon items.
 |------|--------|
 | 3.1 Published roadmap | This file |
 | 3.2 Support expectations | `CONTRIBUTING.md` |
-| 3.3 Release checksums + optional signing | SHA-256 checksums in `make release*`; optional cosign notes in release workflow |
+| 3.3 Release checksums + signing | SHA-256 checksums in `make release*`; tag releases gated on green CI; cosign keyless signatures required on GitHub release blobs |
 | 3.4 Agent-specific docs | `docs/agent-hosts.md` |
 
 ## Success criteria

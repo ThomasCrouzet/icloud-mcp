@@ -11,7 +11,8 @@ make build   # local binary under bin/
 Go 1.25.12 or newer is required. `make release VERSION=vX.Y.Z` builds and
 packages static linux/arm64 with a digest-pinned Go 1.25.12 image.
 `make release-all VERSION=vX.Y.Z` cross-compiles and packages linux/amd64,
-linux/arm64, and darwin/arm64 with the host toolchain. Release targets reject
+linux/arm64, and darwin/arm64 with the host toolchain (the path used by
+GitHub tag releases after CI and gitleaks succeed). Release targets reject
 an unset or `dev` version and emit SHA-256 checksums. `make install` always
 builds for the current host.
 
@@ -22,10 +23,10 @@ builds for the current host.
 - Do not add automated `Co-Authored-By` trailers to commits or tags.
 - Keep the **10 direct dependencies** in `go.mod` unless the README is
   updated with a written justification for a new one.
-- Do not add `os/exec`, disk writes (beyond boot `file://` secret reads),
-  telemetry, private/reverse-engineered Apple APIs, browser/UI automation, or
-  network destinations outside the per-domain Calendar, Contacts, IMAP, and
-  SMTP allowlists.
+- Do not add `os/exec`, disk writes (beyond boot `file://` secret reads from
+  regular files mode 0600 or stricter), telemetry, private/reverse-engineered
+  Apple APIs, browser/UI automation, or network destinations outside the
+  per-domain Calendar, Contacts, IMAP, and SMTP allowlists.
 - Keep Calendar, Contacts, IMAP, and SMTP credentials, transports/dialers,
   rate limits, semaphores, and destination policies isolated. Do not create a
   union authenticated client or make production endpoints configurable.
@@ -69,9 +70,11 @@ These are voluntary maintainer targets, not a paid SLA:
 
 - Prefer small, focused PRs.
 - CI must pass: gofmt, vet, golangci-lint, race tests, coverage gate,
-  govulncheck, fuzz smoke across all five parser packages, security greps,
-  multi-arch build. Coverage must meet the documented package floors and 78%
-  aggregate threshold.
+  govulncheck, fuzz smoke across all five parser packages, security AST
+  guards, multi-arch build (including windows/amd64 smoke), gitleaks, and the
+  public-text policy (tracked tree plus new commit messages on the PR/push
+  range). Coverage must meet the documented package floors and 78% aggregate
+  threshold. Tag releases are gated on that green CI.
 - Do not commit secrets, `.env` files, or local agent notes.
 - Label roadmap work with `phase-1`, `phase-2`, or `phase-3` when applicable
   (see [ROADMAP.md](ROADMAP.md)).

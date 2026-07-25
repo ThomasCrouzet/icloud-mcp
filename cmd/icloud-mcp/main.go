@@ -106,6 +106,9 @@ func main() {
 	// logging path bypasses the redaction after boot.
 	log.SetOutput(stderr)
 	audit := security.NewAuditLoggerWithFormat(stderr, auditFormat)
+	if cfg.SMTPRecipientPolicy.AllowAll() {
+		slog.Warn("SMTP recipient policy is allow-all (*); any syntactically valid address may receive mail after AUTH")
+	}
 
 	plan := mcptools.NewCapabilityPlan(
 		cfg.ReadOnly,

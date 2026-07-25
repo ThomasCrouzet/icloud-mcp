@@ -22,7 +22,7 @@ type MockService struct {
 	Detail    *EventDetail
 
 	// EventsByPath, when non-nil, overrides Events for SearchEvents on that
-	// calendar path (used to test multi-calendar query + early-stop).
+	// calendar path (used to test multi-calendar query fairness).
 	EventsByPath map[string][]Event
 
 	// EventsUnexpanded is returned when SearchOptions.ExpandRecurrence is false.
@@ -63,7 +63,7 @@ type MockService struct {
 	LastSearchOpts *SearchOptions
 
 	// SearchPaths records each calendar path SearchEvents was called with
-	// (order preserved), for multi-calendar early-stop assertions.
+	// (order preserved), for multi-calendar fairness assertions.
 	SearchPaths []string
 
 	ListCallCount   int

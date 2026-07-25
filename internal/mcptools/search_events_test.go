@@ -283,6 +283,42 @@ func TestSearchEventsHandler_MultiCalendarFairCap(t *testing.T) {
 	}
 }
 
+func TestSearchEventsHandler_MultiCalendarMaterializationBudget(t *testing.T) {
+	// Overflow the multi-calendar materialization budget while still querying
+	// every selected calendar (no early-stop bias).
+	batch := make([]icloud.Event, icloud.MaxMultiSearchMaterialized/2+1)
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	for i := range batch {
+		batch[i] = icloud.Event{
+			UID:       "e",
+			Title:     "x",
+			StartTime: base.Add(time.Duration(i) * time.Hour),
+			EndTime:   base.Add(time.Duration(i)*time.Hour + time.Minute),
+		}
+	}
+	svc := &icloud.MockService{
+		Calendars: []icloud.Calendar{{Path: "/cal/a/"}, {Path: "/cal/b/"}, {Path: "/cal/c/"}},
+		Events:    batch,
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start": "2026-07-01T00:00:00Z", "end": "2026-12-01T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected payload_too_large materialization budget error")
+	}
+	text := resultText(t, res)
+	if !strings.Contains(text, "payload_too_large") && !strings.Contains(text, "materialization") {
+		t.Fatalf("error text = %q, want materialization budget", text)
+	}
+	if svc.SearchCallCount != 3 {
+		t.Errorf("SearchCallCount = %d, want 3 (all calendars queried before fail-closed)", svc.SearchCallCount)
+	}
+}
+
 // TestSearchEventsHandler_QueryDoesNotEarlyStopOnNonMatches: a first calendar
 // returning MaxResults non-matching events must NOT prevent searching a later
 // calendar that holds matching events (query filter before 400 budget).

@@ -19,13 +19,13 @@ const maxExplicitSearchCalendars = 10
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
-		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Each occurrence includes recurrenceId (use with scope=occurrence) and etag when known; expanded rows omit master RRULE. Sorted by start then UID, hard-capped at 400 and 256 KiB at event boundaries (truncated). Multi-calendar: all calendars are queried then capped fairly; non-auth errors become partialFailure+warnings. Optional filters: calendars, uid, status, all_day, include_cancelled, busy_only, compact, expand_recurrence (default true). Auth, payload-limit, and protocol errors are never soft-warnings."),
+		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Each occurrence includes recurrenceId (use with scope=occurrence) and etag when known; expanded rows omit master RRULE. Sorted by start then UID, hard-capped at 400 and 256 KiB at event boundaries (truncated). Multi-calendar: every selected calendar is queried then results are capped fairly at 400; filtered materialization fails closed above 10000 events (payload_too_large). Non-auth errors become partialFailure+warnings. Optional filters: calendars, uid, status, all_day, include_cancelled, busy_only, compact, expand_recurrence (default true). Auth, payload-limit, and protocol errors are never soft-warnings."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Range start", defaultLoc))),
 		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("Range end", defaultLoc)+" At most 366 days after start.")),
-		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted (best-effort under the 400-event cap and rate limits).")),
+		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted (every calendar queried; 400-event return cap; 10000-event multi materialization budget; rate limits apply).")),
 		mcp.WithString("calendars", mcp.Description("Comma-separated calendar paths (at most 10 unique paths, including calendar; optional; merges with calendar)")),
 		mcp.WithString("query", mcp.MaxLength(icloud.MaxQueryLen), mcp.Description("Optional text filter (title/location/notes, case insensitive); runtime limit 200 UTF-8 bytes")),
 		mcp.WithString("uid", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Optional exact UID filter; runtime limit 255 UTF-8 bytes")),
@@ -161,6 +161,7 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		var multiCalendarCapped bool
 		var warnings []string
 		var partialFailure bool
+		var materializationOverflow bool
 		multi := len(calendarPaths) > 1 || !singleCalendar
 		for i, path := range calendarPaths {
 			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
@@ -193,7 +194,23 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				batch = filterByQuery(batch, query)
 			}
 			batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
-			all = append(all, batch...)
+			// Always query every selected calendar (fairness). Cap in-memory
+			// accumulation after filters; overflow fails closed below.
+			if !materializationOverflow {
+				if len(all)+len(batch) > icloud.MaxMultiSearchMaterialized {
+					materializationOverflow = true
+				} else {
+					all = append(all, batch...)
+				}
+			}
+		}
+		if materializationOverflow {
+			return errResult(deps.Redactor, "searching events", icloud.NewError(
+				icloud.CodePayloadTooLarge, 0,
+				fmt.Sprintf("multi-calendar search exceeded the %d-event materialization budget; narrow the range or calendar selection",
+					icloud.MaxMultiSearchMaterialized),
+				nil,
+			)), nil
 		}
 		if multi && partialFailure && len(all) == 0 && len(warnings) > 0 {
 			return errResult(deps.Redactor, "searching events", icloud.NewError(

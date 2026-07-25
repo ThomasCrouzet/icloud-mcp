@@ -165,7 +165,7 @@ func TestClient_UpdateEvent_ReportPathSendsIfMatch(t *testing.T) {
 }
 
 // TestClient_findEventByUID_UsesNarrowWindow: fallback REPORT time-range must
-// not span 1970-2100.
+// be roughly now +/-50 years, never 1970-2100.
 func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	m := newMockCalDAV(t)
 	objPath := testHomeCalendar + "imported-file.ics"
@@ -173,7 +173,9 @@ func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	c := m.client()
 
 	// Force REPORT path by using a UID whose .ics GET 404s.
+	before := time.Now().UTC()
 	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-imported-2", nil)
+	after := time.Now().UTC()
 	if err != nil {
 		t.Fatalf("DeleteEvent: %v", err)
 	}
@@ -186,8 +188,34 @@ func TestClient_findEventByUID_UsesNarrowWindow(t *testing.T) {
 	if strings.Contains(body, "19700101T000000Z") || strings.Contains(body, "21000101T000000Z") {
 		t.Fatalf("fallback REPORT still uses 1970-2100 window; body=%s", body)
 	}
-	// Window should be roughly now +/-10y: year must be in a modern range.
-	if !strings.Contains(body, "time-range") {
-		t.Fatalf("REPORT body missing time-range: %s", body)
+	startMark := `start="`
+	endMark := `end="`
+	startIdx := strings.Index(body, startMark)
+	endIdx := strings.Index(body, endMark)
+	if startIdx < 0 || endIdx < 0 {
+		t.Fatalf("REPORT body missing time-range bounds: %s", body)
+	}
+	startIdx += len(startMark)
+	endIdx += len(endMark)
+	startRaw := body[startIdx : startIdx+len("20060102T150405Z")]
+	endRaw := body[endIdx : endIdx+len("20060102T150405Z")]
+	start, err := time.Parse("20060102T150405Z", startRaw)
+	if err != nil {
+		t.Fatalf("parse REPORT start %q: %v", startRaw, err)
+	}
+	end, err := time.Parse("20060102T150405Z", endRaw)
+	if err != nil {
+		t.Fatalf("parse REPORT end %q: %v", endRaw, err)
+	}
+	// Allow a few minutes of skew around the +/-50y half-window.
+	wantStartMin := before.Add(-uidLookupWindow).Add(-2 * time.Minute)
+	wantStartMax := after.Add(-uidLookupWindow).Add(2 * time.Minute)
+	wantEndMin := before.Add(uidLookupWindow).Add(-2 * time.Minute)
+	wantEndMax := after.Add(uidLookupWindow).Add(2 * time.Minute)
+	if start.Before(wantStartMin) || start.After(wantStartMax) {
+		t.Fatalf("REPORT start = %v, want within [%v, %v]", start, wantStartMin, wantStartMax)
+	}
+	if end.Before(wantEndMin) || end.After(wantEndMax) {
+		t.Fatalf("REPORT end = %v, want within [%v, %v]", end, wantEndMin, wantEndMax)
 	}
 }

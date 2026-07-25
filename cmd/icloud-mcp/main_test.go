@@ -291,6 +291,60 @@ func TestProductionServerEnforcesStrictInputSchemas(t *testing.T) {
 	}
 }
 
+func TestDomainStatusAndRateLimitsHelpers(t *testing.T) {
+	if got := domainStatus(true); got != "ok" {
+		t.Fatalf("domainStatus(true) = %q", got)
+	}
+	if got := domainStatus(false); got != "disabled" {
+		t.Fatalf("domainStatus(false) = %q", got)
+	}
+	calendar := icloud.NewGuardedService(&icloud.MockService{}, 0, 0)
+	limits := collectRateLimits(calendar, nil, nil)
+	if _, ok := limits["calendar"]; !ok {
+		t.Fatalf("collectRateLimits missing calendar: %#v", limits)
+	}
+	if _, ok := limits["contacts"]; ok {
+		t.Fatalf("unexpected contacts limits with nil service: %#v", limits)
+	}
+	if _, ok := limits["mail"]; ok {
+		t.Fatalf("unexpected mail limits with nil service: %#v", limits)
+	}
+}
+
+func TestIsMutationToolName(t *testing.T) {
+	for _, name := range []string{
+		"create_event", "update_event", "delete_event",
+		"create_contact", "update_contact", "delete_contact",
+		"set_message_flags", "move_message", "trash_message", "send_message",
+	} {
+		if !isMutationToolName(name) {
+			t.Fatalf("isMutationToolName(%q) = false", name)
+		}
+	}
+	if isMutationToolName("search_events") || isMutationToolName("") {
+		t.Fatal("read tools must not be classified as mutations")
+	}
+}
+
+func TestSMTPAllowAllBootWarningCondition(t *testing.T) {
+	// Boot logs a warn when the configured policy is literal "*". Keep the
+	// gate on RecipientPolicy.AllowAll so main stays a thin slog call.
+	wildcard, err := config.ParseRecipientPolicy("*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wildcard.AllowAll() {
+		t.Fatal("literal * must report AllowAll")
+	}
+	exact, err := config.ParseRecipientPolicy("agent@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exact.AllowAll() {
+		t.Fatal("exact policy must not report AllowAll")
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

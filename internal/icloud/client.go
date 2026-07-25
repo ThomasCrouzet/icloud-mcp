@@ -15,7 +15,13 @@ import (
 
 // maxEventsPerCalendarSearch bounds aggregate materialization before MCP-level
 // filtering and the smaller public result cap are applied.
-const maxEventsPerCalendarSearch = 10000
+const maxEventsPerCalendarSearch = 2500
+
+// MaxMultiSearchMaterialized is the hard upper bound on filtered events held
+// in memory across a multi-calendar search_events call before the public
+// MaxResults sort-cap. Exceeding it fails closed with payload_too_large after
+// every selected calendar has still been queried (no early-stop bias).
+const MaxMultiSearchMaterialized = 10000
 
 // icalTimeLayout is the format of calendar-query time-range bounds
 // (RFC 4791) and of iCalendar dates in UTC.
@@ -27,10 +33,10 @@ const maxReportBodySize = 32 << 20 // 32 MiB
 
 // uidLookupWindow is the half-range used by findEventByUID when the direct
 // GET on <uid>.ics fails (imported events whose filename differs from the
-// UID). A +/-10-year window keeps the REPORT tractable under the 25s tool timeout while
-// covering ordinary calendar content. Events entirely outside this window
-// are reported as not found on the fallback path.
-const uidLookupWindow = 10 * 365 * 24 * time.Hour
+// UID). A +/-50-year window keeps the REPORT tractable under the 25s tool
+// timeout while covering ordinary and long-archive calendar content. Events
+// entirely outside this window are reported as not found on the fallback path.
+const uidLookupWindow = 50 * 365 * 24 * time.Hour
 
 // httpDoer is the minimal slice of an HTTP client used by the hand-rolled
 // discovery, compatible with both *http.Client and the return value of
@@ -936,7 +942,9 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 		}
 		return obj, nil
 	}
-	return nil, NewError(CodeNotFound, 404, "event not found", nil)
+	return nil, NewError(CodeNotFound, 404,
+		"event not found (direct <uid>.ics miss; imported-UID REPORT fallback covers +/-50 years around now)",
+		nil)
 }
 
 // calendarHasUID reports whether a VCALENDAR contains a VEVENT whose UID is uid.

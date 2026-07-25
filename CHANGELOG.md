@@ -18,6 +18,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Unknown TZID on Calendar mutation fails closed instead of coercing to UTC.
 - Multi-calendar search warnings omit raw calendar paths (index only).
 - Contacts/Mail registration panics on a nil redactor instead of a no-op one.
+- `file://` secrets must be mode 0600 or stricter (group/world access rejected
+  with `insecure_permissions`).
+- SMTP recipient policy literal `*` emits a boot warning on stderr.
+- Multi-calendar `search_events` fails closed at 10_000 filtered events
+  (`payload_too_large`) after still querying every selected calendar.
+- Per-calendar search materialization bound lowered from 10_000 to 2_500 events.
 
 ### Added
 - Agent error catalog in `docs/error-codes.md` with retry policy examples.
@@ -26,6 +32,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Timed Calendar MCP times always use RFC3339 with an explicit numeric offset
   in `ICLOUD_MCP_DEFAULT_TZ` (no bare `Z` in responses).
 - `calendar_capabilities.outputFormat` = `RFC3339_with_offset`.
+- `calendar_capabilities.limits.max_multi_search_materialized`.
 - `update_event` and `update_contact` optional process-local `idempotency_key`;
   `create_contact` accepts `idempotency_key` as an alias of `client_uid`.
 - `-audit-format=json|text` (default JSON NDJSON mutation audit).
@@ -34,11 +41,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Contacts `hasPhoto` boolean on full contact reads (PHOTO bytes still omitted).
 - `docs/agent-hosts.md` host integration notes; tracked `ROADMAP.md`.
 - CONTRIBUTING support and maintenance expectations.
+- CI coverage floors for `cmd/icloud-mcp` (55%) and `internal/health` (90%).
+- CI windows/amd64 build smoke (not packaged in GitHub Release archives).
+- Public-text policy checks new commit messages on the PR/push range.
 
 ### Changed
 - `get_event` response times are string fields formatted like `search_events`.
 - Document process-local update `idempotency_key` (15 minute TTL) in README and
   agent docs.
+- Imported-UID REPORT fallback window widened from +/-10 years to +/-50 years.
+- Tag releases are published from the CI workflow only after tests, lint,
+  govulncheck, and gitleaks succeed on the same ref; Go setup uses
+  `check-latest: false`; cosign keyless signatures are required and computed
+  before `gh release create` so a signing failure never publishes unsigned
+  archives. Local `make release` remains the digest-pinned container path for
+  linux/arm64; GitHub archives still use host `make release-all`.
 
 ### Fixed
 - Release workflow downloads the pinned cosign linux/amd64 binary with SHA-256

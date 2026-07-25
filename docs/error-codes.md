@@ -30,7 +30,7 @@ same public code vocabulary.
 | `unavailable` | yes | Back off with `retry_after_seconds` (default 2). |
 | `partial_failure` | no | Inspect warnings; do not assume full success. |
 | `protocol_error` | no | Library/server protocol gap (e.g. CONDSTORE flags). |
-| `payload_too_large` | no | Narrow the query or reduce payload. |
+| `payload_too_large` | no | Narrow the query, range, or calendar selection (includes multi-calendar search above the 10,000-event materialization budget). |
 | `outcome_unknown` | no | Mutation may have applied. Follow `reconciliation`; use `client_uid` / `idempotency_key` if present. |
 | `internal_error` | no | Bug or unexpected failure; report with redacted logs. |
 

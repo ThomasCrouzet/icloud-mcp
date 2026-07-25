@@ -224,5 +224,3 @@ func moveStepError(err error, category, reconciliation string) error {
 	}
 	return &Error{Code: CodePartialFailure, Message: "mail move stopped after " + category, Reconciliation: reconciliation}
 }
-
-

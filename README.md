@@ -9,8 +9,10 @@ JSON-RPC on **stdio**.
 
 **Remote protocols only** (CalDAV, CardDAV, IMAP, SMTP with app-specific
 passwords). Not macOS EventKit, AppleScript, browser automation, or a private
-Apple API. Runs headless on Linux, macOS, or Windows; suitable for agents and
-orchestration, not only a desktop chat app.
+Apple API. Runs headless on Linux and macOS; pure Go also builds for Windows
+(CI smoke-builds `windows/amd64`; GitHub Release archives ship linux/amd64,
+linux/arm64, and darwin/arm64). Suitable for agents and orchestration, not only
+a desktop chat app.
 
 **Host-agnostic.** Any MCP client that can spawn a child with an environment and
 wire stdin/stdout works: personal agents, Hermes, OpenClaw, IDE bridges,
@@ -78,8 +80,8 @@ export ICLOUD_MCP_ENABLE_MAIL_SEND=true
 export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com,bob@example.net'
 ```
 
-Boot-only `file://` secrets (only regular files up to 4 KiB; never re-read after
-start):
+Boot-only `file://` secrets (regular files only, at most 4 KiB, mode 0600 or
+stricter; never re-read after start):
 
 ```bash
 export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
@@ -138,18 +140,18 @@ Exactly **12** product environment variables:
 
 | Variable | Default | Contract |
 |----------|---------|----------|
-| `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported. |
-| `ICLOUD_PASSWORD` | none | Required app-specific password; Mail fallback. `file://` supported. |
+| `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported (regular file, <=4 KiB, mode 0600+). |
+| `ICLOUD_PASSWORD` | none | Required app-specific password; Mail fallback. `file://` as above. |
 | `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
 | `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level; accepted forms are documented below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
 | `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools; writes only if not read-only. |
 | `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads; requires Mail address/password. |
-| `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` supported. |
-| `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` supported. |
+| `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
+| `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Three IMAP mutation tools. |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` (independent of Mail write). |
-| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send requested: exact addresses or literal `*`. |
+| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send requested: exact addresses, or literal `*` (boot warning; prefer exact). |
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values fail at
 boot. Config is validated **before** any network access: Mail write/send without
@@ -192,8 +194,9 @@ every host and vendor.
   no proxy env for DAV, TLS 1.2+ verified.
 - **Isolation:** separate credentials, transports/dialers, limiters, semaphores,
   and protocol stacks per domain; no union authenticated HTTP client.
-- **Secrets:** redacted (including Basic and SASL PLAIN forms); no `os/exec`,
-  telemetry, or disk write after boot-only `file://` reads.
+- **Secrets:** redacted (including Basic and SASL PLAIN forms); boot-only
+  `file://` reads require mode 0600 or stricter; no `os/exec`, telemetry, or
+  disk write after boot.
 - **Audit:** mutations log `domain`, `resourceType`, process-local HMAC
   `resourceToken` only (never raw paths, UIDs, mailboxes, recipients).
 - **Residual risk:** one process holds every enabled domain's credentials;
@@ -210,7 +213,7 @@ Architecture: [docs/architecture.md](docs/architecture.md).
 |--|--|
 | Tool deadline | 25s (DAV HTTP 30s) |
 | Stdio / MCP result | 1 MiB frame; 256 KiB result; reflected protocol errors capped |
-| Calendar | 366-day search; 400 returned / 10,000 materialized events; 2,000 expansions / 100k steps per series / 250k steps per search; 60 read / 20 write per minute; concurrency 4 / 2 |
+| Calendar | 366-day search; 400 returned / 2,500 per calendar / 10,000 multi-calendar materialization; 2,000 expansions / 100k steps per series / 250k steps per search; 60 read / 20 write per minute; concurrency 4 / 2 |
 | Contacts | 100 books; 100 summaries; 2000 cards scanned; 60/20 per minute; concurrency 4 |
 | Mail | 60 read / 20 mutation / 20 send per minute; semaphores 2 / 1 / 1; no mutation/send retry |
 | Writes | No automatic replay of Calendar PUT/DELETE, Contacts writes, IMAP mutations, or SMTP; ambiguous outcomes use `outcome_unknown` |
@@ -259,21 +262,26 @@ another requires a written justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.3.0      # packaged linux/arm64, pinned Go 1.25.12 image
-make release-all VERSION=v0.3.0  # packaged linux/amd64, linux/arm64, darwin/arm64
+make release VERSION=v0.3.0      # packaged linux/arm64, digest-pinned Go 1.25.12 image
+make release-all VERSION=v0.3.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
 
 Release targets reject an unset or `dev` version. Archives contain the binary,
 `LICENSE`, and `THIRD_PARTY_NOTICES.md`; `dist/` also receives a SHA-256
-checksum file. `-version` prefers the release ldflags value and falls back to Go
-module build information, so `go install ...@version` reports that module
-version.
+checksum file. GitHub tag releases run `make release-all` only after CI and
+gitleaks succeed on that tag, with Go pinned to 1.25.12 (`check-latest`
+disabled). Local `make release` remains the digest-pinned container path for
+linux/arm64. Cosign keyless signatures are attached to release blobs. `-version`
+prefers the release ldflags value and falls back to Go module build information,
+so `go install ...@version` reports that module version.
 
-CI: race tests, coverage floors (78% aggregate + package floors), fuzz smoke,
-govulncheck, multi-arch build, egress/security AST guards, gitleaks, 20 MiB
-binary budget. Live iCloud tests use the `integration` build tag, are opt-in,
-and never run in CI. See [docs/testing.md](docs/testing.md).
+CI: race tests, coverage floors (78% aggregate + package floors including
+`cmd/icloud-mcp` and `internal/health`), fuzz smoke, govulncheck, multi-arch
+build (plus windows/amd64 smoke), egress/security AST guards, gitleaks, 20 MiB
+binary budget, public-text policy on tree and new commits. Live iCloud tests use
+the `integration` build tag, are opt-in, and never run in CI. See
+[docs/testing.md](docs/testing.md).
 
 ## Attribution
 

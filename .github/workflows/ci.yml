@@ -22,12 +22,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Public-text policy walks the PR/push commit range.
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.12'
-          check-latest: true
+          check-latest: false
 
       - name: gofmt
         run: |
@@ -53,8 +56,36 @@ jobs:
             '.gitignore' '.golangci.yml')
 
           if git grep -nIE '^[[:space:]]*Co-Authored-By:'; then
-            echo "Forbidden attribution trailer found" >&2
+            echo "Forbidden attribution trailer found in tracked tree" >&2
             status=1
+          fi
+
+          # New commits on this ref must stay English ASCII without AI trailers.
+          # Historical debt on older main commits is not rewritten.
+          range=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              range="${before}..${{ github.sha }}"
+            else
+              range="${{ github.sha }}^!"
+            fi
+          fi
+          if [ -n "$range" ]; then
+            while IFS= read -r commit; do
+              [ -z "$commit" ] && continue
+              body="$(git log -1 --format=%B "$commit")"
+              if printf '%s' "$body" | LC_ALL=C grep -nE "$non_ascii"; then
+                echo "Non-ASCII commit message: $commit" >&2
+                status=1
+              fi
+              if printf '%s' "$body" | grep -nIE '^[[:space:]]*Co-Authored-By:'; then
+                echo "Forbidden Co-Authored-By trailer in commit $commit" >&2
+                status=1
+              fi
+            done < <(git rev-list --no-merges "$range" 2>/dev/null || true)
           fi
           exit "$status"
 
@@ -119,6 +150,8 @@ jobs:
           check_package_coverage ./internal/security 80
           check_package_coverage ./internal/icloud 78
           check_package_coverage ./internal/config 85
+          check_package_coverage ./internal/health 90
+          check_package_coverage ./cmd/icloud-mcp 55
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -135,16 +168,20 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
 
-      - name: build (linux/amd64 + linux/arm64 + darwin/arm64)
+      - name: build (linux/amd64 + linux/arm64 + darwin/arm64 + windows/amd64 smoke)
         run: |
           mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/arm64; do
+          for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
             os="${target%/*}"
             arch="${target#*/}"
+            out="dist/icloud-mcp-$os-$arch"
+            if [ "$os" = "windows" ]; then
+              out="${out}.exe"
+            fi
             echo "::group::build $target"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags='-s -w' -o "dist/icloud-mcp-$os-$arch" ./cmd/icloud-mcp
-            file "dist/icloud-mcp-$os-$arch"
+              go build -trimpath -ldflags='-s -w' -o "$out" ./cmd/icloud-mcp
+            file "$out"
             echo "::endgroup::"
           done
 
@@ -831,6 +868,71 @@ jobs:
             echo "binary exceeds 20 MiB budget"
             exit 1
           fi
+
+  # Tag releases only after CI and secret scan succeed on the same ref.
+  release:
+    name: build archives and checksums
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [ci, secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.12'
+          check-latest: false
+
+      - name: Build multi-arch archives
+        # Host Go is pinned above to match go.mod. Local `make release` remains
+        # the digest-pinned container path for linux/arm64 only.
+        run: make release-all VERSION=${GITHUB_REF_NAME}
+
+      - name: Cosign keyless signatures
+        # Sign before publishing so a Fulcio/Rekor failure never leaves an
+        # unsigned GitHub Release public.
+        run: |
+          set -euo pipefail
+          VERSION=2.4.1
+          EXPECTED_SHA256=8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
+          binary="${RUNNER_TEMP}/cosign"
+          curl -fsSL -o "$binary" \
+            "https://github.com/sigstore/cosign/releases/download/v${VERSION}/cosign-linux-amd64"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$binary" | sha256sum -c -
+          chmod +x "$binary"
+          cd dist
+          for f in icloud-mcp-${GITHUB_REF_NAME}-*.tar.gz \
+                   icloud-mcp-${GITHUB_REF_NAME}-checksums.txt; do
+            "$binary" sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+
+      - name: Create GitHub Release with checksums and signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            "dist/icloud-mcp-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
+            "dist/icloud-mcp-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
+            "dist/icloud-mcp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
+            "dist/icloud-mcp-${GITHUB_REF_NAME}-checksums.txt"
+            dist/icloud-mcp-${GITHUB_REF_NAME}-*.sig
+            dist/icloud-mcp-${GITHUB_REF_NAME}-*.pem
+          )
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            "${assets[@]}"
 
   secrets:
     name: gitleaks (secret scan)

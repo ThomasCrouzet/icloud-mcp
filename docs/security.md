@@ -89,15 +89,17 @@ MIME parser errors are mapped to local bounded messages.
 
 `ICLOUD_EMAIL`, `ICLOUD_PASSWORD`, `ICLOUD_MAIL_ADDRESS`, and
 `ICLOUD_MAIL_PASSWORD` support `file://`. Mail values are read only when Mail is
-enabled. The process accepts only a regular file of at most 4 KiB, reads it once
-at boot, trims surrounding whitespace, and retains only the value. FIFOs,
-devices, directories, and oversized files are rejected.
+enabled. The process accepts only a regular file of at most 4 KiB whose mode is
+not group or world accessible (0600 or stricter), reads it once at boot, trims
+surrounding whitespace, and retains only the value. FIFOs, devices, directories,
+oversized files, and group/world-readable files are rejected.
 
 The operator who controls the environment is trusted to select the file. There
 is no chroot, base-directory allowlist, or symlink guarantee. An empty path and a
 path component exactly equal to `..` are rejected as footgun guards. Read errors
-report only `not_found`, `permission_denied`, or `unreadable`, never the path.
-There is no disk access after boot.
+report only `not_found`, `permission_denied`, `not_regular`, `too_large`,
+`insecure_permissions`, or `unreadable`, never the path. There is no disk access
+after boot.
 
 ## Read-only and capability gates
 
@@ -124,7 +126,8 @@ allowlist at boot.
 set of unique exact plain addr-specs. Matching trims surrounding configuration
 spaces and uses ASCII case-insensitive full-address equality. Display names,
 groups, empty entries, partial wildcards, domain-only rules, and suffix rules are
-invalid.
+invalid. Prefer an exact address list in production. Literal `*` is an explicit
+allow-all after SMTP AUTH and emits a boot warning on stderr.
 
 `send_message` parses and de-duplicates the complete To/Cc/Bcc set, applies the
 allowlist, validates subject/body limits, and builds the bounded message before
@@ -156,7 +159,9 @@ The implementation therefore restricts data shape and size:
   16,384 propstats, and 32,768 properties. Parsed iCalendar is bounded to 1,024
   components, 10,000 properties total, 1,024 properties per component, 512
   overrides, 64 parameters per property, 64 alarms, and 2,000 EXDATE values.
-  A Calendar search materializes at most 10,000 events. Recurrence expansion
+  A single-calendar search materializes at most 2,500 events. Multi-calendar
+  search still queries every selected calendar and fails closed above 10,000
+  filtered events before the public 400-event sort-cap. Recurrence expansion
   returns at most 2,000 occurrences and performs at most 100,000 iterator
   advances per series and 250,000 across one search, with preflight work
   rejection.
