@@ -6,6 +6,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- CI fuzz smoke retries once and uses a 5s/2m budget so short coordinator
+  shutdown flakes (`context deadline exceeded`, no crash corpus) do not fail
+  the job.
+
 ## [0.4.0] - 2026-07-25
 
 Agent maturity, security hardening, and gated tag releases.

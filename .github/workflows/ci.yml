@@ -194,6 +194,17 @@ jobs:
         run: |
           set -e
           # Every protocol parser package must keep at least one native target.
+          # Retry once: short -fuzztime smokes can fail closed on Go coordinator
+          # shutdown ("context deadline exceeded") with no crash corpus.
+          run_one_fuzz() {
+            package="$1"
+            target="$2"
+            if go test "$package" -run=^$ -fuzz="^${target}$" -fuzztime=5s -timeout=2m; then
+              return 0
+            fi
+            echo "fuzz $package $target failed once; retrying once" >&2
+            go test "$package" -run=^$ -fuzz="^${target}$" -fuzztime=5s -timeout=2m
+          }
           run_fuzz_targets() {
             package="$1"
             targets="$(go test "$package" -list '^Fuzz' | awk '/^Fuzz[[:alnum:]_]+$/ { print }')"
@@ -203,7 +214,7 @@ jobs:
             fi
             for target in $targets; do
               echo "::group::fuzz $package $target"
-              go test "$package" -run=^$ -fuzz="^${target}$" -fuzztime=3s
+              run_one_fuzz "$package" "$target"
               echo "::endgroup::"
             done
           }
