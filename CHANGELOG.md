@@ -194,6 +194,8 @@ send are all enabled.
 - Redactor also masks Basic-auth base64 in RawStd, URL, and RawURL encodings.
 - Stdio output applies a hard 256 KiB frame cap after redaction so a missed
   domain result budget cannot inflate the JSON-RPC channel.
+- Build and CI require Go 1.25.12 so stdlib fixes for known `crypto/tls`,
+  `net/url`, and related advisories are in the supported toolchain.
 
 ## [0.2.0] - 2026-07-18
 

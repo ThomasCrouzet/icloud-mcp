@@ -1,6 +1,6 @@
 module github.com/ThomasCrouzet/icloud-mcp
 
-go 1.25.5
+go 1.25.12
 
 require (
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608

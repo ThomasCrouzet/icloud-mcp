@@ -216,7 +216,7 @@ documentation for this class of access covers Mail, Calendar, and Contacts.
 
 ## Dependencies
 
-Go 1.25.5 or newer, one module, exactly **10** direct dependencies. Adding
+Go 1.25.12 or newer, one module, exactly **10** direct dependencies. Adding
 another requires a written justification here.
 
 | Dependency | Exact version | Justification |
@@ -238,7 +238,7 @@ another requires a written justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.3.0      # packaged linux/arm64, pinned Go 1.25.x image
+make release VERSION=v0.3.0      # packaged linux/arm64, pinned Go 1.25.12 image
 make release-all VERSION=v0.3.0  # packaged linux/amd64, linux/arm64, darwin/arm64
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```

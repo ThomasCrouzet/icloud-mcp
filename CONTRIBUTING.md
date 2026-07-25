@@ -8,8 +8,8 @@ make lint    # go vet + golangci-lint (pinned in Makefile / CI)
 make build   # local binary under bin/
 ```
 
-Go 1.25.5 or newer is required. `make release VERSION=vX.Y.Z` builds and
-packages static linux/arm64 with a digest-pinned Go 1.25.x image.
+Go 1.25.12 or newer is required. `make release VERSION=vX.Y.Z` builds and
+packages static linux/arm64 with a digest-pinned Go 1.25.12 image.
 `make release-all VERSION=vX.Y.Z` cross-compiles and packages linux/amd64,
 linux/arm64, and darwin/arm64 with the host toolchain. Release targets reject
 an unset or `dev` version and emit SHA-256 checksums. `make install` always
