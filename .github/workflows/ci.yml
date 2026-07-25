@@ -102,7 +102,7 @@ jobs:
 
       - name: version injection smoke check
         run: |
-          want=v0.3.0-ci
+          want=v0.4.0-ci
           binary="${RUNNER_TEMP}/icloud-mcp-version-check"
           go build -trimpath -ldflags="-s -w -X main.version=${want}" -o "$binary" ./cmd/icloud-mcp
           test "$("$binary" -version)" = "$want"

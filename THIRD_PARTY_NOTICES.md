@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This distribution contains the Go modules listed below. Versions match the
-module graph used for the v0.3.0 release preparation.
+module graph used for the v0.4.0 release preparation.
 
 ## MIT-Licensed Components
 

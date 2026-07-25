@@ -6,6 +6,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
+Agent maturity, security hardening, and gated tag releases.
+
 ### Security
 - Calendar retry logs no longer include paths or UIDs (stable `error_code` only).
 - Contacts write ambiguity (408 and residual 5xx) maps to `outcome_unknown`.

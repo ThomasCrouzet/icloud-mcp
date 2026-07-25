@@ -37,8 +37,8 @@ until Apple documents a suitable remote third-party connector. Details:
 ```bash
 go install github.com/ThomasCrouzet/icloud-mcp/cmd/icloud-mcp@latest
 # or: make build
-# or: make release VERSION=v0.3.0
-# or: make release-all VERSION=v0.3.0
+# or: make release VERSION=v0.4.0
+# or: make release-all VERSION=v0.4.0
 ```
 
 1. Create an [app-specific password](https://appleid.apple.com) (never the main
@@ -262,8 +262,8 @@ another requires a written justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.3.0      # packaged linux/arm64, digest-pinned Go 1.25.12 image
-make release-all VERSION=v0.3.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
+make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.12 image
+make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
 

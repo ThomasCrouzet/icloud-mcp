@@ -8,7 +8,7 @@ Run the complete local gates:
 make test                 # go test ./... -race -cover
 make lint                 # go vet plus pinned golangci-lint
 make build                # host-toolchain development binary
-make release VERSION=v0.3.0 # packaged linux/arm64 in pinned Go 1.25.12 container
+make release VERSION=v0.4.0 # packaged linux/arm64 in pinned Go 1.25.12 container
 ```
 
 Useful focused commands for the unified domains:
