@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ThomasCrouzet/icloud-mcp",
+  "title": "icloud-mcp",
+  "description": "stdio MCP for iCloud Calendar (CalDAV), with optional Contacts and Mail.",
+  "repository": {
+    "url": "https://github.com/ThomasCrouzet/icloud-mcp",
+    "source": "github"
+  },
+  "version": "0.4.0",
+  "websiteUrl": "https://github.com/ThomasCrouzet/icloud-mcp#quick-start"
+}

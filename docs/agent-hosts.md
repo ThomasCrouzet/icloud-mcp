@@ -24,23 +24,25 @@ Recommended first deploy: Calendar only, global read-only (7 tools).
 
 ## Hermes
 
-Register a stdio MCP server whose command is the binary and whose environment
-contains the variables above. Example shape (host YAML varies by Hermes
-version):
+Register a stdio MCP server in `~/.hermes/config.yaml` under `mcp_servers`
+(see current Hermes MCP docs). Example shape:
 
 ```yaml
-mcp:
-  servers:
-    icloud:
-      command: /home/you/.local/bin/icloud-mcp
-      env:
-        ICLOUD_EMAIL: you@icloud.com
-        ICLOUD_PASSWORD: app-specific-password
-        ICLOUD_MCP_READ_ONLY: "true"
-        ICLOUD_MCP_DEFAULT_TZ: Europe/Paris
+mcp_servers:
+  icloud:
+    command: /home/you/.local/bin/icloud-mcp
+    env:
+      ICLOUD_EMAIL: you@icloud.com
+      ICLOUD_PASSWORD: app-specific-password
+      ICLOUD_MCP_READ_ONLY: "true"
+      ICLOUD_MCP_DEFAULT_TZ: Europe/Paris
 ```
 
-Call `icloud_capabilities` first to see the effective tool list.
+Prefer storing secrets in the Hermes profile `.env` when that is how the host
+is configured. Call `icloud_capabilities` first to see the effective tool list.
+
+Hermes also ships an optional catalog entry path under `optional-mcps/` in the
+Hermes Agent repository; catalog install is separate from this manual config.
 
 ## Claude Desktop / Claude Code / OpenAI-compatible MCP bridges
 

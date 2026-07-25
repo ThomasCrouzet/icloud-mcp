@@ -50,5 +50,5 @@ v0.3.x. This file tracks agent maturity work and longer-horizon items.
 | Agent expectation of Reminders | FAQ: out of scope until a documented remote API exists. |
 | Rate limits under heavy agents | Health `rateLimits` + structured `rate_limited`. |
 
-Community input: GitHub Discussions and issues labeled `phase-1`, `phase-2`,
-`phase-3` when opened.
+Community input: GitHub issues labeled `phase-1`, `phase-2`, or `phase-3` when
+opened.
