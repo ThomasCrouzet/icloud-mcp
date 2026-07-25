@@ -70,6 +70,18 @@ func newService(config Config, imapDial IMAPDialFunc, smtpDial SMTPDialFunc, ena
 	}, nil
 }
 
+// RateLimitStatus reports the live Mail limiter state for health probes.
+func (s *Client) RateLimitStatus() map[string]any {
+	if s == nil {
+		return nil
+	}
+	return map[string]any{
+		"read":     map[string]any{"tokens": s.readLimiter.Tokens(), "limit": float64(s.readLimiter.Limit()), "burst": s.readLimiter.Burst()},
+		"mutation": map[string]any{"tokens": s.mutationLimiter.Tokens(), "limit": float64(s.mutationLimiter.Limit()), "burst": s.mutationLimiter.Burst()},
+		"send":     map[string]any{"tokens": s.sendLimiter.Tokens(), "limit": float64(s.sendLimiter.Limit()), "burst": s.sendLimiter.Burst()},
+	}
+}
+
 func acquire(ctx context.Context, semaphore chan struct{}) error {
 	select {
 	case semaphore <- struct{}{}:

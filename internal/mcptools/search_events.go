@@ -240,7 +240,7 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			MultiCalendarCapped:  multiCalendarCapped,
 			PartialFailure:       partialFailure,
 			Warnings:             warnings,
-			Events:               eventsToDTO(page, compact),
+			Events:               eventsToDTO(page, compact, deps.DefaultLocation),
 		}
 		return writeSearchEventsJSON(deps.Redactor, &resp), nil
 	}
@@ -375,15 +375,15 @@ func filterEventsAdvanced(events []icloud.Event, uid, status string, filterAllDa
 	return out
 }
 
-func eventsToDTO(events []icloud.Event, compact bool) []searchEventDTO {
+func eventsToDTO(events []icloud.Event, compact bool, loc *time.Location) []searchEventDTO {
 	out := make([]searchEventDTO, 0, len(events))
 	for _, e := range events {
 		dto := searchEventDTO{
 			UID:          e.UID,
 			Title:        e.Title,
 			Location:     e.Location,
-			StartTime:    icloud.FormatEventTime(e.StartTime, e.AllDay),
-			EndTime:      icloud.FormatEventTime(e.EndTime, e.AllDay),
+			StartTime:    icloud.FormatEventTime(e.StartTime, e.AllDay, loc),
+			EndTime:      icloud.FormatEventTime(e.EndTime, e.AllDay, loc),
 			AllDay:       e.AllDay,
 			Recurrence:   e.Recurrence,
 			Timezone:     e.Timezone,
@@ -394,7 +394,7 @@ func eventsToDTO(events []icloud.Event, compact bool) []searchEventDTO {
 			IsOverride:   e.IsOverride,
 		}
 		if !e.RecurrenceID.IsZero() {
-			dto.RecurrenceID = icloud.FormatEventTime(e.RecurrenceID, e.AllDay)
+			dto.RecurrenceID = icloud.FormatEventTime(e.RecurrenceID, e.AllDay, loc)
 		}
 		if !compact {
 			dto.Notes = e.Notes

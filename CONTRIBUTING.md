@@ -51,6 +51,20 @@ Report vulnerabilities privately via GitHub
 [security advisories](https://github.com/ThomasCrouzet/icloud-mcp/security/advisories/new).
 See [SECURITY.md](SECURITY.md) and [docs/security.md](docs/security.md).
 
+## Support and maintenance
+
+These are voluntary maintainer targets, not a paid SLA:
+
+- **Issue triage:** within 5 business days when capacity allows.
+- **PR review:** about 2 weeks for ordinary changes; critical security fixes
+  aim for a few days.
+- **Supported versions:** latest release plus one prior minor line
+  (for example v0.3.x and v0.2.x while both are current).
+- **Breaking changes:** announced in CHANGELOG at least one release in advance
+  when practical.
+- **Security fixes:** expedited and backported to the prior supported line when
+  feasible. See [SECURITY.md](SECURITY.md).
+
 ## Pull requests
 
 - Prefer small, focused PRs.
@@ -59,3 +73,5 @@ See [SECURITY.md](SECURITY.md) and [docs/security.md](docs/security.md).
   multi-arch build. Coverage must meet the documented package floors and 78%
   aggregate threshold.
 - Do not commit secrets, `.env` files, or local agent notes.
+- Label roadmap work with `phase-1`, `phase-2`, or `phase-3` when applicable
+  (see [ROADMAP.md](ROADMAP.md)).

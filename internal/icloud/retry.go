@@ -88,14 +88,15 @@ func (r *retryClassifier) Do(req *http.Request) (*http.Response, error) {
 			if write {
 				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusTooManyRequests {
-					return nil, classifyStatus(resp.StatusCode)
+					delay, _ := headerRetryAfter(resp, r.now)
+					return nil, classifyStatusWithRetryAfter(resp.StatusCode, delay)
 				}
 				return nil, outcomeUnknownError(resp.StatusCode)
 			}
 			wait := retryDelay(resp, attempt, r.baseDelay, r.maxDelay, r.now, r.rand)
 			_ = resp.Body.Close()
 			if attempt+1 >= r.maxTries {
-				return nil, classifyStatus(resp.StatusCode)
+				return nil, classifyStatusWithRetryAfter(resp.StatusCode, wait)
 			}
 			if err := sleep(req.Context(), wait); err != nil {
 				return nil, err
@@ -143,31 +144,47 @@ func isRetryStatus(status int) bool {
 // returned error, if non-nil, is the (already context-derived) reason to abort
 // immediately rather than sleep.
 func retryDelay(resp *http.Response, attempt int, base, max time.Duration, now func() time.Time, rand func() float64) time.Duration {
-	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		// Delta-seconds form.
-		if secs, err := strconv.ParseInt(ra, 10, 64); err == nil {
-			if secs <= 0 {
-				return 0
-			}
-			if max <= 0 || secs > int64(max/time.Second) {
-				return max
-			}
-			return time.Duration(secs) * time.Second
-		}
-		// HTTP-date form (RFC 9110 section 6.6.7).
-		if t, err := http.ParseTime(ra); err == nil {
-			d := t.Sub(now())
-			if d < 0 {
-				d = 0
-			}
-			return capDelay(d, max)
-		}
+	if d, ok := headerRetryAfter(resp, now); ok {
+		// Explicit Retry-After: 0 means retry immediately (do not fall back to
+		// exponential backoff). Positive values are capped at max.
+		return capDelay(d, max)
 	}
 	// Exponential backoff with jitter.
 	d := base << attempt // base * 2^attempt
 	d = capDelay(d, max)
 	jitter := time.Duration(rand() * float64(d) * 0.25)
 	return d + jitter
+}
+
+// headerRetryAfter parses Retry-After as delta-seconds or HTTP-date. ok is true
+// when the header was present and parseable (including a zero delay).
+func headerRetryAfter(resp *http.Response, now func() time.Time) (time.Duration, bool) {
+	if resp == nil {
+		return 0, false
+	}
+	ra := resp.Header.Get("Retry-After")
+	if ra == "" {
+		return 0, false
+	}
+	if secs, err := strconv.ParseInt(ra, 10, 64); err == nil {
+		if secs <= 0 {
+			return 0, true
+		}
+		// Cap before multiplying so huge delta-seconds cannot overflow Duration.
+		const maxDeltaSecs = int64(maxPublicRetryAfter / time.Second)
+		if secs > maxDeltaSecs {
+			secs = maxDeltaSecs
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(ra); err == nil {
+		d := t.Sub(now())
+		if d < 0 {
+			return 0, true
+		}
+		return d, true
+	}
+	return 0, false
 }
 
 func capDelay(d, max time.Duration) time.Duration {

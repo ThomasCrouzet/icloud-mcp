@@ -154,8 +154,9 @@ func TestFindFreeSlotsHandlerUsesBufferedQueryAndClipsOutput(t *testing.T) {
 	if payload.Count != 2 {
 		t.Fatalf("slots = %+v, want 2 slots", payload.Slots)
 	}
-	if payload.Slots[0].Start != start.Add(20*time.Minute).Format(time.RFC3339) {
-		t.Errorf("first slot starts at %s", payload.Slots[0].Start)
+	wantStart := icloud.FormatEventTime(start.Add(20*time.Minute), false, time.UTC)
+	if payload.Slots[0].Start != wantStart {
+		t.Errorf("first slot starts at %s, want %s", payload.Slots[0].Start, wantStart)
 	}
 	for _, slot := range payload.Slots {
 		slotStart, parseStartErr := time.Parse(time.RFC3339, slot.Start)

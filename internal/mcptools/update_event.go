@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
-		mcp.WithDescription("Updates fields of an existing event by UID. scope=series (default) patches the master; scope=occurrence patches/creates a RECURRENCE-ID override (never deletes the series). Pass recurrence_id from search_events.recurrenceId (YYYY-MM-DD for all-day). Optional etag from get_event/search_events enables If-Match (412 = concurrent_modification); etag=* is rejected. Omitted fields unchanged; empty text clears. Start-only occurrence updates keep the previous duration."),
+		mcp.WithDescription("Updates fields of an existing event by UID. scope=series (default) patches the master; scope=occurrence patches/creates a RECURRENCE-ID override (never deletes the series). Pass recurrence_id from search_events.recurrenceId (YYYY-MM-DD for all-day). Optional etag from get_event/search_events enables If-Match (412 = concurrent_modification); etag=* is rejected. Optional idempotency_key safely retries the same mutation after timeout or outcome_unknown (same key+params returns the cached success; different params under the same key is conflict). Omitted fields unchanged; empty text clears. Start-only occurrence updates keep the previous duration."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -30,6 +31,7 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
 		mcp.WithString("recurrence_id", mcp.Description("Occurrence RECURRENCE-ID when scope=occurrence. Use search_events.recurrenceId (not a moved override's new start). Prefer YYYY-MM-DD for all-day; timed forms follow "+datetimeParamDescription("the same rules as start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event or search_events (opaque token; not *)")),
+		mcp.WithString("idempotency_key", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Optional process-local key to safely retry this update. Same key and params return the cached success; same key with different params returns conflict. Prefer combining with etag.")),
 	)
 }
 
@@ -195,16 +197,57 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			return deny("validation", fmt.Errorf("no field to update was provided"))
 		}
 
+		idemKey, err := optionalStringArg(req, "idempotency_key", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		var paramsHash string
+		if idemKey != "" {
+			paramsHash, err = hashIdempotencyParams(map[string]any{
+				"tool":          "update_event",
+				"uid":           uid,
+				"calendar":      calendarPath,
+				"etag":          etag,
+				"title":         update.Title,
+				"location":      update.Location,
+				"notes":         update.Notes,
+				"start":         update.StartTime,
+				"end":           update.EndTime,
+				"status":        update.Status,
+				"transparency":  update.Transparency,
+				"url":           update.URL,
+				"scope":         update.Scope,
+				"recurrence_id": update.RecurrenceID,
+			})
+			if err != nil {
+				return deny("validation", err)
+			}
+			if payload, conflict, found := defaultIdempotency.lookup(idemKey, paramsHash); found {
+				if conflict {
+					return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
+						"idempotency_key was reused with different update parameters", nil))
+				}
+				return writeCalendarEncoded(deps.Redactor, []byte(payload)), nil
+			}
+		}
+
 		if err := deps.Service.UpdateEvent(ctx, calendarPath, uid, update); err != nil {
 			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "updating event", err), nil
 		}
 		logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, "success")
 
-		return writeCalendarJSON(deps.Redactor, updateEventResponse{
+		resp := updateEventResponse{
 			Success: true,
 			UID:     uid,
 			Scope:   string(update.Scope),
-		}), nil
+		}
+		if idemKey != "" {
+			encoded, mErr := json.MarshalIndent(resp, "", "  ")
+			if mErr == nil {
+				defaultIdempotency.store(idemKey, paramsHash, string(encoded))
+			}
+		}
+		return writeCalendarJSON(deps.Redactor, resp), nil
 	}
 }

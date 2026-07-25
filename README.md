@@ -124,6 +124,14 @@ behavior notes: [docs/caldav-compatibility.md](docs/caldav-compatibility.md),
 [docs/carddav-compatibility.md](docs/carddav-compatibility.md),
 [docs/mail-compatibility.md](docs/mail-compatibility.md).
 
+**Idempotency:** `create_event` / `create_contact` use server-side UID keys
+(`client_uid` or alias `idempotency_key`): a repeat create conflicts if the UID
+already exists (never silent overwrite). `update_event` / `update_contact`
+optional `idempotency_key` is **process-local only** (in-memory cache, **15
+minute TTL**, cleared on process restart). Same key + same params returns the
+cached success; same key + different params is `conflict`. Prefer combining
+update keys with a strong `etag`. See [docs/error-codes.md](docs/error-codes.md).
+
 ## Configuration
 
 Exactly **12** product environment variables:
@@ -152,16 +160,25 @@ coexist with write/send flags but suppresses their registration.
 Log levels are trimmed and case-insensitive: `debug`/`-4`, `info`,
 `warn`/`warning`/`2`, and `error`/`4`. Unset or unrecognized values use `info`.
 
-Flags: `-version`; optional `-health 127.0.0.1:port` (loopback-only `/healthz`).
+Flags: `-version`; optional `-health 127.0.0.1:port` (loopback-only `/healthz`
+and `/status` JSON with domains and rate limits); optional
+`-audit-format=json|text` (default `json` mutation audit on stderr).
 
 ### Dates
 
-- Calendar `start`/`end`: RFC3339 with offset, or wall clock without offset in
-  `ICLOUD_MCP_DEFAULT_TZ`. Prefer no-offset for the user's local time. Recurring
-  or explicit-timezone creates write TZID + VTIMEZONE; non-recurring timed
-  defaults to UTC `Z`. All-day uses `VALUE=DATE`.
+- Calendar **input** `start`/`end`: RFC3339 with offset, or wall clock without
+  offset in `ICLOUD_MCP_DEFAULT_TZ`. Prefer no-offset for the user's local time.
+  Recurring or explicit-timezone creates write TZID + VTIMEZONE; non-recurring
+  timed defaults to UTC `Z` on the wire. All-day uses `VALUE=DATE`.
+- Calendar **output**: timed events always use RFC3339 with an explicit numeric
+  offset in `ICLOUD_MCP_DEFAULT_TZ` (never bare `Z`). All-day dates are
+  `YYYY-MM-DD`. See `calendar_capabilities.outputFormat`.
 - Contacts birthdays: write `YYYY-MM-DD` only.
 - Mail search: `since` inclusive, `before` exclusive (`YYYY-MM-DD`).
+
+Agent error codes and retry policy: [docs/error-codes.md](docs/error-codes.md).
+Host wiring examples: [docs/agent-hosts.md](docs/agent-hosts.md). Product roadmap:
+[ROADMAP.md](ROADMAP.md).
 
 ## Security (summary)
 
@@ -213,6 +230,10 @@ IMAP/SMTP session per call. Rates, XML/iCal/vCard/MIME budgets, and retry rules:
 
 Modern Reminders are not treated as generic CalDAV VTODO. Apple's third-party
 documentation for this class of access covers Mail, Calendar, and Contacts.
+
+**Multi-account:** one process holds one iCloud identity. Spawn separate
+`icloud-mcp` processes (distinct env, optional distinct `-health` ports) and let
+the MCP host multiplex them. See [docs/agent-hosts.md](docs/agent-hosts.md).
 
 ## Dependencies
 

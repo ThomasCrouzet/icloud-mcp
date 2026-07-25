@@ -356,11 +356,27 @@ func TestPublicCodeMapping(t *testing.T) {
 
 func TestFormatEventTime_AllDay(t *testing.T) {
 	d := time.Date(2026, 7, 1, 15, 0, 0, 0, time.UTC)
-	if got := FormatEventTime(d, true); got != "2026-07-01" {
+	if got := FormatEventTime(d, true, time.UTC); got != "2026-07-01" {
 		t.Errorf("got %q", got)
 	}
-	if FormatEventTime(time.Time{}, false) != "" {
+	if FormatEventTime(time.Time{}, false, time.UTC) != "" {
 		t.Error("zero")
+	}
+}
+
+func TestFormatEventTime_DefaultTZOffset(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 18:00 UTC is 20:00 in Paris (CEST, +02:00) on 2026-07-25.
+	utc := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
+	got := FormatEventTime(utc, false, paris)
+	if got != "2026-07-25T20:00:00+02:00" {
+		t.Fatalf("got %q, want 2026-07-25T20:00:00+02:00", got)
+	}
+	if strings.HasSuffix(got, "Z") {
+		t.Fatalf("timed output must not use bare Z: %q", got)
 	}
 }
 

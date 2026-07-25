@@ -53,8 +53,10 @@ type ContactSummary struct {
 	IsGroup      bool         `json:"isGroup,omitempty"`
 }
 
-// Contact is a modeled full contact. Raw vCard data, PHOTO bytes, and unknown
-// properties are deliberately not exposed.
+// Contact is a modeled full contact. Raw vCard data and PHOTO bytes are
+// deliberately not exposed (payload and PII budget). HasPhoto reports whether
+// a PHOTO property is present so agents can know an avatar exists without
+// receiving its bytes.
 type Contact struct {
 	ContactSummary
 	Version           string          `json:"version"`
@@ -65,6 +67,7 @@ type Contact struct {
 	Addresses         []PostalAddress `json:"addresses,omitempty"`
 	URLs              []TypedValue    `json:"urls,omitempty"`
 	Notes             string          `json:"notes,omitempty"`
+	HasPhoto          bool            `json:"hasPhoto,omitempty"`
 	UnsupportedFields []string        `json:"unsupportedFields,omitempty"`
 }
 

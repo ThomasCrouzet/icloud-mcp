@@ -484,6 +484,7 @@ func cardDetail(card vcard.Card, version, addressBook, etag string) *Contact {
 		Addresses:      modeledAddresses(card[vcard.FieldAddress]),
 		URLs:           modeledTypedValues(card[vcard.FieldURL], maxURLs, maxURLBytes),
 		Notes:          truncateUTF8(card.Value(vcard.FieldNote), maxNotesBytes),
+		HasPhoto:       len(card[vcard.FieldPhoto]) > 0,
 	}
 	if name := card.Name(); name != nil {
 		detail.Name = &StructuredName{

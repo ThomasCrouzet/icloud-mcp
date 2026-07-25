@@ -72,11 +72,11 @@ func classifyStatus(status int) *Error {
 	case status == http.StatusRequestEntityTooLarge || status == http.StatusInsufficientStorage:
 		return newError(CodePayloadTooLarge, status, "the contact exceeds the server resource limit")
 	case status == http.StatusTooManyRequests:
-		return &Error{Code: CodeRateLimited, Status: status, Message: "iCloud Contacts is rate limiting requests", Retryable: true}
+		return &Error{Code: CodeRateLimited, Status: status, Message: "iCloud Contacts is rate limiting requests", Retryable: true, RetryAfter: 5 * time.Second}
 	case status == http.StatusRequestTimeout || status == http.StatusGatewayTimeout:
-		return &Error{Code: CodeTimeout, Status: status, Message: "the Contacts request timed out", Retryable: true}
+		return &Error{Code: CodeTimeout, Status: status, Message: "the Contacts request timed out", Retryable: true, RetryAfter: 2 * time.Second}
 	case status >= 500:
-		return &Error{Code: CodeUnavailable, Status: status, Message: "iCloud Contacts is temporarily unavailable", Retryable: true}
+		return &Error{Code: CodeUnavailable, Status: status, Message: "iCloud Contacts is temporarily unavailable", Retryable: true, RetryAfter: 2 * time.Second}
 	default:
 		return newError(CodeProtocolError, status, "iCloud Contacts returned an unexpected HTTP status")
 	}

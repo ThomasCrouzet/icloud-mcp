@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// Default agent-facing retry delays when the remote did not supply a usable
+// Retry-After header. Capped so agents never wait on a multi-minute stall.
+const (
+	defaultRateLimitRetryAfter   = 5 * time.Second
+	defaultUnavailableRetryAfter = 2 * time.Second
+	maxPublicRetryAfter          = 60 * time.Second
+)
+
 // Code is a stable, greppable error code surfaced to the MCP client. It is
 // part of the public contract of the CalDAV client: an MCP host may match
 // on it to adapt its behavior (e.g. re-read and retry on
@@ -102,6 +110,23 @@ func AsICloudError(err error) *Error {
 // retry/classify doer and by the hand-rolled requests as a fallback when the
 // doer is a plain test client (no classification).
 func classifyStatus(status int) *Error {
+	return classifyStatusWithRetryAfter(status, 0)
+}
+
+// classifyStatusWithRetryAfter is classifyStatus plus an optional Retry-After
+// hint from the last HTTP response. Zero retryAfter keeps the code defaults.
+func classifyStatusWithRetryAfter(status int, retryAfter time.Duration) *Error {
+	err := classifyStatusBare(status)
+	if err == nil {
+		return nil
+	}
+	if retryAfter > 0 && (err.Code == CodeRateLimited || err.Code == CodeServerUnavailable || err.Code == CodeUnavailable) {
+		err.RetryAfter = capPublicRetryAfter(retryAfter)
+	}
+	return err
+}
+
+func classifyStatusBare(status int) *Error {
 	switch {
 	case status == http.StatusUnauthorized:
 		return NewError(CodeAuthenticationRefused, status,
@@ -131,17 +156,29 @@ func classifyStatus(status int) *Error {
 	case status == http.StatusTooManyRequests:
 		return &Error{
 			Code: CodeRateLimited, Status: status, Retryable: true,
-			Message: "iCloud is rate limiting requests (HTTP 429) after retries: reduce the request rate",
+			Message:    "iCloud is rate limiting requests (HTTP 429) after retries: reduce the request rate",
+			RetryAfter: defaultRateLimitRetryAfter,
 		}
 	case status >= 500:
 		return &Error{
 			Code: CodeServerUnavailable, Status: status, Retryable: true,
-			Message: fmt.Sprintf("iCloud CalDAV shard is temporarily unavailable (HTTP %d) after retries", status),
+			Message:    fmt.Sprintf("iCloud CalDAV shard is temporarily unavailable (HTTP %d) after retries", status),
+			RetryAfter: defaultUnavailableRetryAfter,
 		}
 	default:
 		return NewError(CodeProtocolError, status,
 			fmt.Sprintf("iCloud returned an unexpected HTTP status (%d)", status), nil)
 	}
+}
+
+func capPublicRetryAfter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	if d > maxPublicRetryAfter {
+		return maxPublicRetryAfter
+	}
+	return d
 }
 
 func outcomeUnknownError(status int) *Error {

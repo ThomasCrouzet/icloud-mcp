@@ -11,16 +11,19 @@ import (
 // rules; FormatEventTime for stable output.
 
 // FormatEventTime formats t for MCP JSON responses. All-day dates use
-// YYYY-MM-DD (UTC calendar date). Timed events use RFC3339 with the
-// original location offset when available, else the stored offset.
-func FormatEventTime(t time.Time, allDay bool) string {
+// YYYY-MM-DD (UTC calendar date). Timed events use RFC3339 with an explicit
+// numeric offset in loc (ICLOUD_MCP_DEFAULT_TZ). When loc is nil, UTC is used
+// and the offset is still written as +00:00 rather than bare Z so agents never
+// see mixed Z vs offset forms.
+func FormatEventTime(t time.Time, allDay bool, loc *time.Location) string {
 	if t.IsZero() {
 		return ""
 	}
 	if allDay {
 		return t.UTC().Format("2006-01-02")
 	}
-	return t.Format(time.RFC3339)
+	local := t.In(ResolveLocation(loc))
+	return local.Format("2006-01-02T15:04:05-07:00")
 }
 
 // ResolveLocation returns loc or UTC when loc is nil.

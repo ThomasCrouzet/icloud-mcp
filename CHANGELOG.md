@@ -6,6 +6,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Agent error catalog in `docs/error-codes.md` with retry policy examples.
+- `retry_after_seconds` populated on Calendar/Contacts/Mail rate-limit and
+  unavailable errors (including local limiter fast-fail and final HTTP 429).
+- Timed Calendar MCP times always use RFC3339 with an explicit numeric offset
+  in `ICLOUD_MCP_DEFAULT_TZ` (no bare `Z` in responses).
+- `calendar_capabilities.outputFormat` = `RFC3339_with_offset`.
+- `update_event` and `update_contact` optional process-local `idempotency_key`;
+  `create_contact` accepts `idempotency_key` as an alias of `client_uid`.
+- `-audit-format=json|text` (default JSON NDJSON mutation audit).
+- `/healthz` and `/status` return the same rich JSON: status, timestamp, version,
+  domain enablement, and multi-domain rate-limit tokens.
+- Contacts `hasPhoto` boolean on full contact reads (PHOTO bytes still omitted).
+- `docs/agent-hosts.md` host integration notes; tracked `ROADMAP.md`.
+- CONTRIBUTING support and maintenance expectations.
+
+### Changed
+- `get_event` response times are string fields formatted like `search_events`.
+- Document process-local update `idempotency_key` (15 minute TTL) in README and
+  agent docs.
+
+### Fixed
+- Release workflow downloads the pinned cosign linux/amd64 binary with SHA-256
+  verification (the previous `.tar.gz` URL did not match upstream assets).
+
 ## [0.3.0] - 2026-07-25
 
 Unified Calendar, Contacts, and Mail MCP server. Default remains Calendar-only

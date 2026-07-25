@@ -1,8 +1,8 @@
 // Package health provides a minimal HTTP healthcheck, optional and OFF by
 // default. This is not an application-level network service: the MCP server
 // speaks stdio; this endpoint only lets an external supervisor (e.g. a
-// Docker healthcheck) probe that the process is alive and report its version
-// and current rate-limiter state.
+// Docker healthcheck) probe that the process is alive and report its version,
+// enabled domains, and current rate-limiter state.
 package health
 
 import (
@@ -15,8 +15,43 @@ import (
 	"time"
 )
 
-// Server exposes /healthz (liveness) and /status (version + rate limits) on
-// the provided address.
+// DomainStatus describes one domain for the rich health JSON.
+type DomainStatus struct {
+	Status string `json:"status"` // ok | disabled
+}
+
+// Status is the unified JSON body for /healthz and /status.
+type Status struct {
+	Status     string                  `json:"status"`
+	Timestamp  string                  `json:"timestamp"`
+	Version    string                  `json:"version"`
+	Domains    map[string]DomainStatus `json:"domains"`
+	RateLimits any                     `json:"rateLimits"`
+}
+
+// Snapshot builds the live Status value. rateLimits may be nil.
+func Snapshot(version string, domains map[string]DomainStatus, rateLimits any) Status {
+	if version == "" {
+		version = "dev"
+	}
+	if domains == nil {
+		domains = map[string]DomainStatus{
+			"calendar": {Status: "ok"},
+			"contacts": {Status: "disabled"},
+			"mail":     {Status: "disabled"},
+		}
+	}
+	return Status{
+		Status:     "ok",
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Version:    version,
+		Domains:    domains,
+		RateLimits: rateLimits,
+	}
+}
+
+// Server exposes /healthz and /status (identical rich JSON) on the provided
+// address. Both remain GET/HEAD only.
 type Server struct {
 	srv *http.Server
 }
@@ -28,26 +63,15 @@ type Server struct {
 // caller's perspective (the MCP server must not die because of a healthcheck).
 //
 // version is the binary version (main.version, overridden at build time).
-// statusFn, if non-nil, returns the current rate-limiter state for /status;
-// pass nil when there is no guarded service to report on.
-func Start(addr, version string, statusFn func() any) (*Server, error) {
+// domains reports enablement only (no network probe). statusFn, if non-nil,
+// returns the current multi-domain rate-limiter state.
+func Start(addr, version string, domains map[string]DomainStatus, statusFn func() any) (*Server, error) {
 	listenAddr, err := canonicalLoopbackAddr(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		// GET/HEAD only: keep the endpoint strict, no side effects.
+	writeStatus := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -57,15 +81,17 @@ func Start(addr, version string, statusFn func() any) (*Server, error) {
 		if statusFn != nil {
 			rate = statusFn()
 		}
+		body, _ := json.Marshal(Snapshot(version, domains, rate))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		// A nil rate is serialized as a JSON null, not an error.
-		body, _ := json.Marshal(map[string]any{
-			"version":     version,
-			"rate_limits": rate,
-		})
-		_, _ = w.Write(body)
-	})
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(body)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", writeStatus)
+	mux.HandleFunc("/status", writeStatus)
 
 	srv := &http.Server{
 		Addr:              listenAddr,

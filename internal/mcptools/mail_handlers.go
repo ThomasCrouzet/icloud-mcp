@@ -23,6 +23,7 @@ type mailErrorPayload struct {
 	Code           string                       `json:"code"`
 	Message        string                       `json:"message"`
 	Retryable      bool                         `json:"retryable,omitempty"`
+	RetryAfter     int                          `json:"retry_after_seconds,omitempty"`
 	Reconciliation string                       `json:"reconciliation,omitempty"`
 	Status         maildomain.SendStatus        `json:"status,omitempty"`
 	MessageID      string                       `json:"messageId,omitempty"`
@@ -254,6 +255,7 @@ func mailServiceErrorResult(deps MailDeps, operation string, err error) *mcp.Cal
 		payload.Message = operation + ": " + public.Message
 		payload.Retryable = public.Retryable
 		payload.Reconciliation = public.Reconciliation
+		payload.RetryAfter = mailRetryAfterSeconds(public)
 		if public.Code == maildomain.CodeOutcomeUnknown {
 			payload.Status = maildomain.SendOutcomeUnknown
 		}
@@ -276,6 +278,7 @@ func mailSendErrorResult(deps MailDeps, operation string, send maildomain.SendRe
 		payload.Message = operation + ": " + public.Message
 		payload.Retryable = public.Retryable
 		payload.Reconciliation = public.Reconciliation
+		payload.RetryAfter = mailRetryAfterSeconds(public)
 		if public.Code == maildomain.CodeOutcomeUnknown {
 			payload.Status = maildomain.SendOutcomeUnknown
 		} else if payload.Status == "" {
@@ -285,6 +288,20 @@ func mailSendErrorResult(deps MailDeps, operation string, send maildomain.SendRe
 	result := writeJSON(mailRedactor(deps), payload)
 	result.IsError = true
 	return result
+}
+
+func mailRetryAfterSeconds(err *maildomain.Error) int {
+	if err == nil || err.RetryAfter <= 0 {
+		return 0
+	}
+	sec := int(err.RetryAfter.Seconds())
+	if sec < 1 {
+		return 1
+	}
+	if sec > 60 {
+		return 60
+	}
+	return sec
 }
 
 func mailValidationResult(deps MailDeps, err error) *mcp.CallToolResult {

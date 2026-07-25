@@ -1022,6 +1022,30 @@ func TestFieldAndCardCaps(t *testing.T) {
 	requireCode(t, validateSearchOptions(&opts), CodeValidation)
 }
 
+func TestCardDetailHasPhotoWithoutBytes(t *testing.T) {
+	withPhoto := "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:photo-card\r\nFN:Photo\r\nN:Photo;;;;\r\nPHOTO;ENCODING=b;TYPE=JPEG:QUJD\r\nEND:VCARD\r\n"
+	card, version, err := decodeCard([]byte(withPhoto))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := cardDetail(card, version, "book-test", `"etag"`)
+	if !detail.HasPhoto {
+		t.Fatal("expected hasPhoto true")
+	}
+	encoded, _ := json.Marshal(detail)
+	if strings.Contains(string(encoded), "QUJD") {
+		t.Fatalf("PHOTO bytes leaked into JSON: %s", encoded)
+	}
+	without := "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:plain\r\nFN:Plain\r\nN:Plain;;;;\r\nEND:VCARD\r\n"
+	card2, version2, err := decodeCard([]byte(without))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cardDetail(card2, version2, "book-test", `"etag"`).HasPhoto {
+		t.Fatal("expected hasPhoto false")
+	}
+}
+
 func TestStrictVCardFramingAndLogicalLines(t *testing.T) {
 	valid := "BEGIN:VCARD\r\n" +
 		"VERSION:3.0\r\n" +

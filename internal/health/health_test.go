@@ -11,9 +11,14 @@ import (
 
 const testVersion = "test-1.2.3"
 
-func TestServer_HealthzReturnsOK(t *testing.T) {
+func TestServer_HealthzReturnsJSON(t *testing.T) {
 	const addr = "127.0.0.1:18797"
-	s, err := Start(addr, testVersion, nil)
+	domains := map[string]DomainStatus{
+		"calendar": {Status: "ok"},
+		"contacts": {Status: "disabled"},
+		"mail":     {Status: "disabled"},
+	}
+	s, err := Start(addr, testVersion, domains, nil)
 	if err != nil {
 		t.Fatalf("Start() error: %v", err)
 	}
@@ -25,19 +30,34 @@ func TestServer_HealthzReturnsOK(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "ok" {
-		t.Errorf("body = %q, want %q", body, "ok")
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var got Status
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode /healthz: %v", err)
+	}
+	if got.Status != "ok" || got.Version != testVersion {
+		t.Errorf("status/version = %q/%q", got.Status, got.Version)
+	}
+	if got.Domains["calendar"].Status != "ok" || got.Domains["contacts"].Status != "disabled" {
+		t.Errorf("domains = %+v", got.Domains)
+	}
+	if got.Timestamp == "" {
+		t.Error("timestamp missing")
 	}
 }
 
 func TestServer_StatusReportsVersionAndRateLimits(t *testing.T) {
 	const addr = "127.0.0.1:18799"
 	rateStatus := map[string]any{
-		"read":  map[string]any{"tokens": 9.5, "limit": 1.0, "burst": 10},
-		"write": map[string]any{"tokens": 2.0, "limit": 0.33, "burst": 3},
+		"calendar": map[string]any{
+			"read":  map[string]any{"tokens": 9.5, "limit": 1.0, "burst": 10},
+			"write": map[string]any{"tokens": 2.0, "limit": 0.33, "burst": 3},
+		},
 	}
-	s, err := Start(addr, testVersion, func() any { return rateStatus })
+	domains := map[string]DomainStatus{"calendar": {Status: "ok"}, "contacts": {Status: "ok"}, "mail": {Status: "disabled"}}
+	s, err := Start(addr, testVersion, domains, func() any { return rateStatus })
 	if err != nil {
 		t.Fatalf("Start() error: %v", err)
 	}
@@ -53,12 +73,12 @@ func TestServer_StatusReportsVersionAndRateLimits(t *testing.T) {
 	if got["version"] != testVersion {
 		t.Errorf("version = %v, want %q", got["version"], testVersion)
 	}
-	rl, _ := got["rate_limits"].(map[string]any)
+	rl, _ := got["rateLimits"].(map[string]any)
 	if rl == nil {
-		t.Fatal("rate_limits missing or not an object")
+		t.Fatal("rateLimits missing or not an object")
 	}
-	if read, _ := rl["read"].(map[string]any); read == nil || read["burst"] == nil {
-		t.Errorf("rate_limits.read missing: %v", rl)
+	if cal, _ := rl["calendar"].(map[string]any); cal == nil {
+		t.Errorf("rateLimits.calendar missing: %v", rl)
 	}
 	// No secrets: ensure no credential-looking keys are present.
 	for k := range got {
@@ -70,7 +90,7 @@ func TestServer_StatusReportsVersionAndRateLimits(t *testing.T) {
 
 func TestServer_StatusNullRateLimitsWhenStatusFnNil(t *testing.T) {
 	const addr = "127.0.0.1:18800"
-	s, err := Start(addr, testVersion, nil)
+	s, err := Start(addr, testVersion, nil, nil)
 	if err != nil {
 		t.Fatalf("Start() error: %v", err)
 	}
@@ -86,14 +106,14 @@ func TestServer_StatusNullRateLimitsWhenStatusFnNil(t *testing.T) {
 	if got["version"] != testVersion {
 		t.Errorf("version = %v, want %q", got["version"], testVersion)
 	}
-	if got["rate_limits"] != nil {
-		t.Errorf("rate_limits = %v, want null when statusFn is nil", got["rate_limits"])
+	if got["rateLimits"] != nil {
+		t.Errorf("rateLimits = %v, want null when statusFn is nil", got["rateLimits"])
 	}
 }
 
 func TestServer_Close(t *testing.T) {
 	const addr = "127.0.0.1:18798"
-	s, err := Start(addr, testVersion, nil)
+	s, err := Start(addr, testVersion, nil, nil)
 	if err != nil {
 		t.Fatalf("Start() error: %v", err)
 	}
@@ -103,7 +123,7 @@ func TestServer_Close(t *testing.T) {
 }
 
 func TestStart_InvalidAddrFails(t *testing.T) {
-	_, err := Start("not-a-valid-address", testVersion, nil)
+	_, err := Start("not-a-valid-address", testVersion, nil, nil)
 	if err == nil {
 		t.Fatal("expected: bind error on an invalid address")
 	}
@@ -118,7 +138,7 @@ func TestStart_RejectsNonLoopback(t *testing.T) {
 		":18792",
 		"8.8.8.8:18793",
 	} {
-		_, err := Start(addr, testVersion, nil)
+		_, err := Start(addr, testVersion, nil, nil)
 		if err == nil {
 			t.Errorf("Start(%q) succeeded, want loopback-only rejection", addr)
 			continue
@@ -135,7 +155,7 @@ func TestStart_AcceptsLoopback(t *testing.T) {
 		"127.0.0.1:18810",
 		"localhost:18811",
 	} {
-		s, err := Start(addr, testVersion, nil)
+		s, err := Start(addr, testVersion, nil, nil)
 		if err != nil {
 			t.Fatalf("Start(%q) error: %v", addr, err)
 		}
@@ -179,7 +199,7 @@ func TestCanonicalLoopbackAddrAvoidsHostnameResolution(t *testing.T) {
 // non-GET/HEAD method gets 405 with an Allow header, never a side effect.
 func TestServer_RejectsNonGET(t *testing.T) {
 	const addr = "127.0.0.1:18801"
-	s, err := Start(addr, testVersion, nil)
+	s, err := Start(addr, testVersion, nil, nil)
 	if err != nil {
 		t.Fatalf("Start() error: %v", err)
 	}
@@ -204,6 +224,16 @@ func TestServer_RejectsNonGET(t *testing.T) {
 	}
 }
 
+func TestSnapshotDefaults(t *testing.T) {
+	got := Snapshot("", nil, nil)
+	if got.Status != "ok" || got.Version != "dev" {
+		t.Fatalf("snapshot = %+v", got)
+	}
+	if got.Domains["calendar"].Status != "ok" {
+		t.Fatalf("calendar domain = %+v", got.Domains)
+	}
+}
+
 // waitFor200 polls the URL until it responds, up to ~500ms, so the Serve
 // goroutine has time to start.
 func waitFor200(t *testing.T, url string) *http.Response {
@@ -220,3 +250,6 @@ func waitFor200(t *testing.T, url string) *http.Response {
 	t.Fatalf("GET %s: %v", url, getErr)
 	return nil
 }
+
+// Silence unused import if io is only needed in older tests.
+var _ = io.Discard

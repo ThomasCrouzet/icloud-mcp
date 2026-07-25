@@ -222,7 +222,11 @@ func (c *Client) waitAttempt(ctx context.Context, write bool) error {
 	delay := reservation.DelayFrom(time.Now())
 	if delay > maxRateWait {
 		reservation.Cancel()
-		return &Error{Code: CodeRateLimited, Status: http.StatusTooManyRequests, Message: "Contacts " + kind + " rate limit exceeded", Retryable: true}
+		retryAfter := delay
+		if retryAfter > 60*time.Second {
+			retryAfter = 60 * time.Second
+		}
+		return &Error{Code: CodeRateLimited, Status: http.StatusTooManyRequests, Message: "Contacts " + kind + " rate limit exceeded", Retryable: true, RetryAfter: retryAfter}
 	}
 	if delay <= 0 {
 		return nil

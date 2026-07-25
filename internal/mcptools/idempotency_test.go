@@ -1,0 +1,114 @@
+package mcptools
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestIdempotencyStoreLookupStoreConflict(t *testing.T) {
+	s := newIdempotencyStore()
+	const key = "k1"
+	h1, err := hashIdempotencyParams(map[string]string{"a": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := hashIdempotencyParams(map[string]string{"a": "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if payload, conflict, found := s.lookup(key, h1); found || conflict || payload != "" {
+		t.Fatalf("empty lookup = (%q, %v, %v)", payload, conflict, found)
+	}
+
+	s.store(key, h1, `{"ok":true}`)
+	payload, conflict, found := s.lookup(key, h1)
+	if !found || conflict || payload != `{"ok":true}` {
+		t.Fatalf("same params = (%q, %v, %v)", payload, conflict, found)
+	}
+
+	payload, conflict, found = s.lookup(key, h2)
+	if !found || !conflict || payload != "" {
+		t.Fatalf("different params = (%q, %v, %v)", payload, conflict, found)
+	}
+}
+
+func TestIdempotencyStoreIgnoresEmpty(t *testing.T) {
+	s := newIdempotencyStore()
+	s.store("", "h", "p")
+	s.store("k", "", "p")
+	s.store("k", "h", "")
+	if _, _, found := s.lookup("k", "h"); found {
+		t.Fatal("empty inputs must not store")
+	}
+	if _, _, found := s.lookup("", "h"); found {
+		t.Fatal("empty key lookup must miss")
+	}
+}
+
+func TestIdempotencyStoreExpires(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	s := newIdempotencyStore()
+	s.now = func() time.Time { return now }
+
+	h, err := hashIdempotencyParams("body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store("exp", h, "cached")
+	if _, _, found := s.lookup("exp", h); !found {
+		t.Fatal("expected live entry")
+	}
+
+	s.now = func() time.Time { return now.Add(idempotencyTTL + time.Second) }
+	if payload, conflict, found := s.lookup("exp", h); found || conflict || payload != "" {
+		t.Fatalf("expired lookup = (%q, %v, %v)", payload, conflict, found)
+	}
+}
+
+func TestIdempotencyHashStable(t *testing.T) {
+	a, err := hashIdempotencyParams(struct {
+		X string `json:"x"`
+		N int    `json:"n"`
+	}{X: "v", N: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := hashIdempotencyParams(struct {
+		X string `json:"x"`
+		N int    `json:"n"`
+	}{X: "v", N: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b || len(a) != 64 {
+		t.Fatalf("hash stability failed: %q vs %q", a, b)
+	}
+}
+
+func TestIdempotencyStoreConcurrent(t *testing.T) {
+	s := newIdempotencyStore()
+	h, err := hashIdempotencyParams("concurrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := "shared"
+			if i%2 == 0 {
+				s.store(key, h, "payload")
+			} else {
+				_, _, _ = s.lookup(key, h)
+			}
+		}(i)
+	}
+	wg.Wait()
+	payload, conflict, found := s.lookup("shared", h)
+	if !found || conflict || payload != "payload" {
+		t.Fatalf("after concurrent use = (%q, %v, %v)", payload, conflict, found)
+	}
+}

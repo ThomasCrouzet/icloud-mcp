@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,7 +14,7 @@ import (
 
 func newGetEventTool() mcp.Tool {
 	return mcp.NewTool("get_event",
-		mcp.WithDescription("Fetches a single iCloud calendar event by calendar path and exact UID. Returns structured fields (title, times, status, transparency, URL, recurrence, alarms, etag) plus bounded overrides[] with recurrenceId for exception targeting. overridesTruncated and warnings report omissions required by the 256 KiB result budget. Does not expose internal server paths. Available in read-only mode."),
+		mcp.WithDescription("Fetches a single iCloud calendar event by calendar path and exact UID. Returns structured fields (title, times, status, transparency, URL, recurrence, alarms, etag) plus bounded overrides[] with recurrenceId for exception targeting. Timed start/end use RFC3339 with an explicit offset in ICLOUD_MCP_DEFAULT_TZ. overridesTruncated and warnings report omissions required by the 256 KiB result budget. Does not expose internal server paths. Available in read-only mode."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -44,18 +45,76 @@ func getEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		// Ensure path never leaks even if a future change serializes it.
 		detail.Path = ""
-		return writeGetEventJSON(deps.Redactor, detail), nil
+		return writeGetEventJSON(deps.Redactor, detail, deps.DefaultLocation), nil
 	}
 }
 
-func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail) *mcp.CallToolResult {
+type getEventDTO struct {
+	UID                string             `json:"uid"`
+	Title              string             `json:"title"`
+	Location           string             `json:"location,omitempty"`
+	Notes              string             `json:"notes,omitempty"`
+	Start              string             `json:"start"`
+	End                string             `json:"end"`
+	AllDay             bool               `json:"allDay,omitempty"`
+	Recurrence         string             `json:"recurrence,omitempty"`
+	RecurrenceID       string             `json:"recurrenceId,omitempty"`
+	IsOverride         bool               `json:"isOverride,omitempty"`
+	Timezone           string             `json:"timezone,omitempty"`
+	Status             string             `json:"status,omitempty"`
+	Transparency       string             `json:"transparency,omitempty"`
+	URL                string             `json:"url,omitempty"`
+	ETag               string             `json:"etag,omitempty"`
+	Alarms             []icloud.AlarmInfo `json:"alarms,omitempty"`
+	IsRecurring        bool               `json:"isRecurring,omitempty"`
+	OverrideCount      int                `json:"overrideCount,omitempty"`
+	Overrides          []occurrenceDTO    `json:"overrides,omitempty"`
+	OverridesTruncated bool               `json:"overridesTruncated,omitempty"`
+	Warnings           []string           `json:"warnings,omitempty"`
+}
+
+type occurrenceDTO struct {
+	RecurrenceID string `json:"recurrenceId"`
+	Start        string `json:"start"`
+	End          string `json:"end"`
+	Title        string `json:"title,omitempty"`
+	IsOverride   bool   `json:"isOverride"`
+}
+
+func eventDetailToDTO(detail *icloud.EventDetail, loc *time.Location) getEventDTO {
+	dto := getEventDTO{
+		UID:           detail.UID,
+		Title:         detail.Title,
+		Location:      detail.Location,
+		Notes:         detail.Notes,
+		Start:         icloud.FormatEventTime(detail.StartTime, detail.AllDay, loc),
+		End:           icloud.FormatEventTime(detail.EndTime, detail.AllDay, loc),
+		AllDay:        detail.AllDay,
+		Recurrence:    detail.Recurrence,
+		IsOverride:    detail.IsOverride,
+		Timezone:      detail.Timezone,
+		Status:        detail.Status,
+		Transparency:  detail.Transp,
+		URL:           detail.URL,
+		ETag:          detail.ETag,
+		Alarms:        detail.Alarms,
+		IsRecurring:   detail.IsRecurring,
+		OverrideCount: detail.OverrideCount,
+		Warnings:      append([]string(nil), detail.Warnings...),
+	}
+	if !detail.RecurrenceID.IsZero() {
+		dto.RecurrenceID = icloud.FormatEventTime(detail.RecurrenceID, detail.AllDay, loc)
+	}
+	return dto
+}
+
+func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail, loc *time.Location) *mcp.CallToolResult {
 	if detail == nil {
 		return errResult(red, "formatting response", icloud.NewError(icloud.CodeInternal, 0, "Calendar event detail is missing", nil))
 	}
-	copyDetail := *detail
+	copyDetail := eventDetailToDTO(detail, loc)
 	allOverrides := detail.Overrides
-	copyDetail.Overrides = make([]icloud.OccurrenceRef, 0, len(allOverrides))
-	copyDetail.Warnings = append([]string(nil), detail.Warnings...)
+	copyDetail.Overrides = make([]occurrenceDTO, 0, len(allOverrides))
 
 	// Reserve the flags/key overhead before selecting complete override
 	// objects. Each override is marshaled once for sizing; the whole detail is
@@ -63,7 +122,7 @@ func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail) *mcp.
 	probe := copyDetail
 	probe.OverridesTruncated = len(allOverrides) > 0
 	if probe.OverridesTruncated {
-		probe.Warnings = append(probe.Warnings, "override summaries were omitted to fit the 256 KiB result limit")
+		probe.Warnings = append(append([]string(nil), detail.Warnings...), "override summaries were omitted to fit the 256 KiB result limit")
 	}
 	base, err := json.Marshal(probe)
 	if err != nil {
@@ -74,7 +133,14 @@ func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail) *mcp.
 		return writeCalendarEncoded(red, base)
 	}
 	for i := range allOverrides {
-		encoded, err := json.Marshal(allOverrides[i])
+		ov := occurrenceDTO{
+			RecurrenceID: icloud.FormatEventTime(allOverrides[i].RecurrenceID, detail.AllDay, loc),
+			Start:        icloud.FormatEventTime(allOverrides[i].StartTime, detail.AllDay, loc),
+			End:          icloud.FormatEventTime(allOverrides[i].EndTime, detail.AllDay, loc),
+			Title:        allOverrides[i].Title,
+			IsOverride:   allOverrides[i].IsOverride,
+		}
+		encoded, err := json.Marshal(ov)
 		if err != nil {
 			return errResult(red, "formatting response", err)
 		}
@@ -85,7 +151,7 @@ func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail) *mcp.
 		if used+addition > maxCalendarResultBytes {
 			break
 		}
-		copyDetail.Overrides = append(copyDetail.Overrides, allOverrides[i])
+		copyDetail.Overrides = append(copyDetail.Overrides, ov)
 		used += addition
 	}
 

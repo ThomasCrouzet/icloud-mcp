@@ -23,6 +23,7 @@ type capabilitiesResponse struct {
 	ReadOnly          bool            `json:"readOnly"`
 	HealthcheckActive bool            `json:"healthcheckActive"`
 	DefaultTimezone   string          `json:"defaultTimezone"`
+	OutputFormat      string          `json:"outputFormat"`
 	Features          map[string]bool `json:"features"`
 	Limits            map[string]int  `json:"limits"`
 	Tools             []string        `json:"tools"`
@@ -45,16 +46,18 @@ func calendarCapabilitiesHandler(deps Deps) server.ToolHandlerFunc {
 			ReadOnly:          deps.ReadOnly,
 			HealthcheckActive: deps.HealthEnabled,
 			DefaultTimezone:   defaultLocationName(deps.DefaultLocation),
+			OutputFormat:      "RFC3339_with_offset",
 			Features: map[string]bool{
-				"recurrence_expansion":  true,
-				"etag_if_match":         true,
-				"series_occurrence":     true,
-				"free_slots":            true,
-				"structured_errors":     true,
-				"validate_event_local":  true,
-				"client_uid_idempotent": true,
-				"this_and_future":       false, // not shipped unless proven correct
-				"attendees_invitations": false,
+				"recurrence_expansion":   true,
+				"etag_if_match":          true,
+				"series_occurrence":      true,
+				"free_slots":             true,
+				"structured_errors":      true,
+				"validate_event_local":   true,
+				"client_uid_idempotent":  true,
+				"update_idempotency_key": true,
+				"this_and_future":        false, // not shipped unless proven correct
+				"attendees_invitations":  false,
 			},
 			Limits: map[string]int{
 				"max_search_results":     icloud.MaxResults,

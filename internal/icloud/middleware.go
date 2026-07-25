@@ -106,10 +106,11 @@ func waitLimiter(ctx context.Context, lim *rate.Limiter, kind string) error {
 	if delay > maxRateWait {
 		res.Cancel()
 		return &Error{
-			Code:      CodeRateLimited,
-			Status:    429,
-			Message:   fmt.Sprintf("%s rate limit exceeded: retry later", kind),
-			Retryable: true,
+			Code:       CodeRateLimited,
+			Status:     429,
+			Message:    fmt.Sprintf("%s rate limit exceeded: retry later", kind),
+			Retryable:  true,
+			RetryAfter: capPublicRetryAfter(delay),
 		}
 	}
 	if delay <= 0 {

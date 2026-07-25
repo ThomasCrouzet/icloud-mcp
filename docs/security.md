@@ -257,7 +257,9 @@ Mail:
 
 ## Audit
 
-All mutation handlers emit one-line JSON records to redacted stderr.
+All mutation handlers emit one-line records to redacted stderr. Default format is
+JSON NDJSON (`-audit-format=json`). Operators may select plain text with
+`-audit-format=text`.
 
 Every production Calendar, Contacts, IMAP, and SMTP mutation uses the unified
 shape: tool, `domain`, `resourceType`, process-local opaque HMAC
@@ -280,6 +282,8 @@ Unified Contacts and Mail error codes are:
 
 Calendar maps its established internal classifications to the same public
 categories where applicable. Errors contain bounded local text, optional retry
-metadata, and operation-specific reconciliation for ambiguous outcomes. They do
-not include raw HTTP/XML, IMAP, SMTP, MIME, identity, password, path-to-secret,
-or recipient-policy values.
+metadata (`retryable`, `retry_after_seconds`), and operation-specific
+reconciliation for ambiguous outcomes. They do not include raw HTTP/XML, IMAP,
+SMTP, MIME, identity, password, path-to-secret, or recipient-policy values.
+
+Agent-facing examples and retry policy: [error-codes.md](error-codes.md).

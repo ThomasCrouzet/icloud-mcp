@@ -3,6 +3,7 @@ package mail
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Code is a stable public error code suitable for MCP responses.
@@ -28,10 +29,11 @@ const (
 // Error is a sanitized Mail failure. It never includes server response text,
 // protocol payloads, account identities, recipients, or credentials.
 type Error struct {
-	Code           Code   `json:"code"`
-	Message        string `json:"message"`
-	Retryable      bool   `json:"retryable,omitempty"`
-	Reconciliation string `json:"reconciliation,omitempty"`
+	Code           Code          `json:"code"`
+	Message        string        `json:"message"`
+	Retryable      bool          `json:"retryable,omitempty"`
+	RetryAfter     time.Duration `json:"-"`
+	Reconciliation string        `json:"reconciliation,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -43,7 +45,14 @@ func newError(code Code, message string) *Error {
 }
 
 func newRetryableError(code Code, message string) *Error {
-	return &Error{Code: code, Message: message, Retryable: true}
+	err := &Error{Code: code, Message: message, Retryable: true}
+	switch code {
+	case CodeRateLimited:
+		err.RetryAfter = 5 * time.Second
+	case CodeTimeout, CodeUnavailable:
+		err.RetryAfter = 2 * time.Second
+	}
+	return err
 }
 
 func validationError(message string) *Error {

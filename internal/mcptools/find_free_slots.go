@@ -185,8 +185,8 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		out := freeSlotsResponse{Count: len(slots), Slots: make([]freeSlotOutput, 0, len(slots))}
 		for _, s := range slots {
 			out.Slots = append(out.Slots, freeSlotOutput{
-				Start: s.Start.Format(time.RFC3339),
-				End:   s.End.Format(time.RFC3339),
+				Start: icloud.FormatEventTime(s.Start, false, opts.Location),
+				End:   icloud.FormatEventTime(s.End, false, opts.Location),
 			})
 		}
 		return writeCalendarJSON(deps.Redactor, out), nil

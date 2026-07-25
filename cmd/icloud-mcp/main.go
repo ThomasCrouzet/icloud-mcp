@@ -55,12 +55,18 @@ const discoveryTimeout = 20 * time.Second
 
 func main() {
 	healthAddr := flag.String("health", "", "HTTP healthcheck address (e.g. 127.0.0.1:8797), disabled if empty")
+	auditFormatFlag := flag.String("audit-format", "json", "mutation audit format on stderr: json (default) or text")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(version)
 		return
+	}
+
+	auditFormat, err := security.ParseAuditFormat(*auditFormatFlag)
+	if err != nil {
+		log.Fatalf("configuration error: %v", err)
 	}
 
 	// 1. Configuration: failure = os.Exit(1) BEFORE any network access.
@@ -86,7 +92,7 @@ func main() {
 	// writes to RAW os.Stderr by default. Redirect it explicitly so that NO
 	// logging path bypasses the redaction after boot.
 	log.SetOutput(stderr)
-	audit := security.NewAuditLogger(stderr)
+	audit := security.NewAuditLoggerWithFormat(stderr, auditFormat)
 
 	plan := mcptools.NewCapabilityPlan(
 		cfg.ReadOnly,
@@ -144,7 +150,14 @@ func main() {
 
 	// 6. Optional healthcheck (off by default).
 	if healthEnabled {
-		h, err := health.Start(*healthAddr, version, func() any { return svc.RateLimitStatus() })
+		domains := map[string]health.DomainStatus{
+			"calendar": {Status: "ok"},
+			"contacts": {Status: domainStatus(cfg.EnableContacts)},
+			"mail":     {Status: domainStatus(cfg.EnableMail)},
+		}
+		h, err := health.Start(*healthAddr, version, domains, func() any {
+			return collectRateLimits(svc, contactsService, mailService)
+		})
 		if err != nil {
 			slog.Error("healthcheck startup failed", "err", err)
 			os.Exit(1)
@@ -201,6 +214,30 @@ func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 			return next(ctx, req)
 		}
 	}
+}
+
+func domainStatus(enabled bool) string {
+	if enabled {
+		return "ok"
+	}
+	return "disabled"
+}
+
+type rateLimitReporter interface {
+	RateLimitStatus() map[string]any
+}
+
+func collectRateLimits(calendar *icloud.GuardedService, contactsService contacts.Service, mailService maildomain.Service) map[string]any {
+	out := map[string]any{
+		"calendar": calendar.RateLimitStatus(),
+	}
+	if reporter, ok := contactsService.(rateLimitReporter); ok {
+		out["contacts"] = reporter.RateLimitStatus()
+	}
+	if reporter, ok := mailService.(rateLimitReporter); ok {
+		out["mail"] = reporter.RateLimitStatus()
+	}
+	return out
 }
 
 func newBootRedactor(cfg *config.Config) *security.Redactor {

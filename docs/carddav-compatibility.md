@@ -64,7 +64,9 @@ mutating the contact.
 - Create includes VERSION, PRODID, UID, FN, and N.
 - A caller can provide `client_uid`; otherwise the client generates a
   UUIDv4-compatible UID with `crypto/rand`.
-- PHOTO bytes, raw vCards, and raw extension values are not returned.
+- PHOTO bytes, raw vCards, and raw extension values are not returned. Full
+  contact reads expose `hasPhoto` when a PHOTO property is present so agents
+  can detect an avatar without receiving image bytes.
 - A vCard 3.0 update modifies the full decoded object, preserving PHOTO and
   unknown properties that fit the resource limit.
 - vCard 4.0 objects are read-only to avoid silent downgrade through the 3.0

@@ -29,6 +29,17 @@ type Client struct {
 	semaphore  chan struct{}
 }
 
+// RateLimitStatus reports the live Contacts limiter state for health probes.
+func (c *Client) RateLimitStatus() map[string]any {
+	if c == nil {
+		return nil
+	}
+	return map[string]any{
+		"read":  map[string]any{"tokens": c.readLimit.Tokens(), "limit": float64(c.readLimit.Limit()), "burst": c.readLimit.Burst()},
+		"write": map[string]any{"tokens": c.writeLimit.Tokens(), "limit": float64(c.writeLimit.Limit()), "burst": c.writeLimit.Burst()},
+	}
+}
+
 type discoveryState struct {
 	books []bookRecord
 	byID  map[string]bookRecord

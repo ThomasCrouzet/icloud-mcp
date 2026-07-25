@@ -196,8 +196,8 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		}
 		res.Normalized = &NormalizedEvent{
 			Title:        in.Title,
-			Start:        FormatEventTime(in.StartTime, in.AllDay),
-			End:          FormatEventTime(in.EndTime, in.AllDay),
+			Start:        FormatEventTime(in.StartTime, in.AllDay, defaultLoc),
+			End:          FormatEventTime(in.EndTime, in.AllDay, defaultLoc),
 			AllDay:       in.AllDay,
 			Timezone:     tz,
 			Location:     in.Location,
