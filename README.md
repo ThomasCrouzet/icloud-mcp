@@ -223,7 +223,7 @@ another requires a written justification here.
 |------------|---------------|---------------|
 | `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives; discovery and conditional ops stay hand-rolled |
 | `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
-| `github.com/mark3labs/mcp-go` | `v0.56.0` | MCP stdio, schemas, JSON-RPC |
+| `github.com/mark3labs/mcp-go` | `v0.57.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
 | `golang.org/x/time` | `v0.15.0` | Per-domain rate limiters |
 | `github.com/emersion/go-vcard` | `v0.0.0-20260618161152-d854b7e0e2d3` | vCard 3.0/4.0 read, 3.0 write |
