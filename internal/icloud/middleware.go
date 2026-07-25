@@ -159,11 +159,8 @@ func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) 
 		}
 		delay := g.baseDelay * time.Duration(math.Pow(2, float64(attempt)))
 		// Never log lastErr: Client wraps may include calendar paths or UIDs.
-		code := "unavailable"
-		if ie := AsICloudError(lastErr); ie != nil {
-			code = string(PublicCode(ie.Code))
-		}
-		slog.Warn("retrying", "operation", op, "attempt", attempt+1, "delay", delay, "error_code", code)
+		// Typed *Error already returned above; remaining retries are transport noise.
+		slog.Warn("retrying", "operation", op, "attempt", attempt+1, "delay", delay, "error_code", "unavailable")
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

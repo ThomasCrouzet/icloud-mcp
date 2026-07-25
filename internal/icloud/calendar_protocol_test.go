@@ -441,7 +441,10 @@ func TestFloatingDateFormsSurviveScopedWrites(t *testing.T) {
 	if err := applyOccurrenceUpdate(calendar, master, time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC), &EventUpdate{StartTime: &newStart}); err != nil {
 		t.Fatal(err)
 	}
-	exdate := setRecurrenceInstantProp(ical.PropExceptionDates, master, time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC))
+	exdate, err := setRecurrenceInstantProp(ical.PropExceptionDates, master, time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
 	master.Props.Add(exdate)
 	if err := setEventDateProp(master, ical.PropDateTimeStart, time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)

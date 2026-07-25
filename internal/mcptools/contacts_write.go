@@ -203,11 +203,16 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 			}
 			idemReady = true
 		}
+		idemDone := false
+		if idemReady {
+			defer func() {
+				if !idemDone {
+					defaultIdempotency.abort(nsKey, paramsHash)
+				}
+			}()
+		}
 		result, err := deps.Service.UpdateContact(ctx, input)
 		if err != nil {
-			if idemReady {
-				defaultIdempotency.abort(nsKey, paramsHash)
-			}
 			contactsAudit(deps, "update_contact", resource, contactsAuditErrorStatus(err))
 			return contactsErrorResult(deps.Redactor, "updating contact", err), nil
 		}
@@ -216,8 +221,7 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		if idemReady {
 			if text, ok := calendarResultText(out); ok {
 				defaultIdempotency.complete(nsKey, paramsHash, text)
-			} else {
-				defaultIdempotency.abort(nsKey, paramsHash)
+				idemDone = true
 			}
 		}
 		return out, nil

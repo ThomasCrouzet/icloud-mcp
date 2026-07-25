@@ -465,28 +465,31 @@ func isDateOnlyProp(p *ical.Prop) bool {
 
 // setRecurrenceInstantProp builds a RECURRENCE-ID or EXDATE property whose
 // value form matches the master DTSTART (DATE / TZID / Z). Mismatched forms
-// fail to match on many CalDAV servers (all-day and TZID series).
-func setRecurrenceInstantProp(name string, master *ical.Event, instant time.Time) *ical.Prop {
+// fail to match on many CalDAV servers (all-day and TZID series). Unknown
+// TZIDs fail closed.
+func setRecurrenceInstantProp(name string, master *ical.Event, instant time.Time) (*ical.Prop, error) {
 	p := ical.NewProp(name)
 	dtstart := master.Props.Get(ical.PropDateTimeStart)
 	if dtstart != nil && isDateOnlyProp(dtstart) {
 		p.SetDate(time.Date(instant.Year(), instant.Month(), instant.Day(), 0, 0, 0, 0, time.UTC))
-		return p
+		return p, nil
 	}
 	if dtstart != nil {
 		if tzid := dtstart.Params.Get(ical.PropTimezoneID); tzid != "" {
-			if loc, err := time.LoadLocation(tzid); err == nil {
-				p.SetDateTime(instant.In(loc))
-				return p
+			loc, err := time.LoadLocation(tzid)
+			if err != nil {
+				return nil, NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
 			}
+			p.SetDateTime(instant.In(loc))
+			return p, nil
 		}
 		if !strings.HasSuffix(dtstart.Value, "Z") {
 			p.Value = instant.Format("20060102T150405")
-			return p
+			return p, nil
 		}
 	}
 	p.SetDateTime(instant.UTC())
-	return p
+	return p, nil
 }
 
 // masterEventDuration returns the master's duration from DTEND, else DURATION,

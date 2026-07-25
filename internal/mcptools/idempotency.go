@@ -92,7 +92,16 @@ func (s *idempotencyStore) begin(key, paramsHash string) (payload string, confli
 			}
 			wait := entry.done
 			s.mu.Unlock()
-			<-wait
+			// Bound waiter so a stuck/panicked holder cannot hang agents forever.
+			timer := time.NewTimer(idempotencyTTL)
+			select {
+			case <-wait:
+				if !timer.Stop() {
+					<-timer.C
+				}
+			case <-timer.C:
+				return "", false, false, false
+			}
 			continue
 		}
 		if len(s.entries) >= maxIdempotencyEntries {
@@ -176,10 +185,15 @@ func (s *idempotencyStore) lookup(key, paramsHash string) (payload string, confl
 func (s *idempotencyStore) purgeLocked() {
 	now := s.now()
 	for key, entry := range s.entries {
-		if entry.pending {
-			continue
-		}
 		if !entry.expires.After(now) {
+			if entry.pending && entry.done != nil {
+				// Best-effort release of stale waiters; close only once.
+				select {
+				case <-entry.done:
+				default:
+					close(entry.done)
+				}
+			}
 			delete(s.entries, key)
 		}
 	}

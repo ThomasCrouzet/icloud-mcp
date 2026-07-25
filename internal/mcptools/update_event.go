@@ -238,11 +238,16 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			}
 			idemReady = true
 		}
+		idemDone := false
+		if idemReady {
+			defer func() {
+				if !idemDone {
+					defaultIdempotency.abort(nsKey, paramsHash)
+				}
+			}()
+		}
 
 		if err := deps.Service.UpdateEvent(ctx, calendarPath, uid, update); err != nil {
-			if idemReady {
-				defaultIdempotency.abort(nsKey, paramsHash)
-			}
 			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "updating event", err), nil
 		}
@@ -257,8 +262,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if idemReady {
 			if text, ok := calendarResultText(result); ok {
 				defaultIdempotency.complete(nsKey, paramsHash, text)
-			} else {
-				defaultIdempotency.abort(nsKey, paramsHash)
+				idemDone = true
 			}
 		}
 		return result, nil

@@ -77,7 +77,10 @@ func TestSetRecurrenceInstantProp_MatchesMasterForm(t *testing.T) {
 	master.Props.SetDateTime(ical.PropDateTimeStart, time.Date(2026, 11, 2, 10, 0, 0, 0, loc))
 
 	rid := time.Date(2026, 11, 9, 15, 0, 0, 0, time.UTC) // 10:00 NY
-	p := setRecurrenceInstantProp(ical.PropRecurrenceID, master, rid)
+	p, err := setRecurrenceInstantProp(ical.PropRecurrenceID, master, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if p.Params.Get(ical.PropTimezoneID) != "America/New_York" {
 		t.Fatalf("TZID: %+v value=%q", p.Params, p.Value)
 	}
@@ -87,7 +90,10 @@ func TestSetRecurrenceInstantProp_MatchesMasterForm(t *testing.T) {
 
 	allDay := ical.NewEvent()
 	allDay.Props.SetDate(ical.PropDateTimeStart, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC))
-	ex := setRecurrenceInstantProp(ical.PropExceptionDates, allDay, time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC))
+	ex, err := setRecurrenceInstantProp(ical.PropExceptionDates, allDay, time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(ex.Value) != 8 || ex.Value != "20260717" {
 		t.Fatalf("all-day EXDATE = %q", ex.Value)
 	}

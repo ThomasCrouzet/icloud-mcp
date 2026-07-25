@@ -99,15 +99,14 @@ func (c *Client) doCalendarRequest(ctx context.Context, method, target string, h
 			responseURL = resp.Request.URL
 		}
 		if isCalendarMutationMethod(method) {
-			switch resp.StatusCode {
-			case http.StatusTooManyRequests:
+			// Align with Contacts: post-dispatch uncertainty is never retryable
+			// without reconcile. 429 is definitive (not applied).
+			if resp.StatusCode == http.StatusTooManyRequests {
 				_ = resp.Body.Close()
 				return nil, classifyStatus(resp.StatusCode)
-			case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-				_ = resp.Body.Close()
-				return nil, outcomeUnknownError(resp.StatusCode)
 			}
-			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500 ||
+				(resp.StatusCode >= 300 && resp.StatusCode < 400) {
 				_ = resp.Body.Close()
 				return nil, outcomeUnknownError(resp.StatusCode)
 			}

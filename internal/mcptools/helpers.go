@@ -181,6 +181,8 @@ func logCalendarMutation(audit *security.AuditLogger, tool, calendarPath, uid, s
 
 func redact(red *security.Redactor, value string) string {
 	if red == nil {
+		// Production RegisterUnified panics on a nil redactor. Passthrough is
+		// only for tightly controlled unit tests of non-secret payloads.
 		return value
 	}
 	return red.Redact(value)

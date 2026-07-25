@@ -526,7 +526,11 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 				override.Props.Add(&cp)
 			}
 		}
-		override.Props.Set(setRecurrenceInstantProp(ical.PropRecurrenceID, master, recID))
+		recProp, err := setRecurrenceInstantProp(ical.PropRecurrenceID, master, recID)
+		if err != nil {
+			return err
+		}
+		override.Props.Set(recProp)
 		dur := masterEventDuration(master)
 		ov := &ical.Event{Component: override}
 		start := recID
@@ -729,6 +733,17 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 
 	if opts != nil && opts.DryRun {
+		etag := obj.ETag
+		if opts.IfMatchETag != "" {
+			etag = opts.IfMatchETag
+		}
+		if etag == "" {
+			return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+				"etag unavailable for conditional delete; re-read with get_event and pass etag", nil)
+		}
+		if _, err := parseStrongETag(etag); err != nil {
+			return DeleteResult{}, NewValidationError("etag must be a strong entity-tag")
+		}
 		result.DryRun = true
 		return result, nil
 	}
@@ -800,7 +815,11 @@ func (c *Client) deleteOccurrence(ctx context.Context, calendarPath string, obj 
 		return nil
 	}
 	if !already {
-		vevent.Props.Add(setRecurrenceInstantProp(ical.PropExceptionDates, vevent, recID))
+		exProp, err := setRecurrenceInstantProp(ical.PropExceptionDates, vevent, recID)
+		if err != nil {
+			return err
+		}
+		vevent.Props.Add(exProp)
 	}
 	obj.Data.Children = kept
 	if err := incrementSequence(vevent); err != nil {
