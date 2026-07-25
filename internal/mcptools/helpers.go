@@ -158,6 +158,18 @@ func writeCalendarEncoded(red *security.Redactor, encoded []byte) *mcp.CallToolR
 	return mcp.NewToolResultText(text)
 }
 
+// calendarResultText extracts a deliverable success body for idempotency cache.
+func calendarResultText(result *mcp.CallToolResult) (string, bool) {
+	if result == nil || result.IsError || len(result.Content) == 0 {
+		return "", false
+	}
+	text, ok := mcp.AsTextContent(result.Content[0])
+	if !ok || text.Text == "" {
+		return "", false
+	}
+	return text.Text, true
+}
+
 func logCalendarMutation(audit *security.AuditLogger, tool, calendarPath, uid, status string) {
 	if audit == nil {
 		return

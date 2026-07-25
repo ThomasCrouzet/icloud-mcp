@@ -23,8 +23,25 @@ func ParseRecipientPolicy(raw string) (RecipientPolicy, error) {
 	if raw == "" {
 		return RecipientPolicy{}, fmt.Errorf("recipient policy cannot be empty")
 	}
-	policy := RecipientPolicy{allowed: make(map[string]struct{})}
-	for _, item := range strings.Split(raw, ",") {
+	parts := strings.Split(raw, ",")
+	items := make([]string, 0, len(parts))
+	for _, item := range parts {
+		items = append(items, strings.TrimSpace(item))
+	}
+	return RecipientPolicyFromExact(items)
+}
+
+// RecipientPolicyFromExact builds a policy from boot-validated exact addresses
+// (or a single "*"). Prefer this over re-parsing the raw environment string.
+func RecipientPolicyFromExact(recipients []string) (RecipientPolicy, error) {
+	if len(recipients) == 0 {
+		return RecipientPolicy{}, fmt.Errorf("recipient policy cannot be empty")
+	}
+	if len(recipients) == 1 && recipients[0] == "*" {
+		return RecipientPolicy{allowAll: true}, nil
+	}
+	policy := RecipientPolicy{allowed: make(map[string]struct{}, len(recipients))}
+	for _, item := range recipients {
 		item = strings.TrimSpace(item)
 		if item == "" || item == "*" {
 			return RecipientPolicy{}, fmt.Errorf("recipient policy contains an invalid item")

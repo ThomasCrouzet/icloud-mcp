@@ -127,10 +127,15 @@ func (s *Session) List() ([]Mailbox, error) {
 	command := s.client.List("", "*", options)
 	defer func() { _ = command.Close() }()
 	out := make([]Mailbox, 0, maxMailboxResponses)
-	for len(out) < maxMailboxResponses {
+	for {
 		item := command.Next()
 		if item == nil {
 			break
+		}
+		// maxMailboxResponses is MaxMailboxes+1: the overflow row fails closed
+		// so Trash/move discovery cannot miss SPECIAL-USE targets.
+		if len(out) >= maxMailboxResponses-1 {
+			return nil, &Error{Kind: ErrorTooLarge}
 		}
 		if err := boundedString(item.Mailbox); err != nil {
 			return nil, err

@@ -24,6 +24,10 @@ const maxMCPErrorFrameBytes = 256 << 10
 
 const maxReflectedProtocolErrorBytes = 64 << 10
 
+// maxJSONRPCIDBytes bounds reflected request ids on replacement error frames
+// so a huge client id cannot defeat the stdout byte budget.
+const maxJSONRPCIDBytes = 512
+
 var errStdioFrameTooLarge = errors.New("stdio JSON-RPC frame exceeds 1 MiB")
 
 // boundedFrameReader withholds a frame until its terminating newline has been
@@ -105,6 +109,16 @@ func (r *boundedFrameReader) readFrame() ([]byte, error) {
 func (w *boundedErrorWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if len(w.pending)+len(p) > maxStdioFrameBytes+1 {
+		// Cap pending without a newline so a huge blob cannot grow forever.
+		w.pending = nil
+		frame := oversizedProtocolErrorFrame(json.RawMessage("null"), "MCP response exceeded its safe byte limit")
+		frame = []byte(w.redactor.Redact(string(frame)))
+		if _, err := w.writer.Write(frame); err != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
 	w.pending = append(w.pending, p...)
 	for {
 		newline := bytes.IndexByte(w.pending, '\n')
@@ -152,10 +166,7 @@ func sanitizeOutputFrame(frame []byte) []byte {
 		}
 		return frame
 	}
-	id := message.ID
-	if len(id) == 0 {
-		id = json.RawMessage("null")
-	}
+	id := boundJSONRPCID(message.ID)
 	if len(message.Error) > 0 && string(message.Error) != "null" {
 		return oversizedProtocolErrorFrame(id, "MCP error response exceeded its safe byte limit")
 	}
@@ -171,7 +182,28 @@ func sanitizeOutputFrame(frame []byte) []byte {
 	return frame
 }
 
+func boundJSONRPCID(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 {
+		return json.RawMessage("null")
+	}
+	if len(id) > maxJSONRPCIDBytes {
+		return json.RawMessage("null")
+	}
+	// Accept only JSON string or number ids; anything else becomes null.
+	trimmed := bytes.TrimSpace(id)
+	if len(trimmed) == 0 {
+		return json.RawMessage("null")
+	}
+	switch trimmed[0] {
+	case '"', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return trimmed
+	default:
+		return json.RawMessage("null")
+	}
+}
+
 func oversizedProtocolErrorFrame(id json.RawMessage, message string) []byte {
+	id = boundJSONRPCID(id)
 	replacement, _ := json.Marshal(struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
@@ -187,10 +219,28 @@ func oversizedProtocolErrorFrame(id json.RawMessage, message string) []byte {
 			Message string `json:"message"`
 		}{Code: -32603, Message: message},
 	})
+	if len(replacement) > maxMCPErrorFrameBytes {
+		replacement, _ = json.Marshal(struct {
+			JSONRPC string `json:"jsonrpc"`
+			ID      any    `json:"id"`
+			Error   struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error: struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}{Code: -32603, Message: message},
+		})
+	}
 	return append(replacement, '\n')
 }
 
 func oversizedToolErrorFrame(id json.RawMessage) []byte {
+	id = boundJSONRPCID(id)
 	replacement, _ := json.Marshal(struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`

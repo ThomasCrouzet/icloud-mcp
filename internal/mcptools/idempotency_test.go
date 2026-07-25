@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestIdempotencyStoreLookupStoreConflict(t *testing.T) {
+func TestIdempotencyStoreBeginCompleteConflict(t *testing.T) {
 	s := newIdempotencyStore()
 	const key = "k1"
 	h1, err := hashIdempotencyParams(map[string]string{"a": "1"})
@@ -18,27 +18,28 @@ func TestIdempotencyStoreLookupStoreConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if payload, conflict, found := s.lookup(key, h1); found || conflict || payload != "" {
-		t.Fatalf("empty lookup = (%q, %v, %v)", payload, conflict, found)
+	payload, conflict, hit, ready := s.begin(key, h1)
+	if payload != "" || conflict || hit || !ready {
+		t.Fatalf("first begin = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	}
+	s.complete(key, h1, `{"ok":true}`)
+
+	payload, conflict, hit, ready = s.begin(key, h1)
+	if !hit || conflict || ready || payload != `{"ok":true}` {
+		t.Fatalf("same params = (%q,%v,%v,%v)", payload, conflict, hit, ready)
 	}
 
-	s.store(key, h1, `{"ok":true}`)
-	payload, conflict, found := s.lookup(key, h1)
-	if !found || conflict || payload != `{"ok":true}` {
-		t.Fatalf("same params = (%q, %v, %v)", payload, conflict, found)
-	}
-
-	payload, conflict, found = s.lookup(key, h2)
-	if !found || !conflict || payload != "" {
-		t.Fatalf("different params = (%q, %v, %v)", payload, conflict, found)
+	payload, conflict, hit, ready = s.begin(key, h2)
+	if !conflict || !hit || ready || payload != "" {
+		t.Fatalf("different params = (%q,%v,%v,%v)", payload, conflict, hit, ready)
 	}
 }
 
 func TestIdempotencyStoreIgnoresEmpty(t *testing.T) {
 	s := newIdempotencyStore()
-	s.store("", "h", "p")
-	s.store("k", "", "p")
-	s.store("k", "h", "")
+	s.complete("", "h", "p")
+	s.complete("k", "", "p")
+	s.complete("k", "h", "")
 	if _, _, found := s.lookup("k", "h"); found {
 		t.Fatal("empty inputs must not store")
 	}
@@ -56,7 +57,11 @@ func TestIdempotencyStoreExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.store("exp", h, "cached")
+	_, _, _, ready := s.begin("exp", h)
+	if !ready {
+		t.Fatal("expected ready")
+	}
+	s.complete("exp", h, "cached")
 	if _, _, found := s.lookup("exp", h); !found {
 		t.Fatal("expected live entry")
 	}
@@ -87,28 +92,68 @@ func TestIdempotencyHashStable(t *testing.T) {
 	}
 }
 
-func TestIdempotencyStoreConcurrent(t *testing.T) {
+func TestIdempotencyStoreSingleFlight(t *testing.T) {
 	s := newIdempotencyStore()
 	h, err := hashIdempotencyParams("concurrent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			key := "shared"
-			if i%2 == 0 {
-				s.store(key, h, "payload")
-			} else {
-				_, _, _ = s.lookup(key, h)
-			}
-		}(i)
+	_, _, _, ready := s.begin("shared", h)
+	if !ready {
+		t.Fatal("leader should be ready")
 	}
+
+	var wg sync.WaitGroup
+	results := make(chan string, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload, conflict, hit, ready := s.begin("shared", h)
+			if conflict || ready {
+				t.Errorf("waiter unexpected conflict=%v ready=%v", conflict, ready)
+				return
+			}
+			if !hit || payload != "payload" {
+				t.Errorf("waiter hit=%v payload=%q", hit, payload)
+				return
+			}
+			results <- payload
+		}()
+	}
+	time.Sleep(20 * time.Millisecond)
+	s.complete("shared", h, "payload")
 	wg.Wait()
-	payload, conflict, found := s.lookup("shared", h)
-	if !found || conflict || payload != "payload" {
-		t.Fatalf("after concurrent use = (%q, %v, %v)", payload, conflict, found)
+	close(results)
+	count := 0
+	for range results {
+		count++
+	}
+	if count != 8 {
+		t.Fatalf("waiters = %d, want 8", count)
+	}
+}
+
+func TestIdempotencyStoreAbort(t *testing.T) {
+	s := newIdempotencyStore()
+	h, _ := hashIdempotencyParams("x")
+	_, _, _, ready := s.begin("a", h)
+	if !ready {
+		t.Fatal("expected ready")
+	}
+	s.abort("a", h)
+	_, _, _, ready = s.begin("a", h)
+	if !ready {
+		t.Fatal("after abort should be ready again")
+	}
+	s.abort("a", h)
+}
+
+func TestNamespacedIdempotencyKey(t *testing.T) {
+	if namespacedIdempotencyKey("update_event", "k") != "update_event\x00k" {
+		t.Fatal("namespace mismatch")
+	}
+	if namespacedIdempotencyKey("", "k") != "" || namespacedIdempotencyKey("t", "") != "" {
+		t.Fatal("empty parts must yield empty key")
 	}
 }

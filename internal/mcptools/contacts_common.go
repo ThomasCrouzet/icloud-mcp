@@ -397,13 +397,30 @@ func contactsWriteJSON(deps ContactsDeps, payload any) *mcp.CallToolResult {
 	if err != nil {
 		return contactsErrorResult(redactor, "formatting response", nil)
 	}
-	if len(redactor.Redact(string(encoded))) > contactsMaxResultBytes {
+	text := redactor.Redact(string(encoded))
+	if len(text) > contactsMaxResultBytes {
 		return contactsErrorResult(redactor, "formatting response", &contacts.Error{
 			Code:    contacts.CodePayloadTooLarge,
 			Message: "Contacts result exceeds its byte limit",
 		})
 	}
-	return writeJSON(redactor, payload)
+	return mcp.NewToolResultText(text)
+}
+
+// contactsWriteCachedJSON re-applies the result size gate on an idempotent hit.
+func contactsWriteCachedJSON(deps ContactsDeps, payload string) *mcp.CallToolResult {
+	redactor := deps.Redactor
+	if redactor == nil {
+		redactor = security.NewRedactor()
+	}
+	text := redactor.Redact(payload)
+	if len(text) > contactsMaxResultBytes {
+		return contactsErrorResult(redactor, "formatting response", &contacts.Error{
+			Code:    contacts.CodePayloadTooLarge,
+			Message: "Contacts result exceeds its byte limit",
+		})
+	}
+	return mcp.NewToolResultText(text)
 }
 
 func contactsAudit(deps ContactsDeps, tool, resource, status string) {

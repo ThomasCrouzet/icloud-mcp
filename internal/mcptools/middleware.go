@@ -35,7 +35,13 @@ func RecoverRedactMiddleware(red *security.Redactor) server.ToolHandlerMiddlewar
 		return func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					result = errResult(red, "internal error", fmt.Errorf("%v", r))
+					// Never surface panic text when the redactor is missing:
+					// stdout is outside the stderr RedactingWriter.
+					if red == nil {
+						result = mcp.NewToolResultError(`{"code":"internal_error","message":"internal error"}`)
+					} else {
+						result = errResult(red, "internal error", fmt.Errorf("%v", r))
+					}
 					err = nil
 				}
 			}()

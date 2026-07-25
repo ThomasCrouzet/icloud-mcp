@@ -140,7 +140,7 @@ func (m *MockService) GetEvent(ctx context.Context, calendarPath, uid string) (*
 			return &EventDetail{Event: e}, nil
 		}
 	}
-	return nil, NewError(CodeNotFound, 404, "event not found (uid="+uid+")", nil)
+	return nil, NewError(CodeNotFound, 404, "event not found", nil)
 }
 
 // CreateEvent returns m.CreatedUID (or "mock-uid" by default, or m.CreateErr).

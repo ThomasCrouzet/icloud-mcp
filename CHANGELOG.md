@@ -6,6 +6,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- Calendar retry logs no longer include paths or UIDs (stable `error_code` only).
+- Contacts write ambiguity (408 and residual 5xx) maps to `outcome_unknown`.
+- Tool timeout is preemptive when handlers ignore context cancellation.
+- Stdio output bounds reflected JSON-RPC `id` and caps pending frames without newline.
+- Idempotency keys are tool-namespaced, single-flight, size-capped, and store only
+  deliverable success payloads.
+- IMAP LIST fails closed when the mailbox count exceeds the safety cap.
+- Unknown TZID on Calendar mutation fails closed instead of coercing to UTC.
+
 ### Added
 - Agent error catalog in `docs/error-codes.md` with retry policy examples.
 - `retry_after_seconds` populated on Calendar/Contacts/Mail rate-limit and

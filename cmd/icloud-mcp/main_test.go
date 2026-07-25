@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -37,17 +36,22 @@ func TestToolAndDiscoveryTimeoutsOrdered(t *testing.T) {
 
 func TestTimeoutMiddleware(t *testing.T) {
 	mw := timeoutMiddleware(30 * time.Millisecond)
+	// Handler ignores cancellation; middleware must still return at the deadline.
 	slow := mw(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(500 * time.Millisecond):
-			return mcp.NewToolResultText("late"), nil
-		}
+		time.Sleep(500 * time.Millisecond)
+		return mcp.NewToolResultText("late"), nil
 	})
-	_, err := slow(context.Background(), mcp.CallToolRequest{})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	start := time.Now()
+	res, err := slow(context.Background(), mcp.CallToolRequest{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("err = %v, want nil tool error result", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("result = %+v, want isError timeout payload", res)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("elapsed = %v, want preemptive return near 30ms", elapsed)
 	}
 }
 

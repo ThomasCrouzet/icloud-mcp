@@ -178,8 +178,15 @@ func TestRecoveryWithNilRedactorCannotRepanic(t *testing.T) {
 		panic(fmt.Errorf("panic sentinel"))
 	})
 	result, err := handler(context.Background(), mcp.CallToolRequest{})
-	if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(t, result), "panic sentinel") {
+	if err != nil || result == nil || !result.IsError {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	text := resultText(t, result)
+	if strings.Contains(text, "panic sentinel") {
+		t.Fatalf("nil redactor leaked panic text: %s", text)
+	}
+	if !strings.Contains(text, "internal_error") && !strings.Contains(text, "internal error") {
+		t.Fatalf("expected fixed internal error payload, got %s", text)
 	}
 }
 

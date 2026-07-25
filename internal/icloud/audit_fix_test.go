@@ -33,7 +33,9 @@ func TestSetEventDateProp_PreservesTZID(t *testing.T) {
 	ev.Props.SetDateTime(ical.PropDateTimeStart, start)
 
 	newStart := time.Date(2026, 11, 2, 11, 0, 0, 0, time.UTC) // 06:00 NY (EST after DST)
-	setEventDateProp(ev, ical.PropDateTimeStart, newStart)
+	if err := setEventDateProp(ev, ical.PropDateTimeStart, newStart); err != nil {
+		t.Fatal(err)
+	}
 
 	p := ev.Props.Get(ical.PropDateTimeStart)
 	if p == nil {
@@ -54,7 +56,9 @@ func TestSetEventDateProp_PreservesTZID(t *testing.T) {
 func TestSetEventDateProp_PreservesAllDay(t *testing.T) {
 	ev := ical.NewEvent()
 	ev.Props.SetDate(ical.PropDateTimeStart, time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC))
-	setEventDateProp(ev, ical.PropDateTimeStart, time.Date(2026, 7, 9, 15, 0, 0, 0, time.UTC))
+	if err := setEventDateProp(ev, ical.PropDateTimeStart, time.Date(2026, 7, 9, 15, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
 	p := ev.Props.Get(ical.PropDateTimeStart)
 	if p == nil || len(p.Value) != 8 {
 		t.Fatalf("expected DATE, got %+v", p)

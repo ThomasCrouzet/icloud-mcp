@@ -328,7 +328,9 @@ func TestUpdateEndExcludesDurationAndStartOnlyPreservesOverrideDuration(t *testi
 		duration.Value = "PT2H"
 		event.Props.Set(duration)
 		end := time.Date(2026, 7, 1, 13, 0, 0, 0, time.UTC)
-		applyFieldUpdate(event, &EventUpdate{EndTime: &end})
+		if err := applyFieldUpdate(event, &EventUpdate{EndTime: &end}); err != nil {
+			t.Fatal(err)
+		}
 		if event.Props.Get(ical.PropDuration) != nil || event.Props.Get(ical.PropDateTimeEnd) == nil {
 			t.Fatalf("end update left conflicting properties: %+v", event.Props)
 		}

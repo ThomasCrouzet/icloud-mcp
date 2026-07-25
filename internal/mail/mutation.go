@@ -53,7 +53,7 @@ func (s *Client) SetMessageFlags(ctx context.Context, input SetFlagsInput) (SetF
 		return result, nil
 	})
 	if err != nil {
-		return SetFlagsResult{}, mapMutationError(err, ctx)
+		return SetFlagsResult{}, err
 	}
 	return value.(SetFlagsResult), nil
 }
@@ -95,7 +95,7 @@ func (s *Client) MoveMessage(ctx context.Context, input MoveInput) (MoveResult, 
 		return moveWithSession(ctx, session, phase, input.Mailbox, input.UIDValidity, input.UID, input.Destination)
 	})
 	if err != nil {
-		return MoveResult{}, mapMutationError(err, ctx)
+		return MoveResult{}, err
 	}
 	return value.(MoveResult), nil
 }
@@ -131,7 +131,8 @@ func (s *Client) TrashMessage(ctx context.Context, input TrashInput) (MoveResult
 		return moveWithSession(ctx, session, phase, input.Mailbox, input.UIDValidity, input.UID, trash[0])
 	})
 	if err != nil {
-		return MoveResult{}, mapMutationError(err, ctx)
+		// mutate already maps with phase.dispatched; do not reclassify.
+		return MoveResult{}, err
 	}
 	return value.(MoveResult), nil
 }
@@ -224,10 +225,4 @@ func moveStepError(err error, category, reconciliation string) error {
 	return &Error{Code: CodePartialFailure, Message: "mail move stopped after " + category, Reconciliation: reconciliation}
 }
 
-func mapMutationError(err error, ctx context.Context) error {
-	var public *Error
-	if errors.As(err, &public) {
-		return public
-	}
-	return mapIMAPError(err, ctx, false, "")
-}
+

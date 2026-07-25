@@ -348,11 +348,11 @@ func byDayToken(t time.Time) string {
 
 func collectCreateAlarms(ne *NewEvent) []int {
 	var out []int
-	if ne.AlarmMinutesBefore > 0 {
+	if ne.AlarmMinutesBefore > 0 && ne.AlarmMinutesBefore <= maxAlarmMinutes {
 		out = append(out, ne.AlarmMinutesBefore)
 	}
 	for _, a := range ne.Alarms {
-		if a.Disable || a.MinutesBefore <= 0 {
+		if a.Disable || a.MinutesBefore <= 0 || a.MinutesBefore > maxAlarmMinutes {
 			continue
 		}
 		out = append(out, a.MinutesBefore)
@@ -417,32 +417,31 @@ func incrementSequence(vevent *ical.Event) error {
 // value form: VALUE=DATE stays DATE, TZID stays TZID with local wall clock,
 // UTC (Z) stays Z. Never strip TZID to Z on a timed update (that shifts
 // wall-clock intent across DST and leaves orphan VTIMEZONE components).
-func setEventDateProp(vevent *ical.Event, name string, t time.Time) {
+// Unknown TZIDs fail closed so wall times are never silently reinterpreted.
+func setEventDateProp(vevent *ical.Event, name string, t time.Time) error {
 	existing := vevent.Props.Get(name)
 	if existing == nil {
 		vevent.Props.SetDateTime(name, t.UTC())
-		return
+		return nil
 	}
 	if isDateOnlyProp(existing) {
 		// All-day: keep calendar date components only.
 		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 		vevent.Props.SetDate(name, day)
-		return
+		return nil
 	}
 	if tzid := existing.Params.Get(ical.PropTimezoneID); tzid != "" {
 		loc, err := time.LoadLocation(tzid)
 		if err != nil {
-			// Unknown TZID: fall back to UTC rather than inventing a zone.
-			vevent.Props.SetDateTime(name, t.UTC())
-			return
+			return NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
 		}
 		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
 		vevent.Props.SetDateTime(name, t.In(loc))
-		return
+		return nil
 	}
 	if strings.HasSuffix(existing.Value, "Z") {
 		vevent.Props.SetDateTime(name, t.UTC())
-		return
+		return nil
 	}
 	// A DATE-TIME without TZID or Z is floating. Keep it floating and retain
 	// any non-timezone parameters rather than converting wall time to UTC.
@@ -450,6 +449,7 @@ func setEventDateProp(vevent *ical.Event, name string, t time.Time) {
 	prop.Value = t.Format("20060102T150405")
 	prop.Params.Del(ical.PropTimezoneID)
 	vevent.Props.Set(&prop)
+	return nil
 }
 
 // isDateOnlyProp reports whether p is a VALUE=DATE (all-day) property.
@@ -1105,9 +1105,11 @@ func parseICalDateTimeValue(value, tzid string) (time.Time, error) {
 	default:
 		loc := time.UTC
 		if tzid != "" {
-			if l, err := time.LoadLocation(tzid); err == nil {
-				loc = l
+			l, err := time.LoadLocation(tzid)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("unknown TZID %q", tzid)
 			}
+			loc = l
 		}
 		return time.ParseInLocation("20060102T150405", value, loc)
 	}

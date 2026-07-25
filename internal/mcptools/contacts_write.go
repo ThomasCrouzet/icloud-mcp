@@ -2,7 +2,6 @@ package mcptools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -181,34 +180,47 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 			return deny(err)
 		}
 		var paramsHash string
+		var nsKey string
+		var idemReady bool
 		if idemKey != "" {
-			paramsHash, err = hashIdempotencyParams(input)
+			paramsHash, err = hashIdempotencyParams(map[string]any{
+				"tool":  "update_contact",
+				"input": input,
+			})
 			if err != nil {
 				return deny(err)
 			}
-			if payload, conflict, found := defaultIdempotency.lookup(idemKey, paramsHash); found {
-				if conflict {
-					return deny(fmt.Errorf("idempotency_key was reused with different update parameters"))
-				}
-				return mcp.NewToolResultText(payload), nil
+			nsKey = namespacedIdempotencyKey("update_contact", idemKey)
+			payload, conflict, hit, ready := defaultIdempotency.begin(nsKey, paramsHash)
+			if conflict {
+				return deny(fmt.Errorf("idempotency_key was reused with different update parameters"))
 			}
+			if hit {
+				return contactsWriteCachedJSON(deps, payload), nil
+			}
+			if !ready {
+				return deny(fmt.Errorf("idempotency_key cache is full; retry without a key or later"))
+			}
+			idemReady = true
 		}
 		result, err := deps.Service.UpdateContact(ctx, input)
 		if err != nil {
+			if idemReady {
+				defaultIdempotency.abort(nsKey, paramsHash)
+			}
 			contactsAudit(deps, "update_contact", resource, contactsAuditErrorStatus(err))
 			return contactsErrorResult(deps.Redactor, "updating contact", err), nil
 		}
 		contactsAudit(deps, "update_contact", result.UID, "success")
-		if idemKey != "" {
-			if encoded, mErr := json.MarshalIndent(result, "", "  "); mErr == nil {
-				text := string(encoded)
-				if deps.Redactor != nil {
-					text = deps.Redactor.Redact(text)
-				}
-				defaultIdempotency.store(idemKey, paramsHash, text)
+		out := contactsWriteJSON(deps, result)
+		if idemReady {
+			if text, ok := calendarResultText(out); ok {
+				defaultIdempotency.complete(nsKey, paramsHash, text)
+			} else {
+				defaultIdempotency.abort(nsKey, paramsHash)
 			}
 		}
-		return contactsWriteJSON(deps, result), nil
+		return out, nil
 	}
 }
 

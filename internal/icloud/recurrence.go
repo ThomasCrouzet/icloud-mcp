@@ -99,12 +99,12 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	case recurrenceSelectorsExcessive:
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule requires excessive internal selector work", nil)
 	}
+	// Preflight estimate only; actual iterator steps debit seriesRemaining and
+	// remainingWork below so under-estimates cannot blow the aggregate budget.
 	estimatedWork := recurrenceWorkEstimate(ropt, rangeEnd, maxEmptyPeriods, maxPeriodCandidates)
 	if estimatedWork > seriesRemaining || remainingWork == nil || estimatedWork > *remainingWork {
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule requires excessive expansion work", nil)
 	}
-	seriesRemaining -= estimatedWork
-	*remainingWork -= estimatedWork
 
 	rule, err := rrule.NewRRule(*ropt)
 	if err != nil {
@@ -151,11 +151,13 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		if err := ctx.Err(); err != nil {
 			return nil, false, calendarContextError(err)
 		}
-		if advances >= maxRecurrenceExpansionWork {
+		if advances >= maxRecurrenceExpansionWork || seriesRemaining <= 0 || *remainingWork <= 0 {
 			return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule exceeded its expansion-work limit", nil)
 		}
 		occ, ok := next()
 		advances++
+		seriesRemaining--
+		*remainingWork--
 		if !ok || occ.After(rangeEnd) {
 			break
 		}

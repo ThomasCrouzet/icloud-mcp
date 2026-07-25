@@ -75,14 +75,18 @@ func TestApplyFieldUpdate_ClearAndSet(t *testing.T) {
 	status := "CONFIRMED"
 	transp := "OPAQUE"
 	url := "https://example.com"
-	applyFieldUpdate(ev, &EventUpdate{
+	if err := applyFieldUpdate(ev, &EventUpdate{
 		Title: &title, Location: &loc, Notes: &notes,
 		StartTime: &st, EndTime: &en, Status: &status, Transparency: &transp, URL: &url,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if ev.Props.Get(ical.PropSummary).Value != "new" {
 		t.Fatal()
 	}
-	applyFieldUpdate(ev, &EventUpdate{Title: &empty, Location: &empty, Notes: &empty, Status: &empty, Transparency: &empty, URL: &empty})
+	if err := applyFieldUpdate(ev, &EventUpdate{Title: &empty, Location: &empty, Notes: &empty, Status: &empty, Transparency: &empty, URL: &empty}); err != nil {
+		t.Fatal(err)
+	}
 	if ev.Props.Get(ical.PropSummary) != nil {
 		t.Fatal("title should clear")
 	}

@@ -142,17 +142,21 @@ func TestIdempotencyStore_SameKeySameParams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.store("k1", hash, `{"success":true}`)
-	payload, conflict, found := store.lookup("k1", hash)
-	if !found || conflict || payload != `{"success":true}` {
-		t.Fatalf("lookup = %q conflict=%v found=%v", payload, conflict, found)
+	_, _, _, ready := store.begin("k1", hash)
+	if !ready {
+		t.Fatal("expected ready")
+	}
+	store.complete("k1", hash, `{"success":true}`)
+	payload, conflict, hit, ready := store.begin("k1", hash)
+	if !hit || conflict || ready || payload != `{"success":true}` {
+		t.Fatalf("begin hit = %q conflict=%v hit=%v ready=%v", payload, conflict, hit, ready)
 	}
 	other, err := hashIdempotencyParams(map[string]string{"a": "2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, conflict, found = store.lookup("k1", other)
-	if !found || !conflict {
+	_, conflict, hit, _ = store.begin("k1", other)
+	if !hit || !conflict {
 		t.Fatalf("expected conflict on different params")
 	}
 }

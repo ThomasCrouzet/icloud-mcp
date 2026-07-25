@@ -83,6 +83,7 @@ func main() {
 	// variants are added only when the Mail domain is enabled.
 	red := newBootRedactor(cfg)
 	stderr := security.NewRedactingWriter(os.Stderr, red)
+	defer func() { _ = stderr.Flush() }()
 	// Structured JSON logs (one object per line): the MCP host can parse them
 	// and route to a log indexer. The level is configurable via
 	// ICLOUD_MCP_LOG_LEVEL (debug/info/warn/error); default info. Everything
@@ -205,13 +206,30 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 	)
 }
 
-// timeoutMiddleware bounds the execution time of each tool call.
+// timeoutMiddleware bounds the execution time of each tool call. It returns
+// when the deadline fires even if the handler ignores ctx cancellation.
 func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx, cancel := context.WithTimeout(ctx, d)
 			defer cancel()
-			return next(ctx, req)
+			type outcome struct {
+				res *mcp.CallToolResult
+				err error
+			}
+			ch := make(chan outcome, 1)
+			go func() {
+				res, err := next(ctx, req)
+				ch <- outcome{res: res, err: err}
+			}()
+			select {
+			case out := <-ch:
+				return out.res, out.err
+			case <-ctx.Done():
+				// Fixed non-secret payload; the handler goroutine may still run
+				// until its own I/O observes cancellation.
+				return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded","retryable":false}`), nil
+			}
 		}
 	}
 }
@@ -272,10 +290,11 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 
 	var mailService maildomain.Service
 	if cfg.EnableMail {
+		// Use the boot-validated recipient list only; do not re-parse the raw env.
 		var recipientPolicy maildomain.RecipientPolicy
 		var err error
 		if cfg.EffectiveMailSend() {
-			recipientPolicy, err = maildomain.ParseRecipientPolicy(strings.Join(cfg.SMTPAllowedRecipients, ","))
+			recipientPolicy, err = maildomain.RecipientPolicyFromExact(cfg.SMTPAllowedRecipients)
 			if err != nil {
 				return nil, nil, fmt.Errorf("mail recipient policy initialization failed: %w", err)
 			}

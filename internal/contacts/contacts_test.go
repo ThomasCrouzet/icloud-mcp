@@ -1441,18 +1441,16 @@ func TestChildResourceURLPreservesOpaqueEscapedCollection(t *testing.T) {
 	}
 }
 
-func TestDeleteDryRunDoesNotRequireServerStrongETag(t *testing.T) {
+func TestDeleteDryRunRequiresServerStrongETag(t *testing.T) {
 	fixture := &crudFixture{card: v3Card("u", "User"), href: "/home/book/u.vcf"}
 	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)
 	book := discoveredBook(t, client)
-	result, err := client.DeleteContact(context.Background(), &DeleteContactInput{
+	_, err := client.DeleteContact(context.Background(), &DeleteContactInput{
 		AddressBook: book.Identifier,
 		UID:         "u",
 		DryRun:      true,
 	})
-	if err != nil || !result.DryRun || !result.WouldDelete {
-		t.Fatalf("DeleteContact(dry run) = %#v, %v", result, err)
-	}
+	requireCode(t, err, CodeProtocolError)
 	if len(fixture.recordsFor(http.MethodDelete)) != 0 {
 		t.Fatal("dry run issued DELETE")
 	}
@@ -1472,6 +1470,18 @@ func TestDeleteDryRunDoesNotRequireServerStrongETag(t *testing.T) {
 		DryRun:      true,
 	})
 	requireCode(t, err, CodeProtocolError)
+
+	strongFixture := &crudFixture{card: v3Card("u", "User"), href: "/home/book/u.vcf", etag: `"v1"`}
+	strongClient := NewClient(strongFixture, "https://contacts.icloud.com/", allowContactsHost)
+	strongBook := discoveredBook(t, strongClient)
+	result, err := strongClient.DeleteContact(context.Background(), &DeleteContactInput{
+		AddressBook: strongBook.Identifier,
+		UID:         "u",
+		DryRun:      true,
+	})
+	if err != nil || !result.DryRun || !result.WouldDelete {
+		t.Fatalf("DeleteContact(dry run strong etag) = %#v, %v", result, err)
+	}
 	if len(weakFixture.recordsFor(http.MethodDelete)) != 0 {
 		t.Fatal("invalid ETag dry run issued DELETE")
 	}

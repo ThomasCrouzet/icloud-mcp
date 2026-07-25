@@ -72,134 +72,133 @@ func (c *Client) doDAV(ctx context.Context, method string, target *url.URL, head
 			return nil, err
 		}
 
-		var reader io.Reader
-		if len(body) > 0 {
-			reader = bytes.NewReader(body)
-		}
-		req, err := http.NewRequestWithContext(ctx, method, current.String(), reader)
-		if err != nil {
-			c.release()
-			return nil, newError(CodeInternalError, 0, "failed to build a Contacts request")
-		}
-		req.Header = headers.Clone()
+		result, next, err := func() (*davResponse, *url.URL, error) {
+			defer c.release()
 
-		resp, doErr := c.http.Do(req)
-		if doErr != nil {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
+			var reader io.Reader
+			if len(body) > 0 {
+				reader = bytes.NewReader(body)
 			}
-			c.release()
-			if write {
-				return nil, mutationOutcomeUnknown(0)
+			req, err := http.NewRequestWithContext(ctx, method, current.String(), reader)
+			if err != nil {
+				return nil, nil, newError(CodeInternalError, 0, "failed to build a Contacts request")
 			}
-			if ctx.Err() != nil {
-				return nil, newError(CodeTimeout, 0, "the Contacts request timed out")
-			}
-			return nil, &Error{Code: CodeUnavailable, Message: "iCloud Contacts is temporarily unavailable", Retryable: true}
-		}
-		if resp == nil {
-			c.release()
-			if write {
-				return nil, mutationOutcomeUnknown(0)
-			}
-			return nil, newError(CodeProtocolError, 0, "Contacts HTTP doer returned no response")
-		}
+			req.Header = headers.Clone()
 
-		responseURL := current
-		if resp.Request != nil {
-			if resp.Request.URL != nil {
-				responseURL = resp.Request.URL
+			resp, doErr := c.http.Do(req)
+			if doErr != nil {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				if write {
+					return nil, nil, mutationOutcomeUnknown(0)
+				}
+				if ctx.Err() != nil {
+					return nil, nil, newError(CodeTimeout, 0, "the Contacts request timed out")
+				}
+				return nil, nil, &Error{Code: CodeUnavailable, Message: "iCloud Contacts is temporarily unavailable", Retryable: true}
 			}
-			if resp.Request.URL == nil || responseURL.String() != current.String() || resp.Request.Method != method {
+			if resp == nil {
+				if write {
+					return nil, nil, mutationOutcomeUnknown(0)
+				}
+				return nil, nil, newError(CodeProtocolError, 0, "Contacts HTTP doer returned no response")
+			}
+
+			responseURL := current
+			if resp.Request != nil {
+				if resp.Request.URL != nil {
+					responseURL = resp.Request.URL
+				}
+				if resp.Request.URL == nil || responseURL.String() != current.String() || resp.Request.Method != method {
+					if resp.Body != nil {
+						_ = resp.Body.Close()
+					}
+					if write {
+						return nil, nil, mutationOutcomeUnknown(0)
+					}
+					return nil, nil, newError(CodeProtocolError, 0, "the HTTP doer followed an automatic redirect")
+				}
+			}
+			if err := c.validateURL(responseURL); err != nil {
 				if resp.Body != nil {
 					_ = resp.Body.Close()
 				}
-				c.release()
-				if write {
-					return nil, mutationOutcomeUnknown(0)
-				}
-				return nil, newError(CodeProtocolError, 0, "the HTTP doer followed an automatic redirect")
+				return nil, nil, err
 			}
-		}
-		if err := c.validateURL(responseURL); err != nil {
+			if write && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, nil, mutationOutcomeUnknown(resp.StatusCode)
+			}
+
+			if isRedirect(resp.StatusCode) {
+				location := resp.Header.Get("Location")
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				if redirects >= maxRedirects || location == "" {
+					return nil, nil, newError(CodeProtocolError, resp.StatusCode, "Contacts redirect limit exceeded or Location was missing")
+				}
+				nextURL, err := resolveAndValidate(c, responseURL, location)
+				if err != nil {
+					return nil, nil, err
+				}
+				if selectedBook != nil && !urlWithin(nextURL, selectedBook, method == "REPORT") {
+					return nil, nil, newError(CodeProtocolError, resp.StatusCode, "Contacts redirect is outside its selected address book")
+				}
+				return nil, nextURL, nil
+			}
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, nil, newError(CodeProtocolError, resp.StatusCode, "Contacts received an unsupported redirect status")
+			}
+			if write && isAmbiguousMutationStatus(resp.StatusCode) {
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, nil, mutationOutcomeUnknown(resp.StatusCode)
+			}
+
+			readCap := bodyCap
+			if readCap <= 0 {
+				readCap = maxErrorBodyBytes
+			}
+			var data []byte
+			var readErr error
 			if resp.Body != nil {
+				data, readErr = io.ReadAll(io.LimitReader(resp.Body, readCap+1))
 				_ = resp.Body.Close()
 			}
-			c.release()
+			if readErr != nil {
+				if write {
+					return &davResponse{Status: resp.StatusCode, Header: resp.Header.Clone(), URL: cloneURL(responseURL)}, nil, nil
+				}
+				return nil, nil, newError(CodeUnavailable, 0, "failed to read the Contacts response")
+			}
+			if int64(len(data)) > readCap {
+				if write && resp.StatusCode/100 == 2 {
+					data = nil
+				} else {
+					return nil, nil, newError(CodePayloadTooLarge, resp.StatusCode, "the Contacts response exceeded its byte limit")
+				}
+			}
+			return &davResponse{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: data, URL: cloneURL(responseURL)}, nil, nil
+		}()
+		if err != nil {
 			return nil, err
 		}
-		if write && resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			if resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			c.release()
-			return nil, mutationOutcomeUnknown(resp.StatusCode)
-		}
-
-		if isRedirect(resp.StatusCode) {
-			location := resp.Header.Get("Location")
-			if resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			c.release()
-			if redirects >= maxRedirects || location == "" {
-				return nil, newError(CodeProtocolError, resp.StatusCode, "Contacts redirect limit exceeded or Location was missing")
-			}
-			next, err := resolveAndValidate(c, responseURL, location)
-			if err != nil {
-				return nil, err
-			}
-			if selectedBook != nil && !urlWithin(next, selectedBook, method == "REPORT") {
-				return nil, newError(CodeProtocolError, resp.StatusCode, "Contacts redirect is outside its selected address book")
-			}
+		if next != nil {
 			current = next
 			redirects++
 			continue
 		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			if resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			c.release()
-			return nil, newError(CodeProtocolError, resp.StatusCode, "Contacts received an unsupported redirect status")
-		}
-		if write && isAmbiguousMutationStatus(resp.StatusCode) {
-			if resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			c.release()
-			return nil, mutationOutcomeUnknown(resp.StatusCode)
-		}
-
-		readCap := bodyCap
-		if readCap <= 0 {
-			readCap = maxErrorBodyBytes
-		}
-		var data []byte
-		var readErr error
-		if resp.Body != nil {
-			data, readErr = io.ReadAll(io.LimitReader(resp.Body, readCap+1))
-			_ = resp.Body.Close()
-		}
-		c.release()
-		if readErr != nil {
-			if write {
-				return &davResponse{Status: resp.StatusCode, Header: resp.Header.Clone(), URL: cloneURL(responseURL)}, nil
-			}
-			return nil, newError(CodeUnavailable, 0, "failed to read the Contacts response")
-		}
-		if int64(len(data)) > readCap {
-			if write && resp.StatusCode/100 == 2 {
-				data = nil
-			} else {
-				return nil, newError(CodePayloadTooLarge, resp.StatusCode, "the Contacts response exceeded its byte limit")
-			}
-		}
-
-		result := &davResponse{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: data, URL: cloneURL(responseURL)}
-		if !write && isRetryStatus(resp.StatusCode) && retries+1 < maxReadAttempts {
+		if !write && isRetryStatus(result.Status) && retries+1 < maxReadAttempts {
 			retries++
-			if err := waitRetry(ctx, retryAfter(resp.Header, retries)); err != nil {
+			if err := waitRetry(ctx, retryAfter(result.Header, retries)); err != nil {
 				return nil, err
 			}
 			continue
@@ -272,12 +271,15 @@ func isRetryStatus(status int) bool {
 }
 
 func isAmbiguousMutationStatus(status int) bool {
-	switch status {
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	// Post-dispatch uncertainty: never mark these retryable without reconcile.
+	// 429 is definitive (not applied) and stays outside this set.
+	if status == http.StatusRequestTimeout || status == http.StatusGatewayTimeout {
 		return true
-	default:
-		return false
 	}
+	if status >= 500 {
+		return true
+	}
+	return false
 }
 
 func mutationOutcomeUnknown(status int) *Error {

@@ -2,7 +2,6 @@ package mcptools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -202,6 +201,8 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			return deny("validation", err)
 		}
 		var paramsHash string
+		var nsKey string
+		var idemReady bool
 		if idemKey != "" {
 			paramsHash, err = hashIdempotencyParams(map[string]any{
 				"tool":          "update_event",
@@ -222,16 +223,26 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			if err != nil {
 				return deny("validation", err)
 			}
-			if payload, conflict, found := defaultIdempotency.lookup(idemKey, paramsHash); found {
-				if conflict {
-					return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
-						"idempotency_key was reused with different update parameters", nil))
-				}
+			nsKey = namespacedIdempotencyKey("update_event", idemKey)
+			payload, conflict, hit, ready := defaultIdempotency.begin(nsKey, paramsHash)
+			if conflict {
+				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
+					"idempotency_key was reused with different update parameters", nil))
+			}
+			if hit {
 				return writeCalendarEncoded(deps.Redactor, []byte(payload)), nil
 			}
+			if !ready {
+				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
+					"idempotency_key cache is full; retry without a key or later", nil))
+			}
+			idemReady = true
 		}
 
 		if err := deps.Service.UpdateEvent(ctx, calendarPath, uid, update); err != nil {
+			if idemReady {
+				defaultIdempotency.abort(nsKey, paramsHash)
+			}
 			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "updating event", err), nil
 		}
@@ -242,12 +253,14 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 			UID:     uid,
 			Scope:   string(update.Scope),
 		}
-		if idemKey != "" {
-			encoded, mErr := json.MarshalIndent(resp, "", "  ")
-			if mErr == nil {
-				defaultIdempotency.store(idemKey, paramsHash, string(encoded))
+		result := writeCalendarJSON(deps.Redactor, resp)
+		if idemReady {
+			if text, ok := calendarResultText(result); ok {
+				defaultIdempotency.complete(nsKey, paramsHash, text)
+			} else {
+				defaultIdempotency.abort(nsKey, paramsHash)
 			}
 		}
-		return writeCalendarJSON(deps.Redactor, resp), nil
+		return result, nil
 	}
 }

@@ -446,16 +446,16 @@ func (c *Client) DeleteContact(ctx context.Context, input *DeleteContactInput) (
 		return DeleteResult{}, validationError("this contact object is read-only")
 	}
 	result := DeleteResult{AddressBook: input.AddressBook, UID: input.UID, WouldDelete: true}
+	serverETag, err := validateServerETag(object.etag)
+	if err != nil {
+		return DeleteResult{}, err
+	}
 	if input.DryRun {
-		if callerETag != "" && callerETag != object.etag {
+		if callerETag != "" && callerETag != serverETag {
 			return DeleteResult{}, newError(CodeConcurrentModification, http.StatusPreconditionFailed, "the contact changed since it was read")
 		}
 		result.DryRun = true
 		return result, nil
-	}
-	serverETag, err := validateServerETag(object.etag)
-	if err != nil {
-		return DeleteResult{}, err
 	}
 	if callerETag == "" {
 		callerETag = serverETag

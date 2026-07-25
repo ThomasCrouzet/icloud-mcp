@@ -55,7 +55,9 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			return nil, err
 		}
 		path := resolved.EscapedPath()
-		if strings.Contains(path, "/inbox") || strings.Contains(path, "/outbox") || strings.Contains(path, "/notification") {
+		// Prefer exact path segments over substring matches so a calendar
+		// named e.g. work-inbox is not dropped.
+		if pathHasSegment(path, "inbox") || pathHasSegment(path, "outbox") || pathHasSegment(path, "notification") {
 			continue
 		}
 		if prop.SupportedComps != nil && !supportsVEvent(prop.SupportedComps) {
@@ -78,6 +80,20 @@ func supportsVEvent(s *msSupportedSet) bool {
 	}
 	for _, comp := range s.Comps {
 		if comp.Name == "VEVENT" {
+			return true
+		}
+	}
+	return false
+}
+
+// pathHasSegment reports whether path contains an exact slash-delimited segment.
+func pathHasSegment(path, segment string) bool {
+	if path == "" || segment == "" {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	for _, part := range parts {
+		if part == segment {
 			return true
 		}
 	}
