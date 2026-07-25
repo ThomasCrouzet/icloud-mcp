@@ -153,3 +153,37 @@ func TestBoundedErrorWriterReappliesCapAfterRedactionExpansion(t *testing.T) {
 		t.Fatalf("response=%+v err=%v", response, err)
 	}
 }
+
+func TestBoundedErrorWriterHardCapsOversizedSuccessFrame(t *testing.T) {
+	const sentinel = "SUCCESS-OVERFLOW-SENTINEL"
+	frame, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      11,
+		"result": map[string]any{
+			"content": []map[string]string{{"type": "text", "text": sentinel + strings.Repeat("y", maxMCPErrorFrameBytes)}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame = append(frame, '\n')
+	if len(frame) <= maxMCPErrorFrameBytes {
+		t.Fatalf("input frame length = %d, want above hard cap", len(frame))
+	}
+
+	var output bytes.Buffer
+	if _, err := newBoundedErrorWriter(&output, security.NewRedactor("unused-secret")).Write(frame); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() > maxReflectedProtocolErrorBytes || strings.Contains(output.String(), sentinel) {
+		t.Fatalf("hard-capped output length=%d reflected=%t body=%q", output.Len(), strings.Contains(output.String(), sentinel), output.String())
+	}
+	var response struct {
+		Error struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil || response.Error.Code != -32603 {
+		t.Fatalf("response=%+v err=%v", response, err)
+	}
+}

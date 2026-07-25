@@ -113,11 +113,10 @@ func (w *boundedErrorWriter) Write(p []byte) (int, error) {
 		}
 		frame := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		frame = boundErrorFrame(frame)
+		frame = sanitizeOutputFrame(frame)
 		frame = []byte(w.redactor.Redact(string(frame)))
-		// Redaction can expand a frame, so apply the same reflected-error
-		// threshold again and redact the replacement before emission.
-		frame = boundErrorFrame(frame)
+		// Redaction can expand a frame, so re-apply caps and redact again.
+		frame = sanitizeOutputFrame(frame)
 		frame = []byte(w.redactor.Redact(string(frame)))
 		for len(frame) > 0 {
 			written, err := w.writer.Write(frame)
@@ -132,7 +131,11 @@ func (w *boundedErrorWriter) Write(p []byte) (int, error) {
 	}
 }
 
-func boundErrorFrame(frame []byte) []byte {
+// sanitizeOutputFrame enforces the reflected-error threshold and the absolute
+// stdout frame budget. Caller-reflecting protocol/tool errors are replaced
+// above 64 KiB. Any remaining frame above 256 KiB is replaced so a missed
+// domain result cap cannot blow the stdio channel.
+func sanitizeOutputFrame(frame []byte) []byte {
 	if len(frame) <= maxReflectedProtocolErrorBytes {
 		return frame
 	}
@@ -144,6 +147,9 @@ func boundErrorFrame(frame []byte) []byte {
 	}
 	var message envelope
 	if err := json.Unmarshal(bytes.TrimSpace(frame), &message); err != nil {
+		if len(frame) > maxMCPErrorFrameBytes {
+			return oversizedProtocolErrorFrame(json.RawMessage("null"), "MCP response exceeded its safe byte limit")
+		}
 		return frame
 	}
 	id := message.ID
@@ -151,29 +157,40 @@ func boundErrorFrame(frame []byte) []byte {
 		id = json.RawMessage("null")
 	}
 	if len(message.Error) > 0 && string(message.Error) != "null" {
-		replacement, _ := json.Marshal(struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Error   struct {
-				Code    int    `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}{
-			JSONRPC: "2.0",
-			ID:      id,
-			Error: struct {
-				Code    int    `json:"code"`
-				Message string `json:"message"`
-			}{Code: -32603, Message: "MCP error response exceeded its safe byte limit"},
-		})
-		return append(replacement, '\n')
+		return oversizedProtocolErrorFrame(id, "MCP error response exceeded its safe byte limit")
 	}
 	var result struct {
 		IsError bool `json:"isError"`
 	}
-	if len(message.Result) == 0 || json.Unmarshal(message.Result, &result) != nil || !result.IsError {
-		return frame
+	if len(message.Result) > 0 && json.Unmarshal(message.Result, &result) == nil && result.IsError {
+		return oversizedToolErrorFrame(id)
 	}
+	if len(frame) > maxMCPErrorFrameBytes {
+		return oversizedProtocolErrorFrame(id, "MCP response exceeded its safe byte limit")
+	}
+	return frame
+}
+
+func oversizedProtocolErrorFrame(id json.RawMessage, message string) []byte {
+	replacement, _ := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}{Code: -32603, Message: message},
+	})
+	return append(replacement, '\n')
+}
+
+func oversizedToolErrorFrame(id json.RawMessage) []byte {
 	replacement, _ := json.Marshal(struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`

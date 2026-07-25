@@ -6,7 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The changes below are planned for v0.3.0 and were prepared on 2026-07-25.
+## [0.3.0] - 2026-07-25
+
+Unified Calendar, Contacts, and Mail MCP server. Default remains Calendar-only
+(10 tools). Global read-only with optional domains off exposes 7 tools. The
+complete surface is 23 tools when Contacts, Mail read, Mail mutation, and Mail
+send are all enabled.
 
 ### Added
 - Unified Calendar, Contacts, and Mail server in the existing `icloud-mcp`
@@ -187,6 +192,8 @@ The changes below are planned for v0.3.0 and were prepared on 2026-07-25.
 - Account identity is never printed on invalid `ICLOUD_EMAIL` at boot.
 - `file://` credential paths with a `..` segment or an empty path are rejected.
 - Redactor also masks Basic-auth base64 in RawStd, URL, and RawURL encodings.
+- Stdio output applies a hard 256 KiB frame cap after redaction so a missed
+  domain result budget cannot inflate the JSON-RPC channel.
 
 ## [0.2.0] - 2026-07-18
 
