@@ -17,12 +17,12 @@ func newDeleteEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("uid", mcp.Required(), mcp.Description("Event UID (see search_events)")),
-		mcp.WithString("calendar", mcp.Required(), mcp.Description("Path of the calendar containing the event")),
-		mcp.WithString("scope", mcp.Description("series (default) or occurrence")),
+		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID (see search_events); runtime limit 255 UTF-8 bytes")),
+		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Path of the calendar containing the event; runtime limit 1024 UTF-8 bytes")),
+		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
 		mcp.WithString("recurrence_id", mcp.Description("Occurrence RECURRENCE-ID when scope=occurrence. Use search_events.recurrenceId. Prefer YYYY-MM-DD for all-day; timed forms follow "+datetimeParamDescription("the same rules as start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event or search_events (opaque token; not *)")),
-		mcp.WithBoolean("dry_run", mcp.Description("If true, no PUT/DELETE is sent")),
+		mcp.WithBoolean("dry_run", mcp.DefaultBool(false), mcp.Description("If true, no PUT/DELETE is sent")),
 	)
 }
 
@@ -39,65 +39,84 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		uid, err := req.RequireString("uid")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "delete_event", "", "", "denied")
 			return errResult(deps.Redactor, "uid parameter", err), nil
 		}
 		calendarPath, err := req.RequireString("calendar")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "delete_event", "", uid, "denied")
 			return errResult(deps.Redactor, "calendar parameter", err), nil
 		}
 
 		if err := icloud.ValidateUID(uid); err != nil {
-			deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
+			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")
 			return errResult(deps.Redactor, "uid parameter", err), nil
 		}
 		if err := icloud.ValidateCalendarPath(calendarPath); err != nil {
-			deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
+			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")
 			return errResult(deps.Redactor, "calendar parameter", err), nil
 		}
 
-		etag := req.GetString("etag", "")
+		deny := func(context string, err error) (*mcp.CallToolResult, error) {
+			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")
+			return errResult(deps.Redactor, context, err), nil
+		}
+
+		etag, err := optionalStringArg(req, "etag", "")
+		if err != nil {
+			return deny("validation", err)
+		}
 		if err := icloud.ValidateIfMatchETag(etag); err != nil {
-			deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
-			return errResult(deps.Redactor, "etag parameter", err), nil
+			return deny("etag parameter", err)
+		}
+		dryRun, err := optionalBoolArg(req, "dry_run", false)
+		if err != nil {
+			return deny("validation", err)
+		}
+		scope, err := optionalStringArg(req, "scope", "series")
+		if err != nil {
+			return deny("validation", err)
+		}
+		ridStr, err := optionalStringArg(req, "recurrence_id", "")
+		if err != nil {
+			return deny("validation", err)
 		}
 		opts := &icloud.DeleteOptions{
 			IfMatchETag: etag,
-			DryRun:      req.GetBool("dry_run", false),
+			DryRun:      dryRun,
 		}
-		scope := req.GetString("scope", "series")
 		switch scope {
 		case "", "series":
+			if ridStr != "" {
+				return deny("validation", fmt.Errorf("recurrence_id requires scope=occurrence"))
+			}
 			opts.Scope = icloud.ScopeSeries
 		case "occurrence":
 			opts.Scope = icloud.ScopeOccurrence
-			ridStr := req.GetString("recurrence_id", "")
 			if ridStr == "" {
-				deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
-				return errResult(deps.Redactor, "validation", fmt.Errorf("recurrence_id is required when scope=occurrence")), nil
+				return deny("validation", fmt.Errorf("recurrence_id is required when scope=occurrence"))
 			}
 			rid, rerr := icloud.ParseRecurrenceID("recurrence_id", ridStr, deps.DefaultLocation)
 			if rerr != nil {
-				deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
-				return errResult(deps.Redactor, "validation", rerr), nil
+				return deny("validation", rerr)
 			}
 			opts.RecurrenceID = &rid
 		default:
-			deps.Audit.LogMutation("delete_event", calendarPath, uid, "denied")
-			return errResult(deps.Redactor, "validation", fmt.Errorf("scope must be series or occurrence")), nil
+			return deny("validation", fmt.Errorf("scope must be series or occurrence"))
 		}
 
 		res, err := deps.Service.DeleteEvent(ctx, calendarPath, uid, opts)
 		if err != nil {
-			deps.Audit.LogMutation("delete_event", calendarPath, uid, "error")
+			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "deleting event", err), nil
 		}
 		status := "success"
 		if res.DryRun {
 			status = "dry_run"
 		}
-		deps.Audit.LogMutation("delete_event", calendarPath, uid, status)
+		logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, status)
 
-		return writeJSON(deps.Redactor, deleteEventResponse{
+		return writeCalendarJSON(deps.Redactor, deleteEventResponse{
 			Success:      true,
 			UID:          uid,
 			DeletedTitle: res.Title,

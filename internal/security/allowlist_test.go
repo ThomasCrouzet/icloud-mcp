@@ -1,11 +1,13 @@
 package security
 
 import (
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsICloudHost(t *testing.T) {
@@ -30,6 +32,32 @@ func TestIsICloudHost(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsICloudHost(tt.host); got != tt.want {
 				t.Errorf("IsICloudHost(%q) = %v, want %v", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsContactsHost(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"contacts.icloud.com", true},
+		{"p1-contacts.icloud.com", true},
+		{"p46-contacts.icloud.com", true},
+		{"p123-contacts.icloud.com", true},
+		{"p1234-contacts.icloud.com", false},
+		{"caldav.icloud.com", false},
+		{"p46-caldav.icloud.com", false},
+		{"CONTACTS.ICLOUD.COM", false},
+		{"contacts.icloud.com.evil.example", false},
+		{"p46-contacts.icloud.com.evil.example", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			if got := IsContactsHost(tt.host); got != tt.want {
+				t.Errorf("IsContactsHost(%q) = %v, want %v", tt.host, got, tt.want)
 			}
 		})
 	}
@@ -183,5 +211,71 @@ func TestNewICloudHTTPClient_RejectsNonICloudHost(t *testing.T) {
 			_ = resp.Body.Close()
 		}
 		t.Fatal("expected: allowlist error, got: success")
+	}
+}
+
+func TestICloudClientDisablesAutomaticRedirects(t *testing.T) {
+	client := NewICloudHTTPClient(time.Second)
+	req, err := http.NewRequest(http.MethodPut, "https://caldav.icloud.com/next", strings.NewReader("event"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(req, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
+	}
+}
+
+func TestDAVClientsUseSeparateDomainTransports(t *testing.T) {
+	calendar := NewICloudHTTPClient(30 * time.Second)
+	contacts := NewContactsHTTPClient(30 * time.Second)
+	if calendar.Transport == contacts.Transport {
+		t.Fatal("Calendar and Contacts share an outer transport")
+	}
+
+	calendarAllowlist, ok := calendar.Transport.(*AllowlistTransport)
+	if !ok {
+		t.Fatalf("Calendar transport type = %T", calendar.Transport)
+	}
+	contactsAllowlist, ok := contacts.Transport.(*AllowlistTransport)
+	if !ok {
+		t.Fatalf("Contacts transport type = %T", contacts.Transport)
+	}
+	if calendarAllowlist.inner == contactsAllowlist.inner {
+		t.Fatal("Calendar and Contacts share an authenticated inner transport boundary")
+	}
+	for name, allowlist := range map[string]*AllowlistTransport{
+		"calendar": calendarAllowlist,
+		"contacts": contactsAllowlist,
+	} {
+		inner, ok := allowlist.inner.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s inner transport type = %T", name, allowlist.inner)
+		}
+		if inner.Proxy != nil {
+			t.Errorf("%s transport must not use an environment proxy", name)
+		}
+		if inner.TLSClientConfig == nil || inner.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+			t.Errorf("%s transport does not require TLS 1.2", name)
+		}
+		if inner.TLSClientConfig.InsecureSkipVerify {
+			t.Errorf("%s transport disables TLS verification", name)
+		}
+	}
+	if !calendarAllowlist.allowed("caldav.icloud.com") || calendarAllowlist.allowed("contacts.icloud.com") {
+		t.Error("Calendar transport has the wrong host policy")
+	}
+	if !contactsAllowlist.allowed("contacts.icloud.com") || contactsAllowlist.allowed("caldav.icloud.com") {
+		t.Error("Contacts transport has the wrong host policy")
+	}
+}
+
+func TestContactsClientDisablesAutomaticRedirects(t *testing.T) {
+	client := NewContactsHTTPClient(time.Second)
+	req, err := http.NewRequest(http.MethodGet, "https://contacts.icloud.com/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(req, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
 	}
 }

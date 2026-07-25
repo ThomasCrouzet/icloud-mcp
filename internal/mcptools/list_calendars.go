@@ -33,6 +33,6 @@ func listCalendarsHandler(deps Deps) server.ToolHandlerFunc {
 			cals = []icloud.Calendar{}
 		}
 		resp := calendarsResponse{Count: len(cals), Calendars: cals}
-		return writeJSON(deps.Redactor, resp), nil
+		return writeCalendarJSON(deps.Redactor, resp), nil
 	}
 }

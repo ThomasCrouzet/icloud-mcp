@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-
-	extcaldav "github.com/emersion/go-webdav/caldav"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
@@ -38,130 +35,126 @@ const propfindHomeSetBody = `<?xml version="1.0" encoding="UTF-8"?>
   </A:prop>
 </A:propfind>`
 
-// discover runs the iCloud discovery sequence (2 PROPFINDs) and fills
-// shardBase/homeSetPath/dav. Success is cached for the process lifetime.
-// Failures are NOT cached: a canceled boot context or transient network
-// error must not poison every later tool call. Concurrent callers serialize
-// on discoverMu; after the first success they return immediately.
-func (c *Client) discover(ctx context.Context) error {
-	c.discoverMu.Lock()
-	defer c.discoverMu.Unlock()
-	if c.discovered {
-		return nil
-	}
-	if err := c.doDiscover(ctx); err != nil {
-		return err
-	}
-	c.discovered = true
-	return nil
+type discoveryResult struct {
+	shardBase   string
+	homeSetPath string
 }
 
-func (c *Client) doDiscover(ctx context.Context) error {
-	// Step 1: current-user-principal on the main server.
-	ms, err := c.propfind(ctx, c.baseURL+"/", "0", propfindPrincipalBody)
-	if err != nil {
+type propfindResult struct {
+	multistatus *msMultistatus
+	url         *url.URL
+}
+
+// discover runs the iCloud discovery sequence and publishes a complete result
+// atomically. Concurrent callers wait on a channel so their own contexts can
+// cancel without waiting for the in-flight caller's network deadline.
+func (c *Client) discover(ctx context.Context) error {
+	for {
+		c.discoverMu.Lock()
+		if c.discovered {
+			c.discoverMu.Unlock()
+			return nil
+		}
+		if c.discovering {
+			wait := c.discoverWait
+			c.discoverMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return calendarContextError(ctx.Err())
+			case <-wait:
+				continue
+			}
+		}
+		c.discovering = true
+		c.discoverWait = make(chan struct{})
+		wait := c.discoverWait
+		c.discoverMu.Unlock()
+
+		result, err := c.doDiscover(ctx)
+		c.discoverMu.Lock()
+		if err == nil {
+			c.shardBase = result.shardBase
+			c.homeSetPath = result.homeSetPath
+			c.discovered = true
+		}
+		c.discovering = false
+		close(wait)
+		c.discoverMu.Unlock()
 		return err
 	}
-	principal := principalFromMultistatus(ms)
+}
+
+func (c *Client) doDiscover(ctx context.Context) (discoveryResult, error) {
+	// Step 1: current-user-principal on the main server.
+	response, err := c.propfind(ctx, c.baseURL+"/", "0", propfindPrincipalBody)
+	if err != nil {
+		return discoveryResult{}, err
+	}
+	principal := principalFromMultistatus(response.multistatus)
 	if principal == "" {
-		return fmt.Errorf("iCloud discovery: current-user-principal not found in response")
+		return discoveryResult{}, fmt.Errorf("iCloud discovery: current-user-principal not found in response")
 	}
 
-	principalURL, err := resolveRef(c.baseURL, principal)
+	principalURL, err := c.resolveDiscoveryHref(response.url, principal, "principal")
 	if err != nil {
-		return fmt.Errorf("iCloud discovery: invalid principal URL: %w", err)
-	}
-	// MANDATORY revalidation of the principal, SYMMETRIC to the check already
-	// applied to the home-set below (step 3): never blindly trust a server
-	// response, even for an intermediate discovery step. Without this check,
-	// a malicious current-user-principal was only caught downstream by the
-	// production AllowlistTransport, never in the test paths (direct doer
-	// without a hardened transport), and inconsistently with the home-set.
-	pu, perr := url.Parse(principalURL)
-	if perr != nil {
-		return fmt.Errorf("iCloud discovery: invalid principal URL: %w", perr)
-	}
-	if err := c.validateDiscoveryURL(pu, "principal"); err != nil {
-		return err
+		return discoveryResult{}, err
 	}
 
 	// Step 2: calendar-home-set on the principal.
-	ms2, err := c.propfind(ctx, principalURL, "0", propfindHomeSetBody)
+	response2, err := c.propfind(ctx, principalURL.String(), "0", propfindHomeSetBody)
 	if err != nil {
-		return err
+		return discoveryResult{}, err
 	}
-	homeSetHref := homeSetFromMultistatus(ms2)
+	homeSetHref := homeSetFromMultistatus(response2.multistatus)
 	if homeSetHref == "" {
-		return fmt.Errorf("iCloud discovery: calendar-home-set not found in response")
+		return discoveryResult{}, fmt.Errorf("iCloud discovery: calendar-home-set not found in response")
 	}
 
-	// Step 3: shard resolution, MANDATORY revalidation of the host and port,
-	// even though the production http.Client already has its own allowlist
-	// (defense in depth: never blindly trust a server response to decide
-	// where future requests will go).
-	u, err := url.Parse(homeSetHref)
+	// Step 3: resolve against the exact final principal response URL. The
+	// home-set may legitimately move to an allowlisted iCloud shard.
+	homeSetURL, err := c.resolveDiscoveryHref(response2.url, homeSetHref, "home-set")
 	if err != nil {
-		return fmt.Errorf("iCloud discovery: invalid home-set: %w", err)
+		return discoveryResult{}, err
 	}
-	switch {
-	case u.IsAbs():
-		if err := c.validateDiscoveryURL(u, "home-set"); err != nil {
-			return err
-		}
-		c.shardBase = u.Scheme + "://" + u.Host
-		c.homeSetPath = u.Path
-	default:
-		// Relative href: test server or CalDAV server without shards.
-		c.shardBase = c.baseURL
-		c.homeSetPath = u.Path
-	}
-
-	dav, err := extcaldav.NewClient(c.http, c.shardBase)
-	if err != nil {
-		return fmt.Errorf("iCloud discovery: creating CalDAV client (shard=%s): %w", c.shardBase, err)
-	}
-	c.dav = dav
-	return nil
+	return discoveryResult{shardBase: davOrigin(homeSetURL), homeSetPath: homeSetURL.EscapedPath()}, nil
 }
 
 // propfind executes a PROPFIND request and parses the 207 Multi-Status response.
-func (c *Client) propfind(ctx context.Context, target, depth, body string) (*msMultistatus, error) {
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", target, strings.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("building PROPFIND request (%s): %w", target, err)
+func (c *Client) propfind(ctx context.Context, target, depth, body string, scopePath ...string) (*propfindResult, error) {
+	scope := ""
+	if len(scopePath) > 0 {
+		scope = scopePath[0]
 	}
-	req.Header.Set("Content-Type", `text/xml; charset="utf-8"`)
-	req.Header.Set("Depth", depth)
-
-	resp, err := c.http.Do(req)
+	headers := make(http.Header)
+	headers.Set("Content-Type", `text/xml; charset="utf-8"`)
+	headers.Set("Depth", depth)
+	result, err := c.doCalendarRequest(ctx, "PROPFIND", target, headers, []byte(body), scope)
 	if err != nil {
-		return nil, fmt.Errorf("PROPFIND request to %s: %w", target, err)
+		return nil, fmt.Errorf("Calendar PROPFIND request failed: %w", err)
 	}
+	resp := result.response
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("iCloud authentication refused: check ICLOUD_EMAIL and the app-specific password")
-	}
 	if resp.StatusCode != 207 {
-		return nil, fmt.Errorf("PROPFIND %s: unexpected HTTP status %d", target, resp.StatusCode)
+		return nil, classifyStatus(resp.StatusCode)
 	}
 
 	// Defensive bound: an abnormally large response (buggy or hostile
 	// server) must never be fully loaded into memory.
 	// maxPropfindBodySize+1 makes overflow detectable (if exactly the limit
 	// were read, there would be no way to know whether more data followed).
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPropfindBodySize+1))
+	data, err := readBoundedCalendarBody(resp.Body, maxPropfindBodySize, "Calendar PROPFIND response is too large")
 	if err != nil {
-		return nil, fmt.Errorf("reading PROPFIND response (%s): %w", target, err)
+		return nil, err
 	}
-	if len(data) > maxPropfindBodySize {
-		return nil, fmt.Errorf("PROPFIND response (%s) too large (> %d bytes)", target, maxPropfindBodySize)
+	if err := validatePropfindMultiStatus(data, resp.StatusCode); err != nil {
+		return nil, err
 	}
 	var ms msMultistatus
 	if err := xml.Unmarshal(data, &ms); err != nil {
-		return nil, fmt.Errorf("parsing PROPFIND response (%s): %w", target, err)
+		return nil, NewError(CodeProtocolError, resp.StatusCode, "Calendar PROPFIND response is malformed", nil)
 	}
-	return &ms, nil
+	return &propfindResult{multistatus: &ms, url: result.url}, nil
 }
 
 // validateDiscoveryURL enforces scheme https, allowHost, and (for production
@@ -169,28 +162,35 @@ func (c *Client) propfind(ctx context.Context, target, depth, body string) (*msM
 // ports on non-iCloud hosts, so port is enforced only when the host is a
 // real caldav.icloud.com / pXX-caldav.icloud.com name.
 func (c *Client) validateDiscoveryURL(u *url.URL, kind string) error {
-	if u.Scheme != "https" || !c.allowHost(u.Hostname()) {
-		return fmt.Errorf("iCloud discovery: %s outside allowlist (%s)", kind, u.Hostname())
+	if u == nil || u.Scheme != "https" || u.Host == "" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || c.allowHost == nil || !c.allowHost(u.Hostname()) {
+		host := ""
+		if u != nil {
+			host = u.Hostname()
+		}
+		return fmt.Errorf("iCloud discovery: %s outside allowlist (%s)", kind, host)
 	}
 	if security.IsICloudHost(u.Hostname()) && !security.PortAllowed(u.Port()) {
 		return fmt.Errorf("iCloud discovery: %s port %q rejected (443 only)", kind, u.Port())
 	}
+	if err := ValidateCalendarPath(u.EscapedPath()); err != nil {
+		return NewError(CodeProtocolError, 0, "iCloud discovery returned an invalid "+kind+" path", nil)
+	}
 	return nil
 }
 
-// resolveRef resolves a reference (absolute or relative) against base.
-// Used for discovery principal/home-set URLs (host may legitimately change
-// to a shard). For agent-supplied calendar/event paths use resolvePathOnBase.
-func resolveRef(base, ref string) (string, error) {
-	b, err := url.Parse(base)
-	if err != nil {
-		return "", err
+func (c *Client) resolveDiscoveryHref(base *url.URL, href, kind string) (*url.URL, error) {
+	if base == nil || href == "" || len(href) > 4096 {
+		return nil, NewError(CodeProtocolError, 0, "iCloud discovery returned an invalid "+kind+" href", nil)
 	}
-	r, err := url.Parse(ref)
-	if err != nil {
-		return "", err
+	ref, err := url.Parse(href)
+	if err != nil || ref.Opaque != "" || ref.User != nil || ref.RawQuery != "" || ref.Fragment != "" || ref.ForceQuery || strings.ContainsAny(href, "?#") {
+		return nil, NewError(CodeProtocolError, 0, "iCloud discovery returned an invalid "+kind+" href", nil)
 	}
-	return b.ResolveReference(r).String(), nil
+	resolved := base.ResolveReference(ref)
+	if err := c.validateDiscoveryURL(resolved, kind); err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }
 
 // resolvePathOnBase resolves a path-absolute ref against base and requires
@@ -204,16 +204,19 @@ func resolvePathOnBase(base, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if b.Scheme != "https" || b.Host == "" || b.Opaque != "" || b.User != nil || b.RawQuery != "" || b.Fragment != "" {
+		return "", fmt.Errorf("invalid Calendar base URL")
+	}
 	r, err := url.Parse(path)
 	if err != nil {
 		return "", err
 	}
 	// Force path-only resolution: clear any accidental authority on ref.
-	if r.Scheme != "" || r.Host != "" || r.User != nil {
+	if r.Scheme != "" || r.Host != "" || r.User != nil || r.RawQuery != "" || r.Fragment != "" || r.Opaque != "" {
 		return "", fmt.Errorf("calendar path must not include a host or scheme")
 	}
 	out := b.ResolveReference(r)
-	if out.Scheme != b.Scheme || out.Host != b.Host {
+	if !sameDAVOrigin(out, b) {
 		return "", fmt.Errorf("calendar path resolves outside base host")
 	}
 	return out.String(), nil

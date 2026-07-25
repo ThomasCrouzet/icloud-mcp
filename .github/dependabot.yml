@@ -11,7 +11,7 @@ updates:
       - "go"
     # group minor/patch bumps to keep the PR noise low; major bumps get
     # individual PRs so they can be reviewed against the pinned dependency
-    # policy (README: 5 direct deps max, no addition without written
+    # policy (README: 10 direct deps max, no addition without written
     # justification).
     groups:
       go-patches:

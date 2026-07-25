@@ -1,6 +1,8 @@
 package icloud
 
 import (
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +55,7 @@ func FuzzValidateRRULE(f *testing.F) {
 func FuzzRedactLikeEventRoundTrip(f *testing.F) {
 	// Build/parse-ish: Ensure buildEventCalendar + property access does not panic.
 	f.Add("Title", "Place", "Notes", "FREQ=DAILY;COUNT=2")
-	f.Add("🎉 Unicode", "Café", "line1\nline2", "")
+	f.Add("\U0001f389 Unicode", "Caf\u00e9", "line1\nline2", "")
 	f.Fuzz(func(t *testing.T, title, loc, notes, rrule string) {
 		if len(title) > MaxTitleLen {
 			title = title[:MaxTitleLen]
@@ -115,22 +117,17 @@ func FuzzExpandOccurrences(f *testing.F) {
 	})
 }
 
-func FuzzIsICloudHostViaPath(f *testing.F) {
-	// Fuzz hrefPath which feeds into path handling after REPORT.
+func FuzzResolveDAVHref(f *testing.F) {
 	f.Add("/calendars/1/home/uid.ics")
 	f.Add("https://p12-caldav.icloud.com/calendars/1/")
 	f.Add("https://evil.example/path")
 	f.Add("")
 	f.Fuzz(func(t *testing.T, href string) {
-		// Ensure path extraction never panics, including null bytes and
-		// absolute URLs that are not iCloud hosts.
-		p := hrefPath(href)
-		if strings.Contains(p, "\x00") {
-			// Null bytes must not crash; result may still contain them when
-			// the input did. Length is the only cheap invariant.
-			if len(p) == 0 && href != "" && !strings.Contains(href, "://") {
-				t.Fatalf("unexpected empty path for non-empty relative href %q", href)
-			}
+		client := initializedSecurityClient(calendarDoerFunc(func(*http.Request) (*http.Response, error) { return nil, nil }))
+		base, err := url.Parse("https://caldav.icloud.com/home/cal/")
+		if err != nil {
+			t.Fatal(err)
 		}
+		_, _ = client.resolveDAVHref(base, href, "/home/cal/")
 	})
 }

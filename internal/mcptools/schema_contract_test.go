@@ -34,6 +34,7 @@ func TestSchemaContract_BoundsMatchRuntimeConstants(t *testing.T) {
 	_ = newValidateEventTool(time.UTC)
 	_ = newFindFreeSlotsTool(time.UTC)
 	_ = newCalendarCapabilitiesTool()
+	_ = newICloudCapabilitiesTool()
 	_ = newListCalendarsTool()
 }
 
@@ -78,7 +79,7 @@ func TestMCP_E2E_ReadOnlyAndReadWrite(t *testing.T) {
 			for _, tool := range tools.Tools {
 				has[tool.Name] = true
 			}
-			for _, name := range []string{"list_calendars", "search_events", "get_event", "validate_event", "calendar_capabilities", "find_free_slots"} {
+			for _, name := range []string{"list_calendars", "search_events", "get_event", "validate_event", "calendar_capabilities", "icloud_capabilities", "find_free_slots"} {
 				if !has[name] {
 					t.Errorf("missing read tool %s", name)
 				}

@@ -3,6 +3,7 @@ package security
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -60,6 +61,39 @@ func TestRedactor_Redact(t *testing.T) {
 				t.Errorf("Redact() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewRedactorDeduplicatesAndSortsLongestFirst(t *testing.T) {
+	r := NewRedactor("shared-secret", "shared-secret-long", "shared-secret", "other")
+	want := []string{"shared-secret-long", "shared-secret", "other"}
+	if len(r.secrets) != len(want) {
+		t.Fatalf("registered secrets = %q, want %q", r.secrets, want)
+	}
+	for i := range want {
+		if r.secrets[i] != want[i] {
+			t.Fatalf("registered secrets = %q, want %q", r.secrets, want)
+		}
+	}
+	if got := r.Redact("value=shared-secret-long"); got != "value=[REDACTED]" {
+		t.Fatalf("overlapping secret redaction = %q", got)
+	}
+}
+
+func TestRedactorRetainsFixedPointReplacement(t *testing.T) {
+	const secret = "]aaa"
+	got := NewRedactor(secret).Redact("]aaaaaa")
+	if strings.Contains(got, secret) {
+		t.Fatalf("fixed-point redaction left reconstructed secret in %q", got)
+	}
+}
+
+func TestRedactorMasksSecretsContainedInMarker(t *testing.T) {
+	for _, secret := range []string{"REDACTED", "CTED", "[RED"} {
+		output := NewRedactor(secret).Redact("credential=" + secret)
+		if strings.Contains(output, secret) {
+			t.Fatalf("marker-colliding secret %q remained in %q", secret, output)
+		}
 	}
 }
 
@@ -129,6 +163,72 @@ func TestRedactor_RedactsEmail(t *testing.T) {
 	}
 	if !strings.Contains(out, "[REDACTED]") {
 		t.Errorf("expected output containing [REDACTED], got: %q", out)
+	}
+}
+
+func TestRedactionVariants_MultipleCredentialEncodings(t *testing.T) {
+	pairs := []CredentialPair{
+		{Username: "calendar@example.com", Password: "calendar-secret-sentinel"},
+		{Username: "mailbox@example.com", Password: "mail-secret-sentinel"},
+	}
+	variants := RedactionVariants(pairs...)
+	redactor := NewRedactor(variants...)
+
+	var expected []string
+	for _, pair := range pairs {
+		basic := pair.Username + ":" + pair.Password
+		plain := "\x00" + pair.Username + "\x00" + pair.Password
+		plainWithAuthzID := pair.Username + "\x00" + pair.Username + "\x00" + pair.Password
+		expected = append(expected,
+			pair.Username,
+			pair.Password,
+			base64.StdEncoding.EncodeToString([]byte(pair.Username)),
+			base64.StdEncoding.EncodeToString([]byte(pair.Password)),
+			base64.StdEncoding.EncodeToString([]byte(basic)),
+			base64.RawStdEncoding.EncodeToString([]byte(basic)),
+			base64.URLEncoding.EncodeToString([]byte(basic)),
+			base64.RawURLEncoding.EncodeToString([]byte(basic)),
+			plain,
+			base64.StdEncoding.EncodeToString([]byte(plain)),
+			plainWithAuthzID,
+			base64.StdEncoding.EncodeToString([]byte(plainWithAuthzID)),
+		)
+	}
+	for _, encoded := range expected {
+		if out := redactor.Redact("prefix:" + encoded + ":suffix"); strings.Contains(out, encoded) {
+			t.Errorf("credential variant was not redacted: %q", encoded)
+		}
+	}
+}
+
+func TestRedactionVariants_MasksJSONEscapedCredentials(t *testing.T) {
+	password := `app-"password\\with<chars>`
+	variants := RedactionVariants(CredentialPair{Username: "user@example.com", Password: password})
+	redactor := NewRedactor(variants...)
+	encoded, err := json.Marshal(map[string]string{"error": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := redactor.Redact(string(encoded))
+	if strings.Contains(output, `app-\"password`) || strings.Contains(output, `password\\with`) {
+		t.Fatalf("JSON-escaped credential remained in output: %s", output)
+	}
+	if !strings.Contains(output, "[REDACTED]") {
+		t.Fatalf("redaction marker missing: %s", output)
+	}
+}
+
+func TestRedactionVariants_DeduplicatesSharedCredentials(t *testing.T) {
+	variants := RedactionVariants(
+		CredentialPair{Username: "same@example.com", Password: "same-secret"},
+		CredentialPair{Username: "same@example.com", Password: "same-secret"},
+	)
+	seen := make(map[string]struct{}, len(variants))
+	for _, variant := range variants {
+		if _, duplicate := seen[variant]; duplicate {
+			t.Fatalf("duplicate redaction variant %q", variant)
+		}
+		seen[variant] = struct{}{}
 	}
 }
 
@@ -206,26 +306,46 @@ func TestRedactingWriter_SecretSplitAfterNewline(t *testing.T) {
 	}
 }
 
-// TestRedactingWriter_NoNewlineDrainsAtCap: a stream that never emits a
-// newline must not buffer without bound, yet must still keep enough of a tail
-// to match a secret split across the drain.
-func TestRedactingWriter_NoNewlineDrainsAtCap(t *testing.T) {
+func TestRedactingWriter_SecretStraddlingExactCapIsDiscarded(t *testing.T) {
 	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
 	var buf bytes.Buffer
 	rw := NewRedactingWriter(&buf, NewRedactor(password))
 
 	mid := len(password) / 2
-	if _, err := rw.Write([]byte(strings.Repeat("x", maxRedactBuf) + password[:mid])); err != nil {
-		t.Fatalf("Write filler: %v", err)
+	first := []byte(strings.Repeat("x", maxRedactBuf-mid) + password[:mid])
+	if len(first) != maxRedactBuf {
+		t.Fatalf("first write length = %d, want %d", len(first), maxRedactBuf)
 	}
-	if buf.Len() == 0 {
-		t.Fatal("oversized buffer was not drained")
+	n, err := rw.Write(first)
+	if err != nil || n != len(first) {
+		t.Fatalf("Write first = %d, %v", n, err)
 	}
-	if _, err := rw.Write([]byte(password[mid:] + "\n")); err != nil {
+	second := []byte(password[mid:] + "\nnext record\n")
+	n, err = rw.Write(second)
+	if err != nil || n != len(second) {
 		t.Fatalf("Write tail: %v", err)
 	}
-	if out := buf.String(); strings.Contains(out, password) {
-		t.Errorf("password leaked across the oversize drain")
+	if got, want := buf.String(), oversizedRedactMarker+"next record\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if len(rw.buf) >= maxRedactBuf {
+		t.Fatalf("internal buffer length = %d, want less than %d", len(rw.buf), maxRedactBuf)
+	}
+}
+
+func TestRedactingWriter_OversizedWriteHasBoundedStateAndOutput(t *testing.T) {
+	var buf bytes.Buffer
+	rw := NewRedactingWriter(&buf, NewRedactor("secretvalue"))
+	p := []byte(strings.Repeat("x", maxRedactBuf*4) + "\nkept\n")
+	n, err := rw.Write(p)
+	if err != nil || n != len(p) {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	if got, want := buf.String(), oversizedRedactMarker+"kept\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if len(rw.buf) >= maxRedactBuf {
+		t.Fatalf("internal buffer length = %d, want less than %d", len(rw.buf), maxRedactBuf)
 	}
 }
 

@@ -12,6 +12,10 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
+// maxExplicitFreeSlotCalendars bounds caller-controlled fan-out. Calendar
+// discovery remains uncapped so omitting calendar selections still means all.
+const maxExplicitFreeSlotCalendars = 10
+
 func newFindFreeSlotsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("find_free_slots",
 		mcp.WithDescription("Computes free time slots locally from calendar busy intervals. Expands recurrences, ignores TRANSPARENT and CANCELLED events, merges overlaps, applies working hours/buffers/DST. Never reveals the events that cause busy time. Available in read-only mode."),
@@ -20,17 +24,17 @@ func newFindFreeSlotsTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Search range start", defaultLoc))),
 		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("Search range end", defaultLoc)+" At most 366 days after start.")),
-		mcp.WithNumber("duration_minutes", mcp.Required(), mcp.Min(1), mcp.Max(24*60), mcp.Description("Required free slot length in minutes")),
+		mcp.WithInteger("duration_minutes", mcp.Required(), mcp.Min(1), mcp.Max(24*60), mcp.Description("Required free slot length in minutes")),
 		mcp.WithString("calendar", mcp.Description("Single calendar path. Prefer calendars for multi-calendar.")),
-		mcp.WithString("calendars", mcp.Description("Comma-separated calendar paths. All calendars if both calendar and calendars omitted.")),
+		mcp.WithString("calendars", mcp.Description("Comma-separated calendar paths (at most 10 unique paths, including calendar). All calendars if both calendar and calendars omitted.")),
 		mcp.WithString("timezone", mcp.Description("IANA timezone for working hours (default: ICLOUD_MCP_DEFAULT_TZ)")),
 		mcp.WithString("working_hours_start", mcp.Description("Local start of working day HH:MM (optional)")),
 		mcp.WithString("working_hours_end", mcp.Description("Local end of working day HH:MM (optional; may be before start for overnight)")),
 		mcp.WithString("days_of_week", mcp.Description("Comma-separated weekdays: 0=Sunday .. 6=Saturday, or mon,tue,... Empty = all days.")),
-		mcp.WithNumber("buffer_before_minutes", mcp.Min(0), mcp.Max(24*60), mcp.Description("Busy padding before each event (minutes)")),
-		mcp.WithNumber("buffer_after_minutes", mcp.Min(0), mcp.Max(24*60), mcp.Description("Busy padding after each event (minutes)")),
+		mcp.WithInteger("buffer_before_minutes", mcp.Min(0), mcp.Max(24*60), mcp.Description("Busy padding before each event (minutes)")),
+		mcp.WithInteger("buffer_after_minutes", mcp.Min(0), mcp.Max(24*60), mcp.Description("Busy padding after each event (minutes)")),
 		mcp.WithBoolean("include_all_day_busy", mcp.Description("Treat all-day events as busy (default true)")),
-		mcp.WithNumber("limit", mcp.DefaultNumber(50), mcp.Min(1), mcp.Max(200), mcp.Description("Max free slots returned")),
+		mcp.WithInteger("limit", mcp.DefaultNumber(50), mcp.Min(1), mcp.Max(200), mcp.Description("Max free slots returned")),
 	)
 }
 
@@ -65,20 +69,39 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if err := icloud.ValidateRange(start, end); err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
-		durMin := req.GetInt("duration_minutes", 0)
+		durMin, err := optionalIntArg(req, "duration_minutes", 0)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
 		if durMin <= 0 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("duration_minutes must be positive")), nil
 		}
 		if durMin > 24*60 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("duration_minutes must be at most 1440 (24h)")), nil
 		}
-		bufBefore := req.GetInt("buffer_before_minutes", 0)
-		bufAfter := req.GetInt("buffer_after_minutes", 0)
+		bufBefore, err := optionalIntArg(req, "buffer_before_minutes", 0)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
+		bufAfter, err := optionalIntArg(req, "buffer_after_minutes", 0)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
 		if bufBefore < 0 || bufBefore > 24*60 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("buffer_before_minutes must be between 0 and 1440")), nil
 		}
 		if bufAfter < 0 || bufAfter > 24*60 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("buffer_after_minutes must be between 0 and 1440")), nil
+		}
+		bufferBefore := time.Duration(bufBefore) * time.Minute
+		bufferAfter := time.Duration(bufAfter) * time.Minute
+		queryStart := start.Add(-bufferAfter)
+		queryEnd := end.Add(bufferBefore)
+		if queryStart.Year() < 0 || queryStart.Year() > 9999 || queryEnd.Year() < 0 || queryEnd.Year() > 9999 {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("buffered search range is outside supported date bounds")), nil
+		}
+		if err := icloud.ValidateRange(queryStart, queryEnd); err != nil {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("buffered search range: %w", err)), nil
 		}
 		paths, err := resolveCalendarPaths(ctx, deps, req)
 		if err != nil {
@@ -88,25 +111,30 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if tz := req.GetString("timezone", ""); tz != "" {
 			l, lerr := time.LoadLocation(tz)
 			if lerr != nil {
-				return errResult(deps.Redactor, "validation", fmt.Errorf("invalid timezone %q", tz)), nil
+				return errResult(deps.Redactor, "validation", fmt.Errorf("invalid timezone")), nil
 			}
 			loc = l
+		}
+		limit, err := optionalIntArg(req, "limit", 50)
+		if err != nil || limit < 1 || limit > 200 {
+			if err == nil {
+				err = fmt.Errorf("limit must be between 1 and 200")
+			}
+			return errResult(deps.Redactor, "validation", err), nil
+		}
+		includeAllDayBusy, err := optionalBoolArg(req, "include_all_day_busy", true)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
 		}
 		opts := icloud.FreeSlotOptions{
 			RangeStart:        start,
 			RangeEnd:          end,
 			Duration:          time.Duration(durMin) * time.Minute,
 			Location:          loc,
-			BufferBefore:      time.Duration(bufBefore) * time.Minute,
-			BufferAfter:       time.Duration(bufAfter) * time.Minute,
-			IncludeAllDayBusy: true,
-			Limit:             req.GetInt("limit", 50),
-		}
-		// mcp-go GetBool default: if key absent use true for include_all_day_busy.
-		if v, ok := req.GetArguments()["include_all_day_busy"]; ok {
-			if b, ok := v.(bool); ok {
-				opts.IncludeAllDayBusy = b
-			}
+			BufferBefore:      bufferBefore,
+			BufferAfter:       bufferAfter,
+			IncludeAllDayBusy: includeAllDayBusy,
+			Limit:             limit,
 		}
 		if whs := req.GetString("working_hours_start", ""); whs != "" {
 			m, e := icloud.ParseWorkingHours(whs)
@@ -131,32 +159,25 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		var allEvents []icloud.Event
-		multi := len(paths) > 1
-		var softErrs int
 		for _, path := range paths {
-			res, serr := deps.Service.SearchEvents(ctx, path, start, end, nil)
+			if err := ctx.Err(); err != nil {
+				return errResult(deps.Redactor, "searching events", err), nil
+			}
+			res, serr := deps.Service.SearchEvents(ctx, path, queryStart, queryEnd, nil)
 			if serr != nil {
-				// Auth/security must not become a soft warning.
-				if ie := icloud.AsICloudError(serr); ie != nil {
-					switch ie.Code {
-					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden, icloud.CodeAuthentication, icloud.CodeAuthorization:
-						return errResult(deps.Redactor, "searching events", serr), nil
-					}
-				}
-				if !multi {
-					return errResult(deps.Redactor, "searching events", serr), nil
-				}
-				softErrs++
-				continue
+				return errResult(deps.Redactor, "searching events", serr), nil
+			}
+			if err := ctx.Err(); err != nil {
+				return errResult(deps.Redactor, "searching events", err), nil
+			}
+			if res.TruncatedByExpansion {
+				return errResult(deps.Redactor, "searching events", icloud.NewError(
+					icloud.CodePartialFailure, 0, "recurrence expansion was truncated; availability cannot be determined", nil,
+				)), nil
 			}
 			allEvents = append(allEvents, res.Events...)
 		}
-		if multi && softErrs == len(paths) {
-			return errResult(deps.Redactor, "searching events", icloud.NewError(
-				icloud.CodePartialFailure, 0, "all calendars failed while computing free slots", nil,
-			)), nil
-		}
-		busy := icloud.BusyFromEvents(allEvents, opts.IncludeAllDayBusy, opts.BufferBefore, opts.BufferAfter)
+		busy := icloud.BusyFromEvents(allEvents, opts.IncludeAllDayBusy, opts.BufferBefore, opts.BufferAfter, opts.Location)
 		slots, err := icloud.FindFreeSlots(busy, opts)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
@@ -168,49 +189,73 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 				End:   s.End.Format(time.RFC3339),
 			})
 		}
-		return writeJSON(deps.Redactor, out), nil
+		return writeCalendarJSON(deps.Redactor, out), nil
 	}
 }
 
 func resolveCalendarPaths(ctx context.Context, deps Deps, req mcp.CallToolRequest) ([]string, error) {
 	var paths []string
-	if multi := req.GetString("calendars", ""); multi != "" {
+	seen := make(map[string]struct{})
+	add := func(path string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return nil
+		}
+		if err := icloud.ValidateCalendarPath(path); err != nil {
+			return err
+		}
+		if _, ok := seen[path]; ok {
+			return nil
+		}
+		if len(paths) >= maxExplicitFreeSlotCalendars {
+			return fmt.Errorf("calendar selection must contain at most %d unique paths", maxExplicitFreeSlotCalendars)
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+		return nil
+	}
+
+	args := req.GetArguments()
+	_, hasCalendars := args["calendars"]
+	_, hasCalendar := args["calendar"]
+	if multi := req.GetString("calendars", ""); hasCalendars {
 		for _, p := range strings.Split(multi, ",") {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			if err := icloud.ValidateCalendarPath(p); err != nil {
+			if err := add(p); err != nil {
 				return nil, err
 			}
-			paths = append(paths, p)
 		}
 	}
-	if single := req.GetString("calendar", ""); single != "" {
-		if err := icloud.ValidateCalendarPath(single); err != nil {
+	if hasCalendar {
+		if err := add(req.GetString("calendar", "")); err != nil {
 			return nil, err
 		}
-		// Avoid duplicate if also in calendars.
-		found := false
-		for _, p := range paths {
-			if p == single {
-				found = true
-				break
-			}
-		}
-		if !found {
-			paths = append(paths, single)
-		}
 	}
-	if len(paths) > 0 {
+	if hasCalendars || hasCalendar {
+		if len(paths) == 0 {
+			return nil, fmt.Errorf("calendar selection must contain at least one non-empty path")
+		}
 		return paths, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	cals, err := deps.Service.ListCalendars(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, c := range cals {
-		paths = append(paths, c.Path)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if c.Path != "" {
+			paths = append(paths, c.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no calendars are available for free-slot search")
 	}
 	return paths, nil
 }
@@ -238,7 +283,7 @@ func parseDaysOfWeek(s string) ([]time.Weekday, error) {
 		case "6", "sat", "saturday":
 			out = append(out, time.Saturday)
 		default:
-			return nil, fmt.Errorf("invalid day_of_week %q", part)
+			return nil, fmt.Errorf("invalid day_of_week")
 		}
 	}
 	return out, nil

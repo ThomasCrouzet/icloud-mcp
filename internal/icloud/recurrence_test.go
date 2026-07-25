@@ -1,6 +1,8 @@
 package icloud
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -200,6 +202,48 @@ func TestExpandOccurrences_PreservesTimezoneAcrossDST(t *testing.T) {
 	}
 }
 
+func TestExpandOccurrences_PreservesNominalDurationAcrossDST(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		start       time.Time
+		wantElapsed time.Duration
+	}{
+		{name: "spring forward", start: time.Date(2026, time.March, 28, 10, 0, 0, 0, loc), wantElapsed: 23 * time.Hour},
+		{name: "fall back", start: time.Date(2026, time.October, 24, 10, 0, 0, 0, loc), wantElapsed: 25 * time.Hour},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			master := Event{
+				UID: "nominal-duration", StartTime: test.start, EndTime: test.start.AddDate(0, 0, 1),
+				Recurrence: "FREQ=DAILY;COUNT=2", hasNominalDuration: true, nominalDurationDays: 1,
+			}
+			out, _, err := ExpandOccurrences(master, nil, test.start, test.start.AddDate(0, 0, 3), 10)
+			if err != nil || len(out) != 2 {
+				t.Fatalf("out=%d err=%v", len(out), err)
+			}
+			if got := out[0].EndTime.Sub(out[0].StartTime); got != test.wantElapsed {
+				t.Fatalf("elapsed duration = %v, want %v", got, test.wantElapsed)
+			}
+			if end := out[0].EndTime.In(loc); end.Hour() != 10 || end.Day() != test.start.Day()+1 {
+				t.Fatalf("nominal end = %v, want next civil day at 10:00", end)
+			}
+		})
+	}
+}
+
+func TestExpandOccurrences_AcceptsCaseInsensitiveRule(t *testing.T) {
+	start := mustParse(t, "2026-01-01T09:00:00Z")
+	master := Event{UID: "lowercase", StartTime: start, EndTime: start.Add(time.Hour), Recurrence: "freq=daily;count=2"}
+	out, _, err := ExpandOccurrences(master, nil, start, start.AddDate(0, 0, 3), 10)
+	if err != nil || len(out) != 2 {
+		t.Fatalf("out=%d err=%v", len(out), err)
+	}
+}
+
 // TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart: an
 // overnight recurring occurrence (22:00 to 02:00, crossing midnight) whose
 // instance starts the day before rangeStart but spills into it (its end is
@@ -276,6 +320,109 @@ func TestExpandOccurrences_MaxOccurrencesTruncates(t *testing.T) {
 	}
 	if !truncated {
 		t.Fatal("truncated = false, want true when maxOccurrences caps the series")
+	}
+}
+
+func TestExpandOccurrences_CapExactAndCapPlusOne(t *testing.T) {
+	start := mustParse(t, "2026-01-01T09:00:00Z")
+	for _, tc := range []struct {
+		name      string
+		count     string
+		truncated bool
+	}{
+		{name: "exact", count: "5", truncated: false},
+		{name: "cap plus one", count: "6", truncated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			master := Event{
+				UID: "uid-cap", StartTime: start, EndTime: start.Add(time.Hour),
+				Recurrence: "FREQ=DAILY;COUNT=" + tc.count,
+			}
+			out, truncated, err := ExpandOccurrences(master, nil, start, start.Add(30*24*time.Hour), 5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) != 5 || truncated != tc.truncated {
+				t.Fatalf("len=%d truncated=%t, want len=5 truncated=%t", len(out), truncated, tc.truncated)
+			}
+		})
+	}
+}
+
+func TestExpandOccurrences_PathologicalHighFrequencyFailsFast(t *testing.T) {
+	tests := []struct {
+		name       string
+		start      time.Time
+		rangeStart time.Time
+		rangeEnd   time.Time
+		rule       string
+	}{
+		{
+			name: "secondly over 366 days", start: mustParse(t, "2026-01-01T00:00:00Z"),
+			rangeStart: mustParse(t, "2026-01-01T00:00:00Z"), rangeEnd: mustParse(t, "2027-01-02T00:00:00Z"),
+			rule: "FREQ=SECONDLY",
+		},
+		{
+			name: "decades old minutely start", start: mustParse(t, "1970-01-01T00:00:00Z"),
+			rangeStart: mustParse(t, "2026-01-01T00:00:00Z"), rangeEnd: mustParse(t, "2026-01-02T00:00:00Z"),
+			rule: "FREQ=MINUTELY",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			master := Event{UID: "uid-fast", StartTime: tc.start, EndTime: tc.start.Add(time.Minute), Recurrence: tc.rule}
+			began := time.Now()
+			_, _, err := ExpandOccurrences(master, nil, tc.rangeStart, tc.rangeEnd, 5)
+			if typed := AsICloudError(err); typed == nil || typed.Code != CodePayloadTooLarge {
+				t.Fatalf("error = %v, want payload_too_large", err)
+			}
+			if elapsed := time.Since(began); elapsed > time.Second {
+				t.Fatalf("pathological recurrence preflight took %v", elapsed)
+			}
+		})
+	}
+}
+
+func TestExpandOccurrences_OldStartWithSmallCountIsBounded(t *testing.T) {
+	start := mustParse(t, "1970-01-01T00:00:00Z")
+	master := Event{
+		UID: "uid-count", StartTime: start, EndTime: start.Add(time.Minute),
+		Recurrence: "FREQ=SECONDLY;INTERVAL=1;COUNT=5",
+	}
+	rangeStart := mustParse(t, "2026-01-01T00:00:00Z")
+	out, truncated, err := ExpandOccurrences(master, nil, rangeStart, rangeStart.Add(time.Hour), 5)
+	if err != nil || len(out) != 0 || truncated {
+		t.Fatalf("out=%v truncated=%t err=%v", out, truncated, err)
+	}
+	master.Recurrence = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=5"
+	out, truncated, err = ExpandOccurrences(master, nil, rangeStart, rangeStart.Add(time.Hour), 5)
+	if err != nil || len(out) != 0 || truncated {
+		t.Fatalf("selector COUNT out=%v truncated=%t err=%v", out, truncated, err)
+	}
+}
+
+func TestExpandOccurrences_ClampsCallerCap(t *testing.T) {
+	start := mustParse(t, "2026-01-01T00:00:00Z")
+	master := Event{
+		UID: "uid-cap", StartTime: start, EndTime: start.Add(time.Minute),
+		Recurrence: "FREQ=DAILY;COUNT=3000",
+	}
+	for _, limit := range []int{maxOccurrencesPerSeries + 1, int(^uint(0) >> 1)} {
+		out, truncated, err := ExpandOccurrences(master, nil, start, start.AddDate(10, 0, 0), limit)
+		if err != nil || len(out) != maxOccurrencesPerSeries || !truncated {
+			t.Fatalf("limit=%d out=%d truncated=%t err=%v", limit, len(out), truncated, err)
+		}
+	}
+}
+
+func TestExpandOccurrencesContext_Cancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := mustParse(t, "2026-01-01T00:00:00Z")
+	master := Event{UID: "uid-cancel", StartTime: start, EndTime: start.Add(time.Hour), Recurrence: "FREQ=DAILY"}
+	_, _, err := ExpandOccurrencesContext(ctx, master, nil, start, start.Add(30*24*time.Hour), 10)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context cancellation", err)
 	}
 }
 

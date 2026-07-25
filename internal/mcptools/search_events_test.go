@@ -148,6 +148,42 @@ func TestSearchEventsHandler_InvalidDates(t *testing.T) {
 	}
 }
 
+func TestSearchEventsHandler_RejectsInvalidStatus(t *testing.T) {
+	svc := &icloud.MockService{}
+	result, err := searchEventsHandler(testDeps(svc))(context.Background(), newReq(map[string]any{
+		"start": "2026-07-01T00:00:00Z", "end": "2026-07-02T00:00:00Z",
+		"calendar": "/cal/home/", "status": "MAYBE",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || svc.SearchCallCount != 0 {
+		t.Fatalf("invalid status result=%s searchCalls=%d", resultText(t, result), svc.SearchCallCount)
+	}
+}
+
+func TestResolveSearchCalendarsBoundsExplicitSelections(t *testing.T) {
+	svc := &icloud.MockService{}
+	deps := testDeps(svc)
+	paths, err := resolveSearchCalendars(context.Background(), deps, newReq(map[string]any{
+		"calendar": "/cal/a/", "calendars": "/cal/a/,/cal/b/",
+	}))
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("deduplicated paths=%v err=%v", paths, err)
+	}
+
+	tooMany := make([]string, 0, maxExplicitSearchCalendars+1)
+	for i := 0; i <= maxExplicitSearchCalendars; i++ {
+		tooMany = append(tooMany, fmt.Sprintf("/cal/%d/", i))
+	}
+	_, err = resolveSearchCalendars(context.Background(), deps, newReq(map[string]any{
+		"calendars": strings.Join(tooMany, ","),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("explicit calendar cap error = %v", err)
+	}
+}
+
 func TestSearchEventsHandler_RangeTooLarge(t *testing.T) {
 	svc := &icloud.MockService{}
 	handler := searchEventsHandler(testDeps(svc))

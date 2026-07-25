@@ -3,12 +3,16 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   ci:
@@ -17,15 +21,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.25'
-          # Always pull the newest 1.25.x patch instead of a cached older one,
-          # so govulncheck sees standard-library fixes (e.g. a crypto/tls patch
-          # release) without a manual bump.
+          go-version: '1.25.5'
           check-latest: true
 
       - name: gofmt
@@ -36,6 +37,26 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+      - name: public text policy
+        shell: bash
+        run: |
+          status=0
+          non_ascii=$'[^\t -~]'
+          while IFS= read -r -d '' file; do
+            if LC_ALL=C grep -nH "$non_ascii" "$file"; then
+              echo "Non-ASCII content in public text: $file" >&2
+              status=1
+            fi
+          done < <(git ls-files -z -- '*.md' '*.yml' '*.yaml' '*.example' '*.txt' \
+            'Makefile' 'LICENSE*' 'NOTICE*' 'THIRD_PARTY*' 'go.mod' 'go.sum' \
+            '.gitignore' '.golangci.yml')
+
+          if git grep -nIE '^[[:space:]]*Co-Authored-By:'; then
+            echo "Forbidden attribution trailer found" >&2
+            status=1
+          fi
+          exit "$status"
 
       - name: go vet
         run: go vet ./...
@@ -48,6 +69,13 @@ jobs:
           "$(go env GOPATH)/bin/golangci-lint" version
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
 
+      - name: version injection smoke check
+        run: |
+          want=v0.3.0-ci
+          binary="${RUNNER_TEMP}/icloud-mcp-version-check"
+          go build -trimpath -ldflags="-s -w -X main.version=${want}" -o "$binary" ./cmd/icloud-mcp
+          test "$("$binary" -version)" = "$want"
+
       - name: go test (race + coverprofile)
         run: |
           go test ./... -race -coverprofile=coverage.out -covermode=atomic
@@ -55,17 +83,45 @@ jobs:
 
       - name: coverage threshold
         run: |
-          # Fails the build on a coverage regression. Threshold set a few
-          # points below the observed total so routine fluctuation does not
-          # flake the build, while still catching a real drop (e.g. a new
-          # 0%-covered function slipping in unnoticed).
           THRESHOLD=78
           PCT="$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')"
           echo "Total coverage: ${PCT}% (threshold: ${THRESHOLD}%)"
           awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN { if (p + 0 < t) { exit 1 } }'
 
+          check_package_coverage() {
+            package="$1"
+            threshold="$2"
+            prefix="$(go list -f '{{.ImportPath}}' "$package")/"
+            pct="$(awk -v prefix="$prefix" '
+              NR > 1 {
+                file = $1
+                sub(/:.*/, "", file)
+                if (index(file, prefix) != 1) next
+                rest = substr(file, length(prefix) + 1)
+                if (index(rest, "/") != 0) next
+                statements = $(NF - 1)
+                total += statements
+                if ($NF > 0) covered += statements
+              }
+              END {
+                if (total == 0) exit 2
+                printf "%.1f", 100 * covered / total
+              }
+            ' coverage.out)"
+            echo "$package coverage: ${pct}% (threshold: ${threshold}%)"
+            awk -v p="$pct" -v t="$threshold" 'BEGIN { if (p + 0 < t) exit 1 }'
+          }
+
+          check_package_coverage ./internal/contacts 65
+          check_package_coverage ./internal/mail 65
+          check_package_coverage ./internal/mail/imapadapter 60
+          check_package_coverage ./internal/mcptools 75
+          check_package_coverage ./internal/security 80
+          check_package_coverage ./internal/icloud 78
+          check_package_coverage ./internal/config 85
+
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: coverage
@@ -79,13 +135,16 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
 
-      - name: build (linux/amd64 + linux/arm64)
+      - name: build (linux/amd64 + linux/arm64 + darwin/arm64)
         run: |
-          for arch in amd64 arm64; do
-            echo "::group::build linux/$arch"
-            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
-              go build -trimpath -ldflags='-s -w' -o dist/icloud-mcp-linux-$arch ./cmd/icloud-mcp
-            file dist/icloud-mcp-linux-$arch
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "::group::build $target"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags='-s -w' -o "dist/icloud-mcp-$os-$arch" ./cmd/icloud-mcp
+            file "dist/icloud-mcp-$os-$arch"
             echo "::endgroup::"
           done
 
@@ -96,42 +155,672 @@ jobs:
 
       - name: fuzz smoke
         run: |
-          # Short deterministic smoke: each target runs a few seconds.
           set -e
-          for target in FuzzValidateCalendarPath FuzzValidateUID FuzzParseDateTime FuzzValidateRRULE FuzzExpandOccurrences FuzzIsICloudHostViaPath FuzzRedactLikeEventRoundTrip; do
-            echo "::group::fuzz $target"
-            go test ./internal/icloud/ -run=^$ -fuzz=$target -fuzztime=3s
-            echo "::endgroup::"
-          done
-          for target in FuzzRedactor FuzzRedactingWriter FuzzIsICloudHost; do
-            echo "::group::fuzz $target"
-            go test ./internal/security/ -run=^$ -fuzz=$target -fuzztime=3s
-            echo "::endgroup::"
-          done
+          # Every protocol parser package must keep at least one native target.
+          run_fuzz_targets() {
+            package="$1"
+            targets="$(go test "$package" -list '^Fuzz' | awk '/^Fuzz[[:alnum:]_]+$/ { print }')"
+            if [ -z "$targets" ]; then
+              echo "Required fuzz target missing in $package" >&2
+              return 1
+            fi
+            for target in $targets; do
+              echo "::group::fuzz $package $target"
+              go test "$package" -run=^$ -fuzz="^${target}$" -fuzztime=3s
+              echo "::endgroup::"
+            done
+          }
+          run_fuzz_targets ./internal/icloud/
+          run_fuzz_targets ./internal/security/
+          run_fuzz_targets ./internal/contacts/
+          run_fuzz_targets ./internal/mail/
+          run_fuzz_targets ./internal/mail/imapadapter/
 
       - name: security guardrails
         run: |
-          # No os/exec anywhere: the server must never execute commands.
-          if grep -rn "os/exec" --include='*.go' .; then
-            echo "os/exec is forbidden (zero command execution)"
+          # Runtime tests cover arbitrary host, scheme, port, redirect, IMAP,
+          # SMTP, and DAV domain isolation. AST tripwires independently enforce
+          # network literals and production side-effect policies.
+          go test ./internal/security/
+
+          checker="${RUNNER_TEMP}/network_literal_guard.go"
+          policy_checker="${RUNNER_TEMP}/production_policy_guard.go"
+          guard_fixture="${RUNNER_TEMP}/network-guard-fixture"
+          trap 'rm -rf "$checker" "$policy_checker" "$guard_fixture"' EXIT
+          cat >"$checker" <<'EOF'
+          package main
+
+          import (
+            "fmt"
+            "go/ast"
+            "go/parser"
+            "go/token"
+            "io/fs"
+            "net"
+            "net/url"
+            "os"
+            "path/filepath"
+            "regexp"
+            "strconv"
+            "strings"
+          )
+
+          var (
+            calendarShard = regexp.MustCompile(`^p[0-9]{1,3}-caldav[.]icloud[.]com$`)
+            contactsShard = regexp.MustCompile(`^p[0-9]{1,3}-contacts[.]icloud[.]com$`)
+            hostLiteral = regexp.MustCompile(`^(?:[A-Za-z0-9-]+[.])+[A-Za-z]{2,}(?::[0-9]+)?$`)
+            urlLiteral = regexp.MustCompile(`https?://[^[:space:]"'<>]+`)
+          )
+
+          func davHostAllowed(host string) bool {
+            return host == "caldav.icloud.com" || calendarShard.MatchString(host) ||
+              host == "contacts.icloud.com" || contactsShard.MatchString(host)
+          }
+
+          func standaloneHostAllowed(value string) bool {
+            host, port := value, ""
+            if strings.Contains(value, ":") {
+              var err error
+              host, port, err = net.SplitHostPort(value)
+              if err != nil {
+                return false
+              }
+            }
+            if davHostAllowed(host) {
+              return port == "" || port == "443"
+            }
+            switch host {
+            case "imap.mail.me.com":
+              return port == "" || port == "993"
+            case "smtp.mail.me.com":
+              return port == "" || port == "587"
+            default:
+              return false
+            }
+          }
+
+          func networkURLAllowed(value string) bool {
+            if value == "http://apple.com/ns/ical/" {
+              return true
+            }
+            parsed, err := url.Parse(value)
+            return err == nil && parsed.Scheme == "https" && davHostAllowed(parsed.Hostname()) &&
+              (parsed.Port() == "" || parsed.Port() == "443")
+          }
+
+          func networkName(name string) bool {
+            name = strings.ToLower(name)
+            for _, marker := range []string{"url", "host", "addr", "address", "endpoint", "servername"} {
+              if strings.Contains(name, marker) {
+                return true
+              }
+            }
+            return false
+          }
+
+          func staticString(expression ast.Expr, constants map[string]string) (string, bool) {
+            switch value := expression.(type) {
+            case *ast.BasicLit:
+              if value.Kind != token.STRING {
+                return "", false
+              }
+              decoded, err := strconv.Unquote(value.Value)
+              return decoded, err == nil
+            case *ast.BinaryExpr:
+              if value.Op != token.ADD {
+                return "", false
+              }
+              left, leftOK := staticString(value.X, constants)
+              right, rightOK := staticString(value.Y, constants)
+              return left + right, leftOK && rightOK
+            case *ast.ParenExpr:
+              return staticString(value.X, constants)
+            case *ast.Ident:
+              decoded, ok := constants[value.Name]
+              return decoded, ok
+            default:
+              return "", false
+            }
+          }
+
+          func fileConstants(source *ast.File) map[string]string {
+            constants := make(map[string]string)
+            for pass := 0; pass < len(source.Decls); pass++ {
+              changed := false
+              for _, declaration := range source.Decls {
+                group, ok := declaration.(*ast.GenDecl)
+                if !ok || group.Tok != token.CONST {
+                  continue
+                }
+                for _, item := range group.Specs {
+                  spec, ok := item.(*ast.ValueSpec)
+                  if !ok || len(spec.Names) != len(spec.Values) {
+                    continue
+                  }
+                  for index, name := range spec.Names {
+                    if _, exists := constants[name.Name]; exists {
+                      continue
+                    }
+                    if value, ok := staticString(spec.Values[index], constants); ok {
+                      constants[name.Name] = value
+                      changed = true
+                    }
+                  }
+                }
+              }
+              if !changed {
+                break
+              }
+            }
+            return constants
+          }
+
+          func importedPackages(source *ast.File) map[string]string {
+            packages := make(map[string]string)
+            for _, spec := range source.Imports {
+              imported, err := strconv.Unquote(spec.Path.Value)
+              if err != nil {
+                continue
+              }
+              name := filepath.Base(imported)
+              if spec.Name != nil {
+                name = spec.Name.Name
+              }
+              packages[name] = imported
+            }
+            return packages
+          }
+
+          func directNetworkCall(call *ast.CallExpr, constants, packages map[string]string) (string, bool) {
+            selector, ok := call.Fun.(*ast.SelectorExpr)
+            if !ok || len(call.Args) == 0 {
+              return "", false
+            }
+            if selector.Sel.Name == "Dial" || selector.Sel.Name == "DialContext" {
+              address, literal := staticString(call.Args[len(call.Args)-1], constants)
+              if !literal {
+                return "unresolved dynamic direct dial target", true
+              }
+              if literal && !standaloneHostAllowed(address) {
+                return fmt.Sprintf("unauthorized direct dial target %q", address), true
+              }
+              return "", false
+            }
+            packageName, packageCall := selector.X.(*ast.Ident)
+            if !packageCall || packages[packageName.Name] != "net/http" {
+              return "", false
+            }
+            switch selector.Sel.Name {
+            case "Get", "Head", "Post", "PostForm":
+              target, literal := staticString(call.Args[0], constants)
+              if !literal {
+                return "unresolved dynamic direct HTTP target", true
+              }
+              if literal && !networkURLAllowed(target) {
+                return fmt.Sprintf("unauthorized direct HTTP target %q", target), true
+              }
+            }
+            return "", false
+          }
+
+          func main() {
+            root := "."
+            if len(os.Args) == 2 {
+              root = os.Args[1]
+            }
+            files := token.NewFileSet()
+            violations := 0
+            err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+              if walkErr != nil {
+                return walkErr
+              }
+              if entry.IsDir() {
+                if entry.Name() == ".git" || entry.Name() == "vendor" {
+                  return filepath.SkipDir
+                }
+                return nil
+              }
+              if !strings.HasSuffix(path, ".go") {
+                return nil
+              }
+              source, parseErr := parser.ParseFile(files, path, nil, 0)
+              if parseErr != nil {
+                return parseErr
+              }
+              for _, spec := range source.Imports {
+                imported, unquoteErr := strconv.Unquote(spec.Path.Value)
+                if unquoteErr == nil && imported == "os/exec" {
+                  fmt.Printf("%s: os/exec is forbidden\n", files.Position(spec.Pos()))
+                  violations++
+                }
+              }
+              if strings.HasSuffix(path, "_test.go") {
+                return nil
+              }
+              constants := fileConstants(source)
+              packages := importedPackages(source)
+              networkLiterals := make(map[token.Pos]bool)
+              ast.Inspect(source, func(node ast.Node) bool {
+                spec, ok := node.(*ast.ValueSpec)
+                if !ok {
+                  return true
+                }
+                guarded := false
+                for _, name := range spec.Names {
+                  guarded = guarded || networkName(name.Name)
+                }
+                if !guarded {
+                  return true
+                }
+                for _, value := range spec.Values {
+                  ast.Inspect(value, func(child ast.Node) bool {
+                    if literal, ok := child.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+                      networkLiterals[literal.Pos()] = true
+                    }
+                    return true
+                  })
+                }
+                return true
+              })
+              ast.Inspect(source, func(node ast.Node) bool {
+                if call, ok := node.(*ast.CallExpr); ok {
+                  if message, violation := directNetworkCall(call, constants, packages); violation {
+                    fmt.Printf("%s: %s\n", files.Position(call.Pos()), message)
+                    violations++
+                  }
+                }
+                if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "InsecureSkipVerify" {
+                  fmt.Printf("%s: InsecureSkipVerify is forbidden outside tests\n", files.Position(selector.Pos()))
+                  violations++
+                }
+                literal, ok := node.(*ast.BasicLit)
+                if !ok || literal.Kind != token.STRING {
+                  return true
+                }
+                value, unquoteErr := strconv.Unquote(literal.Value)
+                if unquoteErr != nil {
+                  return true
+                }
+                matches := urlLiteral.FindAllString(value, -1)
+                if len(matches) == 0 && (strings.Contains(value, "https://") || strings.Contains(value, "http://")) {
+                  canonicalBuilder := filepath.ToSlash(path) == "internal/contacts/client.go" && value == "https://"
+                  if !canonicalBuilder {
+                    fmt.Printf("%s: incomplete network URL literal is not allowed\n", files.Position(literal.Pos()))
+                    violations++
+                  }
+                }
+                for _, match := range matches {
+                  if !networkURLAllowed(match) {
+                    fmt.Printf("%s: unauthorized network URL literal %q\n", files.Position(literal.Pos()), match)
+                    violations++
+                  }
+                }
+                if networkLiterals[literal.Pos()] && hostLiteral.MatchString(value) && !standaloneHostAllowed(value) {
+                  fmt.Printf("%s: unauthorized network host literal %q\n", files.Position(literal.Pos()), value)
+                  violations++
+                }
+                return true
+              })
+              return nil
+            })
+            if err != nil {
+              fmt.Fprintln(os.Stderr, err)
+              os.Exit(1)
+            }
+            if violations != 0 {
+              os.Exit(1)
+            }
+          }
+          EOF
+          go run "$checker" .
+
+          mkdir -p "$guard_fixture"
+          cat >"$guard_fixture/dynamic.go" <<'EOF'
+          package fixture
+
+          import (
+            "net"
+            "net/http"
+          )
+
+          func unresolved(address, target string) {
+            _, _ = net.Dial("tcp", address)
+            _, _ = http.Get(target)
+          }
+          EOF
+          if go run "$checker" "$guard_fixture"; then
+            echo "network guard accepted unresolved direct destinations" >&2
             exit 1
           fi
-          # Only allowed network URL: caldav.icloud.com (shards are derived from it);
-          # apple.com/ns/ical is an XML namespace (never dereferenced).
-          leaks="$(grep -rniE '"https?://' --include='*.go' . \
-            | grep -v _test.go \
-            | grep -v 'caldav.icloud.com' \
-            | grep -v 'apple.com/ns/ical' || true)"
-          if [ -n "$leaks" ]; then
-            echo "Unauthorized URL detected outside the allowlist:"
-            echo "$leaks"
-            exit 1
-          fi
-          # No InsecureSkipVerify in production code.
-          if grep -rn "InsecureSkipVerify" --include='*.go' . | grep -v _test.go; then
-            echo "InsecureSkipVerify is forbidden outside tests"
-            exit 1
-          fi
+
+          cat >"$policy_checker" <<'EOF'
+          package main
+
+          import (
+            "fmt"
+            "go/ast"
+            "go/parser"
+            "go/token"
+            "io/fs"
+            "os"
+            "path/filepath"
+            "strconv"
+            "strings"
+          )
+
+          const (
+            securityPackage = "github.com/ThomasCrouzet/icloud-mcp/internal/security"
+            webdavPackage = "github.com/emersion/go-webdav"
+            imapPackage = "github.com/emersion/go-imap/v2"
+            imapClientPackage = "github.com/emersion/go-imap/v2/imapclient"
+          )
+
+          var filesystemCalls = map[string]map[string]bool{
+            "os": {
+              "Chdir": true, "Chmod": true, "Chown": true, "Chtimes": true,
+              "Create": true, "CreateTemp": true, "DirFS": true, "Lchown": true,
+              "Link": true, "Lstat": true, "Mkdir": true, "MkdirAll": true,
+              "MkdirTemp": true, "Open": true, "OpenFile": true, "OpenInRoot": true,
+              "OpenRoot": true, "ReadDir": true, "ReadFile": true, "Readlink": true,
+              "Remove": true, "RemoveAll": true, "Rename": true, "Stat": true,
+              "Symlink": true, "Truncate": true, "WriteFile": true,
+            },
+            "io/ioutil": {
+              "ReadDir": true, "ReadFile": true, "TempDir": true,
+              "TempFile": true, "WriteFile": true,
+            },
+            "path/filepath": {
+              "EvalSymlinks": true, "Glob": true, "Walk": true, "WalkDir": true,
+            },
+            "syscall": {
+              "Chdir": true, "Chmod": true, "Chown": true, "Creat": true,
+              "Link": true, "Mkdir": true, "Open": true, "Readlink": true,
+              "Rename": true, "Rmdir": true, "Stat": true, "Symlink": true,
+              "Truncate": true, "Unlink": true,
+            },
+            "golang.org/x/sys/unix": {
+              "Chdir": true, "Chmod": true, "Chown": true, "Creat": true,
+              "Link": true, "Mkdir": true, "Open": true, "Openat": true,
+              "Readlink": true, "Rename": true, "Renameat": true, "Rmdir": true,
+              "Stat": true, "Symlink": true, "Truncate": true, "Unlink": true,
+              "Unlinkat": true,
+            },
+          }
+
+          func importedPackages(source *ast.File) map[string]string {
+            packages := make(map[string]string)
+            for _, spec := range source.Imports {
+              imported, err := strconv.Unquote(spec.Path.Value)
+              if err != nil {
+                continue
+              }
+              name := filepath.Base(imported)
+              if spec.Name != nil {
+                name = spec.Name.Name
+              } else {
+                switch imported {
+                case webdavPackage:
+                  name = "webdav"
+                case imapPackage:
+                  name = "imap"
+                }
+              }
+              packages[name] = imported
+            }
+            return packages
+          }
+
+          func selectedPackage(expression ast.Expr, packages map[string]string) (string, string, bool) {
+            selector, ok := expression.(*ast.SelectorExpr)
+            if !ok {
+              return "", "", false
+            }
+            packageName, ok := selector.X.(*ast.Ident)
+            if !ok {
+              return "", "", false
+            }
+            imported, ok := packages[packageName.Name]
+            return imported, selector.Sel.Name, ok
+          }
+
+          func isNil(expression ast.Expr) bool {
+            identifier, ok := expression.(*ast.Ident)
+            return ok && identifier.Name == "nil"
+          }
+
+          func filesystemViolation(path, function string, call *ast.CallExpr, packages map[string]string) string {
+            imported, name, ok := selectedPackage(call.Fun, packages)
+            if !ok || !filesystemCalls[imported][name] {
+              return ""
+            }
+            if filepath.ToSlash(path) == "internal/config/config.go" && function == "readCredentialFile" && imported == "os" {
+              if name == "Stat" || name == "OpenFile" {
+                return ""
+              }
+            }
+            return fmt.Sprintf("production filesystem access %s.%s is forbidden", imported, name)
+          }
+
+          func constructorDomain(expression ast.Expr, known map[string]string, packages map[string]string) string {
+            if identifier, ok := expression.(*ast.Ident); ok {
+              return known[identifier.Name]
+            }
+            call, ok := expression.(*ast.CallExpr)
+            if !ok {
+              return ""
+            }
+            imported, name, ok := selectedPackage(call.Fun, packages)
+            if !ok || imported != securityPackage {
+              return ""
+            }
+            switch name {
+            case "NewICloudHTTPClient":
+              return "calendar"
+            case "NewContactsHTTPClient":
+              return "contacts"
+            default:
+              return ""
+            }
+          }
+
+          func isScalarUIDSet(expression ast.Expr, packages map[string]string) bool {
+            uidSet, ok := expression.(*ast.CallExpr)
+            if !ok || len(uidSet.Args) != 1 {
+              return false
+            }
+            imported, name, ok := selectedPackage(uidSet.Fun, packages)
+            if !ok || imported != imapPackage || name != "UIDSetNum" {
+              return false
+            }
+            uid, ok := uidSet.Args[0].(*ast.CallExpr)
+            if !ok || len(uid.Args) != 1 {
+              return false
+            }
+            imported, name, ok = selectedPackage(uid.Fun, packages)
+            return ok && imported == imapPackage && name == "UID"
+          }
+
+          func fieldName(expression ast.Expr) string {
+            switch field := expression.(type) {
+            case *ast.Ident:
+              return field.Name
+            case *ast.SelectorExpr:
+              return field.Sel.Name
+            default:
+              return ""
+            }
+          }
+
+          func inspectFunction(path string, declaration *ast.FuncDecl, packages map[string]string, files *token.FileSet) int {
+            if declaration.Body == nil {
+              return 0
+            }
+            violations := 0
+            clients := make(map[string]string)
+            report := func(position token.Pos, message string) {
+              fmt.Printf("%s: %s\n", files.Position(position), message)
+              violations++
+            }
+            ast.Inspect(declaration.Body, func(node ast.Node) bool {
+              switch value := node.(type) {
+              case *ast.AssignStmt:
+                for index, left := range value.Lhs {
+                  if index >= len(value.Rhs) {
+                    continue
+                  }
+                  if identifier, ok := left.(*ast.Ident); ok {
+                    if domain := constructorDomain(value.Rhs[index], clients, packages); domain != "" {
+                      clients[identifier.Name] = domain
+                    }
+                  }
+                  selector, ok := left.(*ast.SelectorExpr)
+                  if !ok || isNil(value.Rhs[index]) {
+                    continue
+                  }
+                  switch selector.Sel.Name {
+                  case "Proxy":
+                    report(left.Pos(), "non-nil HTTP proxy configuration is forbidden")
+                  case "DebugWriter":
+                    report(left.Pos(), "protocol debug writers are forbidden")
+                  }
+                }
+              case *ast.DeclStmt:
+                general, ok := value.Decl.(*ast.GenDecl)
+                if !ok {
+                  break
+                }
+                for _, item := range general.Specs {
+                  spec, ok := item.(*ast.ValueSpec)
+                  if !ok {
+                    continue
+                  }
+                  for index, name := range spec.Names {
+                    if index < len(spec.Values) {
+                      if domain := constructorDomain(spec.Values[index], clients, packages); domain != "" {
+                        clients[name.Name] = domain
+                      }
+                    }
+                  }
+                }
+              case *ast.CompositeLit:
+                imported, typeName, protocolOptions := selectedPackage(value.Type, packages)
+                if protocolOptions && imported == imapClientPackage && typeName == "Options" {
+                  for _, element := range value.Elts {
+                    if _, keyed := element.(*ast.KeyValueExpr); !keyed {
+                      report(element.Pos(), "unkeyed IMAP options could configure a protocol debug writer")
+                    }
+                  }
+                }
+                for _, element := range value.Elts {
+                  field, ok := element.(*ast.KeyValueExpr)
+                  if !ok || isNil(field.Value) {
+                    continue
+                  }
+                  switch fieldName(field.Key) {
+                  case "Proxy":
+                    report(field.Pos(), "non-nil HTTP proxy configuration is forbidden")
+                  case "DebugWriter":
+                    report(field.Pos(), "protocol debug writers are forbidden")
+                  }
+                }
+              case *ast.SelectorExpr:
+                imported, name, packageSelector := selectedPackage(value, packages)
+                if packageSelector && imported == "net/http" && (name == "ProxyFromEnvironment" || name == "ProxyURL") {
+                  report(value.Pos(), "HTTP proxy helpers are forbidden")
+                }
+              case *ast.CallExpr:
+                if message := filesystemViolation(path, declaration.Name.Name, value, packages); message != "" {
+                  report(value.Pos(), message)
+                }
+                imported, name, packageCall := selectedPackage(value.Fun, packages)
+                if packageCall && imported == webdavPackage && name == "HTTPClientWithBasicAuth" {
+                  if len(value.Args) == 0 || constructorDomain(value.Args[0], clients, packages) == "" {
+                    report(value.Pos(), "authenticated HTTP clients must originate from one domain-specific constructor")
+                  }
+                }
+                if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "SetBasicAuth" {
+                  report(value.Pos(), "direct HTTP authentication bypasses domain-specific client isolation")
+                }
+                slashPath := filepath.ToSlash(path)
+                if slashPath == "internal/security/allowlist.go" {
+                  if identifier, ok := value.Fun.(*ast.Ident); ok && identifier.Name == "newDAVTransport" {
+                    allowed := false
+                    if len(value.Args) == 1 {
+                      predicate, isIdentifier := value.Args[0].(*ast.Ident)
+                      allowed = isIdentifier && (predicate.Name == "IsICloudHost" || predicate.Name == "IsContactsHost")
+                    }
+                    if !allowed {
+                      report(value.Pos(), "DAV transports must use one domain-specific host predicate")
+                    }
+                  }
+                }
+                if strings.HasPrefix(slashPath, "internal/mail/") {
+                  if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Expunge" {
+                    report(value.Pos(), "plain or mailbox-wide IMAP EXPUNGE is forbidden")
+                  }
+                }
+                if strings.HasPrefix(slashPath, "internal/mail/imapadapter/") {
+                  if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "UIDExpunge" {
+                    if len(value.Args) != 1 || !isScalarUIDSet(value.Args[0], packages) {
+                      report(value.Pos(), "UID EXPUNGE must use one scalar UID set")
+                    }
+                  }
+                }
+              }
+              return true
+            })
+            return violations
+          }
+
+          func main() {
+            root := "."
+            if len(os.Args) == 2 {
+              root = os.Args[1]
+            }
+            files := token.NewFileSet()
+            violations := 0
+            err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+              if walkErr != nil {
+                return walkErr
+              }
+              if entry.IsDir() {
+                if entry.Name() == ".git" || entry.Name() == "vendor" {
+                  return filepath.SkipDir
+                }
+                return nil
+              }
+              if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+                return nil
+              }
+              source, parseErr := parser.ParseFile(files, path, nil, 0)
+              if parseErr != nil {
+                return parseErr
+              }
+              packages := importedPackages(source)
+              for _, declaration := range source.Decls {
+                switch item := declaration.(type) {
+                case *ast.FuncDecl:
+                  violations += inspectFunction(path, item, packages, files)
+                case *ast.GenDecl:
+                  initializer := &ast.FuncDecl{
+                    Name: ast.NewIdent("package_initializer"),
+                    Body: &ast.BlockStmt{List: []ast.Stmt{&ast.DeclStmt{Decl: item}}},
+                  }
+                  violations += inspectFunction(path, initializer, packages, files)
+                }
+              }
+              return nil
+            })
+            if err != nil {
+              fmt.Fprintln(os.Stderr, err)
+              os.Exit(1)
+            }
+            if violations != 0 {
+              os.Exit(1)
+            }
+          }
+          EOF
+          go run "$policy_checker" .
 
       - name: binary size budget (linux/arm64)
         run: |
@@ -149,14 +838,33 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: gitleaks
         run: |
           # Official gitleaks binary: no license required (private or public
-          # repo), unlike gitleaks-action@v2. Scans the working tree and
-          # honors inline "gitleaks:allow" annotations.
+          # repo), unlike gitleaks-action@v2. Scan both Git history and the
+          # checked-out worktree, honoring inline "gitleaks:allow" annotations.
           VERSION=8.30.1
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-            | tar -xz gitleaks
-          ./gitleaks dir . --redact --verbose
+          EXPECTED_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+
+          # These exact fingerprints are old test sentinels committed before
+          # their lines gained gitleaks:allow annotations. Keep the exception
+          # commit-, path-, rule-, and line-specific so every new finding fails.
+          ignore="${RUNNER_TEMP}/.gitleaksignore"
+          cat >"$ignore" <<'EOF'
+          253a3b79789474cb957af5ca820bb5f5dbc46c0c:internal/security/redact_test.go:generic-api-key:22
+          7c910002127d74ea3b39fdd1eca571d14a9c65c0:internal/security/redact_test.go:generic-api-key:67
+          7c910002127d74ea3b39fdd1eca571d14a9c65c0:internal/security/redact_test.go:generic-api-key:86
+          7c910002127d74ea3b39fdd1eca571d14a9c65c0:internal/mcptools/redaction_test.go:generic-api-key:166
+          7c910002127d74ea3b39fdd1eca571d14a9c65c0:internal/mcptools/redaction_test.go:generic-api-key:198
+          7c910002127d74ea3b39fdd1eca571d14a9c65c0:internal/mcptools/redaction_test.go:generic-api-key:350
+          EOF
+          "${RUNNER_TEMP}/gitleaks" git --log-opts="--all" --gitleaks-ignore-path "$ignore" --redact --verbose
+          "${RUNNER_TEMP}/gitleaks" dir . --gitleaks-ignore-path "$ignore" --redact --verbose

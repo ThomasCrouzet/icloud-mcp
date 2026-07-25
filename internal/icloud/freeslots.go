@@ -42,8 +42,12 @@ type FreeSlotOptions struct {
 }
 
 // BusyFromEvents converts events into busy intervals, ignoring TRANSPARENT
-// and CANCELLED events. Event titles and notes are never retained.
-func BusyFromEvents(events []Event, includeAllDay bool, bufferBefore, bufferAfter time.Duration) []Interval {
+// and CANCELLED events. DATE-valued all-day events are rebuilt as civil dates
+// in loc before buffers are applied. Event titles and notes are never retained.
+func BusyFromEvents(events []Event, includeAllDay bool, bufferBefore, bufferAfter time.Duration, loc *time.Location) []Interval {
+	if loc == nil {
+		loc = time.UTC
+	}
 	out := make([]Interval, 0, len(events))
 	for _, e := range events {
 		if isTransparentOrCancelled(e) {
@@ -52,8 +56,14 @@ func BusyFromEvents(events []Event, includeAllDay bool, bufferBefore, bufferAfte
 		if e.AllDay && !includeAllDay {
 			continue
 		}
-		start := e.StartTime.Add(-bufferBefore)
-		end := e.EndTime.Add(bufferAfter)
+		start := e.StartTime
+		end := e.EndTime
+		if e.AllDay {
+			start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
+			end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
+		}
+		start = start.Add(-bufferBefore)
+		end = end.Add(bufferAfter)
 		if !end.After(start) {
 			continue
 		}

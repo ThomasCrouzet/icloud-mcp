@@ -18,9 +18,16 @@ import (
 // blindly).
 const ICloudBaseURL = "https://caldav.icloud.com"
 
+// ContactsBaseURL is the fixed CardDAV discovery entry point. Contacts uses a
+// separate client and host predicate so Calendar credentials cannot cross into
+// the Contacts transport, or vice versa.
+const ContactsBaseURL = "https://contacts.icloud.com"
+
 // shardHostRe matches the shards returned by iCloud discovery
 // (e.g. p46-caldav.icloud.com, p123-caldav.icloud.com).
 var shardHostRe = regexp.MustCompile(`^p\d{1,3}-caldav\.icloud\.com$`)
+
+var contactsShardHostRe = regexp.MustCompile(`^p\d{1,3}-contacts\.icloud\.com$`)
 
 // IsICloudHost allows caldav.icloud.com and pXX-caldav.icloud.com, nothing
 // else. The comparison is case-sensitive: url.URL.Hostname() returns the
@@ -28,6 +35,12 @@ var shardHostRe = regexp.MustCompile(`^p\d{1,3}-caldav\.icloud\.com$`)
 // variant is deliberately rejected rather than treated as equivalent.
 func IsICloudHost(host string) bool {
 	return host == "caldav.icloud.com" || shardHostRe.MatchString(host)
+}
+
+// IsContactsHost allows contacts.icloud.com and its one-to-three-digit iCloud
+// Contacts shards, nothing else. Host matching is deliberately case-sensitive.
+func IsContactsHost(host string) bool {
+	return host == "contacts.icloud.com" || contactsShardHostRe.MatchString(host)
 }
 
 // PortAllowed accepts an empty port (implicit 443) or an explicit "443".
@@ -79,9 +92,33 @@ func (t *AllowlistTransport) RoundTrip(req *http.Request) (*http.Response, error
 // NewICloudHTTPClient returns the production HTTP client: IsICloudHost
 // allowlist, verified TLS (default config, MinVersion TLS1.2, TLS
 // verification always required), bounded timeout, reasonable connection
-// pool. An additional CheckRedirect revalidates the host on every redirect
-// hop (defense in depth, redundant with the RoundTripper but at no cost).
+// pool. Automatic redirects are disabled so the Calendar DAV implementation
+// can preserve methods and conditional headers while validating every hop.
 func NewICloudHTTPClient(timeout time.Duration) *http.Client {
+	transport := newDAVTransport(IsICloudHost)
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// NewContactsHTTPClient returns a Contacts-only HTTP client with a transport
+// independent from every Calendar client. Automatic redirects are disabled so
+// the CardDAV implementation can preserve methods and revalidate each hop.
+func NewContactsHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: newDAVTransport(IsContactsHost),
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func newDAVTransport(allowed func(string) bool) *AllowlistTransport {
 	inner := &http.Transport{
 		// Explicit nil: never honor HTTP(S)_PROXY. The allowlist is the only
 		// egress path; an env proxy would surprise operators and widen the
@@ -92,15 +129,5 @@ func NewICloudHTTPClient(timeout time.Duration) *http.Client {
 		IdleConnTimeout: 30 * time.Second,
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	transport := NewAllowlistTransport(inner, IsICloudHost)
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			if req.URL.Scheme != "https" || !IsICloudHost(req.URL.Hostname()) || !PortAllowed(req.URL.Port()) {
-				return fmt.Errorf("network allowlist: redirect to %q rejected", req.URL.Host)
-			}
-			return nil
-		},
-	}
+	return NewAllowlistTransport(inner, allowed)
 }

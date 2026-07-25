@@ -32,12 +32,9 @@ func calendarCapabilitiesHandler(deps Deps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		_ = ctx
 		_ = req
-		tools := []string{
-			"list_calendars", "search_events", "get_event",
-			"find_free_slots", "validate_event", "calendar_capabilities",
-		}
+		tools := calendarReadToolNames()
 		if !deps.ReadOnly {
-			tools = append(tools, "create_event", "update_event", "delete_event")
+			tools = append(tools, calendarWriteToolNames()...)
 		}
 		ver := deps.Version
 		if ver == "" {

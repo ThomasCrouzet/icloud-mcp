@@ -59,6 +59,11 @@ type Event struct {
 	// exDates lists the excluded dates (EXDATE) of a recurring master.
 	// Internal field, never serialized.
 	exDates []time.Time
+	// A VEVENT DURATION with days or weeks is nominal calendar time under RFC
+	// 5545, not a fixed multiple of 24 elapsed hours across DST transitions.
+	hasNominalDuration       bool
+	nominalDurationDays      int
+	nominalDurationRemainder time.Duration
 }
 
 // EventDetail is a full read of a single event object (get_event), including
@@ -73,6 +78,10 @@ type EventDetail struct {
 	// Overrides lists RECURRENCE-ID exceptions (recurrenceId + times) so
 	// agents can target scope=occurrence without guessing.
 	Overrides []OccurrenceRef `json:"overrides,omitempty"`
+	// OverridesTruncated is true when the MCP result byte budget omitted one
+	// or more override summaries. OverrideCount remains the full remote count.
+	OverridesTruncated bool     `json:"overridesTruncated,omitempty"`
+	Warnings           []string `json:"warnings,omitempty"`
 }
 
 // OccurrenceRef is a compact RECURRENCE-ID override summary for get_event.

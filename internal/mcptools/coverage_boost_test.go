@@ -117,13 +117,13 @@ func TestUpdateEventHandler_WithEtagAndStatus(t *testing.T) {
 	h := updateEventHandler(testDeps(svc))
 	res, err := h(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{Arguments: map[string]any{
-			"uid": "u1", "calendar": "/cal/home/", "status": "CANCELLED", "etag": "abc",
+			"uid": "u1", "calendar": "/cal/home/", "status": "CANCELLED", "etag": `"abc"`,
 		}},
 	})
 	if err != nil || res.IsError {
 		t.Fatalf("%v %+v", err, res)
 	}
-	if svc.LastUpdate == nil || svc.LastUpdate.IfMatchETag != "abc" {
+	if svc.LastUpdate == nil || svc.LastUpdate.IfMatchETag != `"abc"` {
 		t.Fatalf("%+v", svc.LastUpdate)
 	}
 }

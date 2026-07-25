@@ -57,7 +57,7 @@ func TestFindFreeSlots_IgnoresTransparentAndCancelled(t *testing.T) {
 		{StartTime: day.Add(time.Hour), EndTime: day.Add(2 * time.Hour), Transp: "TRANSPARENT", Title: "free"},
 		{StartTime: day.Add(2 * time.Hour), EndTime: day.Add(3 * time.Hour), Status: "CANCELLED", Title: "gone"},
 	}
-	busy := BusyFromEvents(events, true, 0, 0)
+	busy := BusyFromEvents(events, true, 0, 0, time.UTC)
 	if len(busy) != 1 {
 		t.Fatalf("busy count = %d, want 1 (only opaque non-cancelled)", len(busy))
 	}
@@ -233,11 +233,32 @@ func TestFindFreeSlots_GenerativeNoBusyOverlap(t *testing.T) {
 func TestBusyFromEvents_AllDayOptional(t *testing.T) {
 	day := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	events := []Event{{StartTime: day, EndTime: day.Add(24 * time.Hour), AllDay: true, Title: "holiday"}}
-	if n := len(BusyFromEvents(events, false, 0, 0)); n != 0 {
+	if n := len(BusyFromEvents(events, false, 0, 0, time.UTC)); n != 0 {
 		t.Errorf("all-day excluded: got %d", n)
 	}
-	if n := len(BusyFromEvents(events, true, 0, 0)); n != 1 {
+	if n := len(BusyFromEvents(events, true, 0, 0, time.UTC)); n != 1 {
 		t.Errorf("all-day included: got %d", n)
+	}
+}
+
+func TestBusyFromEvents_AllDayUsesRequestedCivilTimezone(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := Event{
+		AllDay:    true,
+		StartTime: time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC),
+	}
+	busy := BusyFromEvents([]Event{event}, true, 0, 0, paris)
+	if len(busy) != 1 {
+		t.Fatalf("busy intervals = %v", busy)
+	}
+	wantStart := time.Date(2026, 7, 10, 0, 0, 0, 0, paris)
+	wantEnd := time.Date(2026, 7, 11, 0, 0, 0, 0, paris)
+	if !busy[0].Start.Equal(wantStart) || !busy[0].End.Equal(wantEnd) {
+		t.Fatalf("busy = [%v,%v), want [%v,%v)", busy[0].Start, busy[0].End, wantStart, wantEnd)
 	}
 }
 

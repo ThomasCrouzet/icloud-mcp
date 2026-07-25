@@ -155,12 +155,23 @@ func TestValidateLoopbackAddr(t *testing.T) {
 		{":8797", true},
 		{"", true},
 		{"192.168.1.1:8797", true},
+		{"loopback.example:8797", true},
 	}
 	for _, tt := range tests {
 		err := validateLoopbackAddr(tt.addr)
 		if (err != nil) != tt.wantErr {
 			t.Errorf("validateLoopbackAddr(%q) err=%v, wantErr=%v", tt.addr, err, tt.wantErr)
 		}
+	}
+}
+
+func TestCanonicalLoopbackAddrAvoidsHostnameResolution(t *testing.T) {
+	got, err := canonicalLoopbackAddr("localhost:8797")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "127.0.0.1:8797" {
+		t.Fatalf("canonical address = %q", got)
 	}
 }
 

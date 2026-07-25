@@ -1,6 +1,7 @@
 package icloud
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -17,6 +18,7 @@ const (
 	MaxNotesLen    = 4000
 	MaxQueryLen    = 200
 	MaxUIDLen      = 255
+	MaxURLLen      = 2000
 	MaxRangeDays   = 366 // bounds the search_events window (and thus expansion)
 	MaxResults     = 400 // hard limit from the spec
 )
@@ -33,7 +35,7 @@ func ValidateCalendarPath(path string) error {
 		return fmt.Errorf("calendar path cannot be empty")
 	}
 	if len(path) > 1024 {
-		return fmt.Errorf("calendar path is too long (max 1024 characters)")
+		return fmt.Errorf("calendar path is too long (max 1024 UTF-8 bytes)")
 	}
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("calendar path must start with '/'")
@@ -78,7 +80,7 @@ func ValidateUID(uid string) error {
 		return fmt.Errorf("UID cannot be empty")
 	}
 	if len(uid) > MaxUIDLen {
-		return fmt.Errorf("UID is too long (max %d characters)", MaxUIDLen)
+		return fmt.Errorf("UID is too long (max %d UTF-8 bytes)", MaxUIDLen)
 	}
 	if strings.Contains(uid, "..") {
 		return fmt.Errorf("UID contains a directory traversal sequence ('..')")
@@ -96,26 +98,19 @@ func ValidateUID(uid string) error {
 	return nil
 }
 
-// ValidateIfMatchETag rejects client-supplied concurrency tokens that would
-// disable optimistic locking. Empty is allowed (callers fail closed later).
-// "*" would become If-Match: * (any representation), last-writer-wins.
+// ValidateIfMatchETag requires one strong RFC entity-tag in its exact quoted
+// wire form. Empty is allowed because callers can use the tag read from GET.
 func ValidateIfMatchETag(etag string) error {
 	if etag == "" {
 		return nil
 	}
-	if etag == "*" {
-		return NewValidationError(`etag "*" is not allowed; pass the opaque etag from get_event or search_events`)
-	}
-	if strings.ContainsAny(etag, "\x00\r\n") {
-		return NewValidationError("etag contains invalid characters")
-	}
-	if len(etag) > 512 {
-		return NewValidationError("etag is too long")
+	if _, err := parseStrongETag(etag); err != nil {
+		return NewValidationError("etag must be exactly one valid strong quoted entity-tag from get_event or search_events")
 	}
 	return nil
 }
 
-// ValidateTextField checks the length of a free-text field
+// ValidateTextField checks the UTF-8 byte length of a free-text field
 // (title/location/notes/query) and rejects NUL characters. Newlines are
 // tolerated (notes may span multiple lines); go-ical properly escapes \n,
 // ;, , and \ during TEXT encoding (SetText), so no iCalendar property
@@ -123,7 +118,7 @@ func ValidateIfMatchETag(etag string) error {
 // needed here.
 func ValidateTextField(name, value string, max int) error {
 	if len(value) > max {
-		return fmt.Errorf("%s too long (max %d characters, got %d)", name, max, len(value))
+		return fmt.Errorf("%s too long (max %d UTF-8 bytes, got %d)", name, max, len(value))
 	}
 	if strings.ContainsRune(value, '\x00') {
 		return fmt.Errorf("%s contains a forbidden character (NUL)", name)
@@ -171,9 +166,9 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 		return t, nil
 	}
 	return time.Time{}, fmt.Errorf(
-		"invalid %s (%q): expected RFC3339 with an explicit offset (e.g. 2026-07-01T14:00:00+02:00, or ...Z for UTC) "+
+		"invalid %s: expected RFC3339 with an explicit offset (e.g. 2026-07-01T14:00:00+02:00, or ...Z for UTC) "+
 			"or a local time with no offset (e.g. 2026-07-01T14:00:00), interpreted as %s",
-		name, value, loc,
+		name, loc,
 	)
 }
 
@@ -220,13 +215,30 @@ func ValidateRRULE(rule string) error {
 		return fmt.Errorf("RRULE cannot be empty")
 	}
 	if len(rule) > 1024 {
-		return fmt.Errorf("RRULE is too long (max 1024 characters)")
+		return fmt.Errorf("RRULE is too long (max 1024 UTF-8 bytes)")
 	}
 	if strings.HasPrefix(strings.ToUpper(rule), "RRULE:") {
 		return fmt.Errorf("RRULE must not include the RRULE: prefix; pass only the value (e.g. FREQ=WEEKLY;COUNT=10)")
 	}
-	ropt, err := rrule.StrToROption(rule)
+	ropt, err := rrule.StrToROption(strings.ToUpper(rule))
 	if err != nil {
+		return fmt.Errorf("invalid RRULE: %w", err)
+	}
+	if !normalizeRecurrenceSelectorLists(ropt) {
+		return fmt.Errorf("RRULE has excessive selector cardinality")
+	}
+	if len(ropt.Byeaster) != 0 {
+		return fmt.Errorf("RRULE BYEASTER is not supported")
+	}
+	for i := range ropt.Byweekday {
+		if ropt.Byweekday[i].N() != 0 && ropt.Freq != rrule.YEARLY && ropt.Freq != rrule.MONTHLY {
+			return fmt.Errorf("RRULE ordinal BYDAY is supported only for MONTHLY or YEARLY frequency")
+		}
+	}
+	if ropt.Freq >= rrule.HOURLY && hasRecurrenceDateSelectors(ropt) {
+		return fmt.Errorf("RRULE calendar selectors are not supported with sub-daily frequency")
+	}
+	if _, err := rrule.NewRRule(*ropt); err != nil {
 		return fmt.Errorf("invalid RRULE: %w", err)
 	}
 	freq := strings.ToUpper(ropt.Freq.String())
@@ -240,6 +252,38 @@ func ValidateRRULE(rule string) error {
 		if !hasBound {
 			return fmt.Errorf("RRULE with FREQ=HOURLY requires COUNT or UNTIL")
 		}
+	}
+	return nil
+}
+
+func validateRRULEForStart(rule string, start time.Time) error {
+	return validateRRULEForStartContext(context.Background(), rule, start)
+}
+
+func validateRRULEForStartContext(ctx context.Context, rule string, start time.Time) error {
+	if err := ValidateRRULE(rule); err != nil {
+		return err
+	}
+	opt, err := rrule.StrToROption(strings.ToUpper(strings.TrimSpace(rule)))
+	if err != nil {
+		return fmt.Errorf("invalid RRULE: %w", err)
+	}
+	if !normalizeRecurrenceSelectorLists(opt) {
+		return fmt.Errorf("RRULE has excessive selector cardinality")
+	}
+	opt.Dtstart = start
+	seriesRemaining := maxRecurrenceExpansionWork
+	aggregateRemaining := maxRecurrenceSearchWork
+	safety, _, _ := checkRecurrenceSelectorSafety(ctx, opt, &seriesRemaining, &aggregateRemaining)
+	switch safety {
+	case recurrenceSelectorsCanceled:
+		return fmt.Errorf("RRULE selector validation was canceled")
+	case recurrenceSelectorsUnsupported:
+		return fmt.Errorf("RRULE uses an unsupported unsafe selector combination")
+	case recurrenceSelectorsUnreachable:
+		return fmt.Errorf("RRULE has selectors that INTERVAL can never reach from DTSTART")
+	case recurrenceSelectorsExcessive:
+		return fmt.Errorf("RRULE requires excessive internal selector work")
 	}
 	return nil
 }

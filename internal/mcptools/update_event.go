@@ -17,17 +17,17 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
-		mcp.WithString("uid", mcp.Required(), mcp.Description("Event UID (see search_events)")),
-		mcp.WithString("calendar", mcp.Required(), mcp.Description("Path of the calendar containing the event")),
-		mcp.WithString("title", mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("New title. Omitted = unchanged; empty = cleared.")),
-		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("New location. Omitted = unchanged; empty = cleared.")),
-		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("New notes. Omitted = unchanged; empty = cleared.")),
+		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID (see search_events); runtime limit 255 UTF-8 bytes")),
+		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Path of the calendar containing the event; runtime limit 1024 UTF-8 bytes")),
+		mcp.WithString("title", mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("New title. Omitted = unchanged; empty = cleared. Runtime limit 500 UTF-8 bytes.")),
+		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("New location. Omitted = unchanged; empty = cleared. Runtime limit 1000 UTF-8 bytes.")),
+		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("New notes. Omitted = unchanged; empty = cleared. Runtime limit 4000 UTF-8 bytes.")),
 		mcp.WithString("start", mcp.Description(datetimeParamDescription("New start time. Omitted = unchanged", defaultLoc))),
 		mcp.WithString("end", mcp.Description(datetimeParamDescription("New end time. Omitted = unchanged", defaultLoc))),
 		mcp.WithString("status", mcp.Description("TENTATIVE, CONFIRMED, or CANCELLED")),
 		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT")),
-		mcp.WithString("url", mcp.Description("http(s) URL")),
-		mcp.WithString("scope", mcp.Description("series (default) or occurrence")),
+		mcp.WithString("url", mcp.MaxLength(icloud.MaxURLLen), mcp.Description("http(s) URL; runtime limit 2000 UTF-8 bytes")),
+		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
 		mcp.WithString("recurrence_id", mcp.Description("Occurrence RECURRENCE-ID when scope=occurrence. Use search_events.recurrenceId (not a moved override's new start). Prefer YYYY-MM-DD for all-day; timed forms follow "+datetimeParamDescription("the same rules as start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event or search_events (opaque token; not *)")),
 	)
@@ -43,15 +43,17 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		uid, err := req.RequireString("uid")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "update_event", "", "", "denied")
 			return errResult(deps.Redactor, "uid parameter", err), nil
 		}
 		calendarPath, err := req.RequireString("calendar")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "update_event", "", uid, "denied")
 			return errResult(deps.Redactor, "calendar parameter", err), nil
 		}
 
 		deny := func(context string, err error) (*mcp.CallToolResult, error) {
-			deps.Audit.LogMutation("update_event", calendarPath, uid, "denied")
+			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, "denied")
 			return errResult(deps.Redactor, context, err), nil
 		}
 
@@ -63,7 +65,10 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		args := req.GetArguments()
-		etag := req.GetString("etag", "")
+		etag, err := optionalStringArg(req, "etag", "")
+		if err != nil {
+			return deny("validation", err)
+		}
 		if err := icloud.ValidateIfMatchETag(etag); err != nil {
 			return deny("etag parameter", err)
 		}
@@ -156,13 +161,22 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		icloud.NormalizeEventUpdateFields(update)
 
-		scope := req.GetString("scope", "series")
+		scope, err := optionalStringArg(req, "scope", "series")
+		if err != nil {
+			return deny("validation", err)
+		}
+		ridStr, err := optionalStringArg(req, "recurrence_id", "")
+		if err != nil {
+			return deny("validation", err)
+		}
 		switch scope {
 		case "", "series":
+			if ridStr != "" {
+				return deny("validation", fmt.Errorf("recurrence_id requires scope=occurrence"))
+			}
 			update.Scope = icloud.ScopeSeries
 		case "occurrence":
 			update.Scope = icloud.ScopeOccurrence
-			ridStr := req.GetString("recurrence_id", "")
 			if ridStr == "" {
 				return deny("validation", fmt.Errorf("recurrence_id is required when scope=occurrence"))
 			}
@@ -182,12 +196,12 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 
 		if err := deps.Service.UpdateEvent(ctx, calendarPath, uid, update); err != nil {
-			deps.Audit.LogMutation("update_event", calendarPath, uid, "error")
+			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "updating event", err), nil
 		}
-		deps.Audit.LogMutation("update_event", calendarPath, uid, "success")
+		logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, "success")
 
-		return writeJSON(deps.Redactor, updateEventResponse{
+		return writeCalendarJSON(deps.Redactor, updateEventResponse{
 			Success: true,
 			UID:     uid,
 			Scope:   string(update.Scope),

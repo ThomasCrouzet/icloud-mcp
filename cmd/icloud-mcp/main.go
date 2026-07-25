@@ -1,17 +1,18 @@
-// Command icloud-mcp: stdio MCP server exposing the iCloud calendar over
-// CalDAV. See README.md at the repo root for the product spec and threat
-// model.
+// Command icloud-mcp is a unified stdio MCP server for Apple/iCloud Calendar,
+// Contacts, and Mail. See README.md at the repo root for the product spec and
+// threat model.
 package main
 
 import (
 	"context"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
 	"log/slog"
-	"net/url"
+	"net"
 	"os"
+	"runtime/debug"
+	"strings"
 	"time"
 	_ "time/tzdata" // embed the IANA database: ICLOUD_MCP_DEFAULT_TZ and TZID parsing must not depend on the host/container having zoneinfo installed
 
@@ -20,14 +21,28 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
+	"github.com/ThomasCrouzet/icloud-mcp/internal/contacts"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/health"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
+	maildomain "github.com/ThomasCrouzet/icloud-mcp/internal/mail"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mcptools"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// version is overridden at build time via -ldflags "-X main.version=...".
+// version prefers the release ldflags override, then Go module build metadata.
 var version = "dev"
+
+func init() {
+	if version != "" && version != "dev" {
+		return
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		version = info.Main.Version
+	}
+	if version == "" {
+		version = "dev"
+	}
+}
 
 // toolTimeout bounds the execution of each MCP tool call, strictly below the
 // HTTP timeout (30s) so the tool fails cleanly before the underlying HTTP
@@ -58,27 +73,9 @@ func main() {
 	}
 
 	// 2. Redaction: ALL stderr goes through the RedactingWriter from here on.
-	// The security requirements mandate redacting the password and the email,
-	// so cfg.Email is included on the same footing (defense in depth).
-	// Basic-auth material is registered in Std, RawStd, and URL encodings so a
-	// hostile echo cannot slip past via an alternate base64 alphabet.
-	basicUserPass := []byte(cfg.Email + ":" + cfg.Password)
-	pwBytes := []byte(cfg.Password)
-	red := security.NewRedactor(
-		cfg.Password,
-		cfg.Email,
-		base64.StdEncoding.EncodeToString(basicUserPass),
-		base64.RawStdEncoding.EncodeToString(basicUserPass),
-		base64.URLEncoding.EncodeToString(basicUserPass),
-		base64.RawURLEncoding.EncodeToString(basicUserPass),
-		// Password-only encodings (defense in depth if a body echoes just the secret).
-		base64.StdEncoding.EncodeToString(pwBytes),
-		base64.RawStdEncoding.EncodeToString(pwBytes),
-		base64.URLEncoding.EncodeToString(pwBytes),
-		base64.RawURLEncoding.EncodeToString(pwBytes),
-		url.QueryEscape(cfg.Password),
-		url.PathEscape(cfg.Password),
-	)
+	// Calendar credentials are always covered. Mail credentials and SASL PLAIN
+	// variants are added only when the Mail domain is enabled.
+	red := newBootRedactor(cfg)
 	stderr := security.NewRedactingWriter(os.Stderr, red)
 	// Structured JSON logs (one object per line): the MCP host can parse them
 	// and route to a log indexer. The level is configurable via
@@ -91,15 +88,33 @@ func main() {
 	log.SetOutput(stderr)
 	audit := security.NewAuditLogger(stderr)
 
-	// 3. Hardened HTTP client (network allowlist + verified TLS) + Basic Auth.
+	plan := mcptools.NewCapabilityPlan(
+		cfg.ReadOnly,
+		cfg.EnableContacts,
+		cfg.EnableMail,
+		cfg.EffectiveMailWrite(),
+		cfg.EffectiveMailSend(),
+	)
+
+	// 3. Domain-isolated clients. Calendar keeps its existing authenticated
+	// allowlisted HTTP/retry stack. Optional constructors perform no network I/O.
+	calendarCredentials := security.CredentialPair{
+		Username: strings.Clone(cfg.Email),
+		Password: strings.Clone(cfg.Password),
+	}
 	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
-	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, cfg.Email, cfg.Password)
+	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
 	// Retry (429/502/503/504 with Retry-After + backoff + jitter) and error
 	// classification (stable codes + Apple-aware messages) sit ON TOP of the
 	// allowlist+auth doer, so every CalDAV request, whether hand-rolled
 	// (discovery, REPORT, conditional PUT) or via go-webdav, goes through
 	// both. See internal/icloud/retry.go.
 	doer := icloud.NewRetryClassifier(authHTTP)
+	contactsService, mailService, err := newOptionalServices(cfg)
+	if err != nil {
+		slog.Error("optional domain initialization failed", "err", err)
+		os.Exit(1)
+	}
 
 	// 4. iCloud service + boot-time discovery (validates the credentials
 	// before starting the MCP server).
@@ -114,27 +129,18 @@ func main() {
 	svc := icloud.NewGuardedService(ic, 2, 500*time.Millisecond)
 
 	// 5. MCP server.
-	s := server.NewMCPServer("icloud-mcp", version,
-		server.WithToolCapabilities(false),
-		// WithRecovery remains as an extra safety net, but it is
-		// mcptools.RecoverRedactMiddleware (registered below, hence closer
-		// to the handler in the stack) that intercepts a panic first and
-		// produces a REDACTED response; otherwise WithRecovery alone would
-		// serialize the raw (unredacted) error onto the JSON-RPC channel.
-		server.WithRecovery(),
-		server.WithInstructions("iCloud calendar server (CalDAV). Call list_calendars first to get the calendar paths."),
-		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
-		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
-	)
+	s := newMCPServer(red)
 	healthEnabled := *healthAddr != ""
-	mcptools.Register(s, mcptools.Deps{
+	mcptools.RegisterUnified(s, mcptools.Deps{
 		Service:         svc,
+		ContactsService: contactsService,
+		MailService:     mailService,
 		Audit:           audit,
 		Redactor:        red,
 		DefaultLocation: cfg.DefaultLocation,
 		Version:         version,
 		HealthEnabled:   healthEnabled,
-	}, cfg.ReadOnly)
+	}, plan)
 
 	// 6. Optional healthcheck (off by default).
 	if healthEnabled {
@@ -149,16 +155,41 @@ func main() {
 	if cfg.DefaultLocation == nil || cfg.DefaultLocation == time.UTC {
 		slog.Warn("ICLOUD_MCP_DEFAULT_TZ is unset or UTC: bare local start/end times are interpreted as UTC; set ICLOUD_MCP_DEFAULT_TZ to the calendar owner's IANA timezone (e.g. Europe/Paris) to avoid offset mistakes by the calling agent")
 	}
-	slog.Info("server started", "version", version, "readOnly", cfg.ReadOnly, "defaultTZ", cfg.DefaultLocation.String())
+	slog.Info("server started",
+		"readOnly", cfg.ReadOnly,
+		"contactsEnabled", cfg.EnableContacts,
+		"mailEnabled", cfg.EnableMail,
+		"mailMutationsEnabled", cfg.EffectiveMailWrite(),
+		"mailSendEnabled", cfg.EffectiveMailSend(),
+		"healthcheckActive", healthEnabled,
+		"toolCount", plan.ToolCount(),
+	)
 
-	// 7. Stdio: ServeStdio handles SIGTERM/SIGINT itself. The transport
-	// error logger MUST be wired to the redacting writer, otherwise mcp-go
-	// logs to raw os.Stderr and bypasses the redaction.
+	// 7. Stdio uses mcp-go's custom-reader Listen API so input can be bounded.
+	// The error logger MUST use the redacting writer, otherwise transport logs
+	// bypass stderr redaction.
 	errLogger := log.New(stderr, "", log.LstdFlags)
-	if err := server.ServeStdio(s, server.WithErrorLogger(errLogger)); err != nil {
+	if err := serveBoundedStdio(s, errLogger, red); err != nil {
 		slog.Error("server stopped with an error", "err", err)
 		os.Exit(1)
 	}
+}
+
+func newMCPServer(red *security.Redactor) *server.MCPServer {
+	return server.NewMCPServer("icloud-mcp", version,
+		server.WithToolCapabilities(false),
+		server.WithInputSchemaValidation(),
+		server.WithStrictInputSchemaDefault(),
+		// WithRecovery remains as an extra safety net, but it is
+		// mcptools.RecoverRedactMiddleware (registered below, hence closer
+		// to the handler in the stack) that intercepts a panic first and
+		// produces a REDACTED response; otherwise WithRecovery alone would
+		// serialize the raw (unredacted) error onto the JSON-RPC channel.
+		server.WithRecovery(),
+		server.WithInstructions("Unified Apple/iCloud server. Calendar is always available; optional Contacts and Mail tools appear only when enabled. Call the relevant list tool before using domain-specific resource identifiers."),
+		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
+		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
+	)
 }
 
 // timeoutMiddleware bounds the execution time of each tool call.
@@ -170,4 +201,66 @@ func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 			return next(ctx, req)
 		}
 	}
+}
+
+func newBootRedactor(cfg *config.Config) *security.Redactor {
+	credentials := []security.CredentialPair{{
+		Username: cfg.Email,
+		Password: cfg.Password,
+	}}
+	if cfg.EnableMail {
+		credentials = append(credentials, security.CredentialPair{
+			Username: cfg.MailAddress,
+			Password: cfg.MailPassword,
+		})
+	}
+	return security.NewRedactor(security.RedactionVariants(credentials...)...)
+}
+
+func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Service, error) {
+	var contactsService contacts.Service
+	if cfg.EnableContacts {
+		contactsCredentials := security.CredentialPair{
+			Username: strings.Clone(cfg.Email),
+			Password: strings.Clone(cfg.Password),
+		}
+		contactsHTTP := security.NewContactsHTTPClient(cfg.Timeout)
+		contactsAuth := webdav.HTTPClientWithBasicAuth(
+			contactsHTTP,
+			contactsCredentials.Username,
+			contactsCredentials.Password,
+		)
+		contactsService = contacts.NewClient(contactsAuth, security.ContactsBaseURL, security.IsContactsHost)
+	}
+
+	var mailService maildomain.Service
+	if cfg.EnableMail {
+		var recipientPolicy maildomain.RecipientPolicy
+		var err error
+		if cfg.EffectiveMailSend() {
+			recipientPolicy, err = maildomain.ParseRecipientPolicy(strings.Join(cfg.SMTPAllowedRecipients, ","))
+			if err != nil {
+				return nil, nil, fmt.Errorf("mail recipient policy initialization failed: %w", err)
+			}
+		}
+
+		imapDial := func(ctx context.Context) (net.Conn, error) {
+			return security.DialIMAPContext(ctx, "tcp", security.IMAPAddress)
+		}
+		var smtpDial maildomain.SMTPDialFunc
+		if cfg.EffectiveMailSend() {
+			smtpDial = func(ctx context.Context) (net.Conn, error) {
+				return security.DialSMTPContext(ctx, "tcp", security.SMTPAddress)
+			}
+		}
+		mailService, err = maildomain.NewService(maildomain.Config{
+			Address:         strings.Clone(cfg.MailAddress),
+			Password:        strings.Clone(cfg.MailPassword),
+			RecipientPolicy: recipientPolicy,
+		}, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
+		if err != nil {
+			return nil, nil, fmt.Errorf("mail service initialization failed: %w", err)
+		}
+	}
+	return contactsService, mailService, nil
 }

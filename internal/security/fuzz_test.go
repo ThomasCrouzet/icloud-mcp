@@ -30,6 +30,7 @@ func FuzzRedactor(f *testing.F) {
 func FuzzRedactingWriter(f *testing.F) {
 	f.Add([]byte("line with SECRET99\n"), "SECRET99")
 	f.Add([]byte("SECR"), "SECRET99")
+	f.Add(bytes.Repeat([]byte{'x'}, maxRedactBuf+1), "SECRET99")
 	f.Fuzz(func(t *testing.T, chunk []byte, secret string) {
 		if len(secret) < 4 {
 			return
@@ -47,6 +48,9 @@ func FuzzRedactingWriter(f *testing.F) {
 		}
 		w := NewRedactingWriter(&buf, r)
 		_, _ = w.Write(chunk)
+		if len(w.buf) >= maxRedactBuf {
+			t.Fatalf("writer retained %d bytes, limit is %d", len(w.buf), maxRedactBuf)
+		}
 		_ = w.Flush()
 		if strings.Contains(buf.String(), secret) {
 			t.Fatalf("secret leaked via writer")

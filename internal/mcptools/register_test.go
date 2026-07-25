@@ -2,6 +2,9 @@ package mcptools
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -69,6 +72,7 @@ func TestRegister_ReadOnlyExposesOnlyReadTools(t *testing.T) {
 	want := map[string]bool{
 		"list_calendars": true, "search_events": true, "get_event": true,
 		"find_free_slots": true, "validate_event": true, "calendar_capabilities": true,
+		"icloud_capabilities": true,
 	}
 	if len(names) != len(want) {
 		t.Fatalf("READ_ONLY: %d tools registered, want %d: %v", len(names), len(want), names)
@@ -92,6 +96,7 @@ func TestRegister_FullModeExposesAllTools(t *testing.T) {
 		"list_calendars": true, "search_events": true, "get_event": true,
 		"find_free_slots": true, "validate_event": true, "calendar_capabilities": true,
 		"create_event": true, "update_event": true, "delete_event": true,
+		"icloud_capabilities": true,
 	}
 	if len(names) != len(want) {
 		t.Fatalf("full mode: %d tools registered, want %d: %v", len(names), len(want), names)
@@ -104,6 +109,83 @@ func TestRegister_FullModeExposesAllTools(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("missing tools: %v", want)
+	}
+}
+
+func TestCapabilityPlanAllCombinationsAndRegistrationFormula(t *testing.T) {
+	for bits := 0; bits < 32; bits++ {
+		readOnly := bits&1 != 0
+		contactsEnabled := bits&2 != 0
+		mailEnabled := bits&4 != 0
+		mailMutations := bits&8 != 0
+		mailSend := bits&16 != 0
+		name := fmt.Sprintf("ro=%t/contacts=%t/mail=%t/mutations=%t/send=%t",
+			readOnly, contactsEnabled, mailEnabled, mailMutations, mailSend)
+		t.Run(name, func(t *testing.T) {
+			plan := NewCapabilityPlan(readOnly, contactsEnabled, mailEnabled, mailMutations, mailSend)
+			globalWrites := !readOnly
+			effectiveMutation := globalWrites && mailEnabled && mailMutations
+			effectiveSend := globalWrites && mailEnabled && mailSend
+			wantCount := 7
+			if globalWrites {
+				wantCount += 3
+			}
+			if contactsEnabled {
+				wantCount += 3
+				if globalWrites {
+					wantCount += 3
+				}
+			}
+			if mailEnabled {
+				wantCount += 3
+			}
+			if effectiveMutation {
+				wantCount += 3
+			}
+			if effectiveSend {
+				wantCount++
+			}
+
+			if plan.ToolCount() != wantCount {
+				t.Fatalf("plan count = %d, want formula result %d", plan.ToolCount(), wantCount)
+			}
+			if plan.ContactsWritesEnabled() != (contactsEnabled && globalWrites) ||
+				plan.MailMutationsEnabled() != effectiveMutation || plan.MailSendEnabled() != effectiveSend {
+				t.Fatalf("effective capability gates are inconsistent: %#v", plan)
+			}
+
+			s := server.NewMCPServer("icloud-mcp-test", "test", server.WithToolCapabilities(false))
+			registered := RegisterUnified(s, Deps{
+				Service:         &icloud.MockService{},
+				ContactsService: &fakeContactsService{},
+				MailService:     &mailToolsFakeService{},
+				Audit:           security.NewAuditLogger(&discardWriter{}),
+				Redactor:        security.NewRedactor("unused-secret"),
+			}, plan)
+			listed := listToolNames(t, s)
+			sort.Strings(listed)
+			if !slices.Equal(registered, plan.RegisteredTools()) || !slices.Equal(listed, registered) {
+				t.Fatalf("plan/registration/tools-list mismatch: plan=%v registered=%v listed=%v",
+					plan.RegisteredTools(), registered, listed)
+			}
+		})
+	}
+}
+
+func TestCapabilityPlanDefaultCompatibility(t *testing.T) {
+	readWrite := NewCapabilityPlan(false, false, false, false, false)
+	readOnly := NewCapabilityPlan(true, false, false, false, false)
+	if readWrite.ToolCount() != 10 {
+		t.Fatalf("default tool count = %d, want 10", readWrite.ToolCount())
+	}
+	if readOnly.ToolCount() != 7 {
+		t.Fatalf("default read-only tool count = %d, want 7", readOnly.ToolCount())
+	}
+	if got := NewCapabilityPlan(false, true, true, true, true).ToolCount(); got != 23 {
+		t.Fatalf("maximum tool count = %d, want 23", got)
+	}
+	if !slices.Contains(readWrite.RegisteredTools(), "icloud_capabilities") {
+		t.Fatal("default plan must include icloud_capabilities")
 	}
 }
 

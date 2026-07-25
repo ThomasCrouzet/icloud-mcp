@@ -3,12 +3,8 @@ package icloud
 import (
 	"bytes"
 	"context"
-	"encoding/xml"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +12,10 @@ import (
 	"github.com/emersion/go-ical"
 	extcaldav "github.com/emersion/go-webdav/caldav"
 )
+
+// maxEventsPerCalendarSearch bounds aggregate materialization before MCP-level
+// filtering and the smaller public result cap are applied.
+const maxEventsPerCalendarSearch = 10000
 
 // icalTimeLayout is the format of calendar-query time-range bounds
 // (RFC 4791) and of iCalendar dates in UTC.
@@ -27,7 +27,7 @@ const maxReportBodySize = 32 << 20 // 32 MiB
 
 // uidLookupWindow is the half-range used by findEventByUID when the direct
 // GET on <uid>.ics fails (imported events whose filename differs from the
-// UID). ±10 years keeps the REPORT tractable under the 25s tool timeout while
+// UID). A +/-10-year window keeps the REPORT tractable under the 25s tool timeout while
 // covering ordinary calendar content. Events entirely outside this window
 // are reported as not found on the fallback path.
 const uidLookupWindow = 10 * 365 * 24 * time.Hour
@@ -49,12 +49,13 @@ type Client struct {
 	http    httpDoer
 	baseURL string
 
-	discoverMu  sync.Mutex
-	discovered  bool
-	shardBase   string
-	homeSetPath string
-	dav         *extcaldav.Client
-	allowHost   func(string) bool
+	discoverMu   sync.Mutex
+	discovered   bool
+	discovering  bool
+	discoverWait chan struct{}
+	shardBase    string
+	homeSetPath  string
+	allowHost    func(string) bool
 }
 
 var _ Service = (*Client)(nil)
@@ -110,33 +111,45 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 
 	var events []Event
 	var truncated bool
+	remainingWork := maxRecurrenceSearchWork
 	for i := range objs {
 		master, overrides, perr := parseCalendarObject(&objs[i])
 		if perr != nil {
-			slog.Warn("skipping unparseable calendar object", "path", objs[i].Path, "error", perr)
-			continue
+			if ie := AsICloudError(perr); ie != nil && (ie.Code == CodePayloadTooLarge || ie.Code == CodeProtocolError) {
+				return SearchResult{}, ie
+			}
+			return SearchResult{}, NewError(CodeProtocolError, 0, "Calendar event data is malformed", nil)
 		}
 		// Propagate REPORT getetag onto every returned row so agents can
 		// conditional-update without an extra get_event round-trip.
 		master.ETag = objs[i].ETag
 		if !expand {
-			// Masters only: still apply overlap so zero-length/out-of-range
-			// masters are not returned when the server over-selects.
-			if eventOverlaps(*master, start, end) {
+			// The server selects recurring resources when any occurrence is in
+			// range, even though the master's DTSTART can be years outside it.
+			// Keep those masters; only locally filter over-selected one-offs.
+			if master.Recurrence != "" || eventOverlaps(*master, start, end) {
+				if len(events) >= maxEventsPerCalendarSearch {
+					return SearchResult{}, NewError(CodePayloadTooLarge, 0, "Calendar search exceeded its event limit", nil)
+				}
 				events = append(events, *master)
 			}
 			continue
 		}
-		occs, t, eerr := ExpandOccurrences(*master, overrides, start, end, 0)
+		occs, t, eerr := expandOccurrencesContext(ctx, *master, overrides, start, end, 0, &remainingWork)
 		if eerr != nil {
-			slog.Warn("skipping recurrence expansion", "uid", master.UID, "error", eerr)
-			continue
+			if ie := AsICloudError(eerr); ie != nil {
+				return SearchResult{}, ie
+			}
+			return SearchResult{}, NewError(CodeProtocolError, 0, "Calendar recurrence data is malformed", nil)
 		}
 		if t {
 			truncated = true
 		}
 		for j := range occs {
 			occs[j].ETag = objs[i].ETag
+		}
+		if len(occs) > maxEventsPerCalendarSearch-len(events) {
+			return SearchResult{}, NewError(CodePayloadTooLarge, 0, "Calendar search exceeded its event limit", nil)
 		}
 		events = append(events, occs...)
 	}
@@ -164,7 +177,10 @@ func (c *Client) GetEvent(ctx context.Context, calendarPath, uid string) (*Event
 	}
 	master, overrides, perr := parseCalendarObject(obj)
 	if perr != nil {
-		return nil, perr
+		if AsICloudError(perr) != nil {
+			return nil, perr
+		}
+		return nil, NewError(CodeProtocolError, 0, "Calendar event data is malformed", nil)
 	}
 	master.ETag = obj.ETag
 	detail := &EventDetail{
@@ -211,8 +227,11 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 		return "", err
 	}
 	if ne.Recurrence != "" {
-		if err := ValidateRRULE(ne.Recurrence); err != nil {
+		if err := validateRRULEForStartContext(ctx, ne.Recurrence, ne.StartTime); err != nil {
 			return "", err
+		}
+		if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !recurringTimezoneStable(loc, ne.StartTime) {
+			return "", NewValidationError("timezone does not have a stable annual transition rule for recurring writes")
 		}
 	}
 	if ne.ClientUID != "" {
@@ -258,12 +277,20 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	// the same UID cannot silently overwrite (go-webdav PutCalendarObject
 	// does not expose conditional headers).
 	if ne.ClientUID != "" {
-		if existing, gerr := c.dav.GetCalendarObject(ctx, path); gerr == nil && existing != nil {
+		existing, gerr := c.getCalendarObject(ctx, calendarPath, path)
+		if gerr == nil && existing != nil {
 			return "", NewError(CodeConflict, http.StatusConflict, "event already exists for client UID; not overwriting", nil)
+		}
+		if gerr != nil {
+			if ie := AsICloudError(gerr); ie == nil || ie.Code != CodeNotFound {
+				return "", gerr
+			}
 		}
 	}
 	cal := buildEventCalendar(uid, ne)
-	if err := c.putCalendarObjectIfMatch(ctx, path, "", cal, "*"); err != nil {
+	if err := c.putCalendarObjectIfMatch(ctx, calendarPath, path, "", cal, "*"); err != nil {
+		err = withOutcomeReconciliation(err, uid,
+			"Call get_event with this UID. If it exists, do not create it again; if it is not found, retry with the same client UID.")
 		return "", fmt.Errorf("creating event: %w", err)
 	}
 	return uid, nil
@@ -357,14 +384,10 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		}
 	}
 
-	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
-	seq := 0
-	if p := vevent.Props.Get(ical.PropSequence); p != nil {
-		if n, serr := p.Int(); serr == nil {
-			seq = n
-		}
+	if err := incrementSequence(vevent); err != nil {
+		return err
 	}
-	setSequence(vevent, seq+1)
+	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
 
 	etag := found.ETag
 	if up.IfMatchETag != "" {
@@ -379,7 +402,9 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	}
 	// Conditional PUT with If-Match. 412 is never auto-retried
 	// (GuardedService does not retry UpdateEvent).
-	if err := c.putCalendarObjectIfMatch(ctx, found.Path, etag, found.Data); err != nil {
+	if err := c.putCalendarObjectIfMatch(ctx, calendarPath, found.Path, etag, found.Data); err != nil {
+		err = withOutcomeReconciliation(err, uid,
+			"Call get_event with this UID and compare the intended fields before deciding whether to retry the update.")
 		return fmt.Errorf("updating event (uid=%s): %w", uid, err)
 	}
 	return nil
@@ -412,6 +437,9 @@ func applyFieldUpdate(vevent *ical.Event, up *EventUpdate) {
 	}
 	if up.EndTime != nil {
 		setEventDateProp(vevent, ical.PropDateTimeEnd, *up.EndTime)
+		// DTEND and DURATION are mutually exclusive. An explicit end replaces
+		// any duration-based representation.
+		vevent.Props.Del(ical.PropDuration)
 	}
 	if up.Status != nil {
 		s := strings.ToUpper(strings.TrimSpace(*up.Status))
@@ -510,6 +538,7 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 	}
 	ov := &ical.Event{Component: override}
 	prevDur := masterEventDuration(master)
+	preserveOwnDuration := false
 	if !created {
 		if sp := ov.Props.Get(ical.PropDateTimeStart); sp != nil {
 			if ep := ov.Props.Get(ical.PropDateTimeEnd); ep != nil {
@@ -518,11 +547,16 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 						prevDur = en.Sub(st)
 					}
 				}
+			} else if dp := ov.Props.Get(ical.PropDuration); dp != nil {
+				if duration, derr := parseICalDuration(dp.Value); derr == nil && duration > 0 {
+					prevDur = duration
+					preserveOwnDuration = true
+				}
 			}
 		}
 	}
 	applyFieldUpdate(ov, up)
-	if up.StartTime != nil && up.EndTime == nil {
+	if up.StartTime != nil && up.EndTime == nil && !preserveOwnDuration {
 		setEventDateProp(ov, ical.PropDateTimeEnd, up.StartTime.Add(prevDur))
 		ov.Props.Del(ical.PropDuration)
 	}
@@ -543,7 +577,7 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 // non-empty (create uses "*"), If-None-Match is set so an existing resource
 // yields 412 mapped to conflict rather than a silent overwrite. A 412 with
 // only If-Match maps to concurrent_modification.
-func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string, cal *ical.Calendar, ifNoneMatch ...string) error {
+func (c *Client) putCalendarObjectIfMatch(ctx context.Context, calendarPath, path, etag string, cal *ical.Calendar, ifNoneMatch ...string) error {
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
@@ -555,39 +589,37 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 	if err != nil {
 		return fmt.Errorf("invalid event URL (%s): %w", path, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, &buf)
-	if err != nil {
-		return fmt.Errorf("building PUT request (%s): %w", path, err)
-	}
-	req.Header.Set("Content-Type", "text/calendar; charset=utf-8")
+	headers := make(http.Header)
+	headers.Set("Content-Type", "text/calendar; charset=utf-8")
 	if etag != "" {
-		// go-webdav's GetCalendarObject stores the ETag UNQUOTED (it calls
-		// strconv.Unquote on the response header). RFC 7232 If-Match wants
-		// the entity-tag in its quoted form ("v1"), or W/"v1" for a weak
-		// validator, or "*". Re-quote a bare unquoted value.
-		req.Header.Set("If-Match", normalizeIfMatch(etag))
+		parsed, err := parseStrongETag(etag)
+		if err != nil {
+			return NewError(CodeProtocolError, 0, "Calendar mutation has an invalid ETag", nil)
+		}
+		headers.Set("If-Match", parsed)
 	}
 	noneMatch := ""
 	if len(ifNoneMatch) > 0 {
 		noneMatch = ifNoneMatch[0]
 	}
 	if noneMatch != "" {
-		req.Header.Set("If-None-Match", noneMatch)
+		headers.Set("If-None-Match", noneMatch)
 	}
 
-	resp, err := c.http.Do(req)
+	result, err := c.doCalendarRequest(ctx, http.MethodPut, target, headers, buf.Bytes(), calendarPath)
 	if err != nil {
 		// With the retry/classify doer, err is already a typed *Error
 		// (e.g. concurrent_modification). With a plain test doer err is a
 		// transport error. Either way, propagate as-is.
 		return err
 	}
+	resp := result.response
 	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusPreconditionFailed:
 		if noneMatch != "" && etag == "" {
-			return NewError(CodeConflict, http.StatusConflict, "event already exists; not overwriting", nil)
+			return NewError(CodeConflict, resp.StatusCode, "event already exists; not overwriting", nil)
 		}
 		return classifyStatus(resp.StatusCode)
 	case resp.StatusCode/100 == 2:
@@ -595,21 +627,6 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, path, etag string
 	default:
 		return classifyStatus(resp.StatusCode)
 	}
-}
-
-// normalizeIfMatch turns a bare, unquoted ETag (as stored by go-webdav after
-// strconv.Unquote) into a valid RFC 7232 entity-tag for an If-Match header.
-// Already-quoted values (including weak W/"...") are passed through.
-// Client-supplied "*" is rejected earlier by ValidateIfMatchETag; this helper
-// must not reintroduce last-writer-wins If-Match: *.
-func normalizeIfMatch(etag string) string {
-	if etag == "" {
-		return etag
-	}
-	if strings.HasPrefix(etag, "W/") || strings.HasPrefix(etag, `"`) {
-		return etag
-	}
-	return `"` + etag + `"`
 }
 
 // validateAgentCalendarPath requires a syntactically valid path under the
@@ -679,11 +696,17 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		return DeleteResult{}, err
 	}
 
+	master, masterErr := findMasterVEvent(obj.Data)
+	if masterErr != nil {
+		return DeleteResult{}, masterErr
+	}
+	if scope == ScopeOccurrence && master.Props.Get(ical.PropRecurrenceRule) == nil {
+		return DeleteResult{}, NewValidationError("scope=occurrence requires a recurring master (RRULE)")
+	}
+
 	title := ""
-	if vevent, verr := findMasterVEvent(obj.Data); verr == nil {
-		if p := vevent.Props.Get(ical.PropSummary); p != nil {
-			title = p.Value
-		}
+	if p := master.Props.Get(ical.PropSummary); p != nil {
+		title = p.Value
 	}
 
 	result := DeleteResult{
@@ -699,12 +722,9 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 
 	if scope == ScopeOccurrence {
-		if vevent, verr := findMasterVEvent(obj.Data); verr != nil {
-			return DeleteResult{}, verr
-		} else if vevent.Props.Get(ical.PropRecurrenceRule) == nil {
-			return DeleteResult{}, NewValidationError("scope=occurrence requires a recurring master (RRULE)")
-		}
-		if err := c.deleteOccurrence(ctx, obj, *opts.RecurrenceID, opts.IfMatchETag); err != nil {
+		if err := c.deleteOccurrence(ctx, calendarPath, obj, *opts.RecurrenceID, opts.IfMatchETag); err != nil {
+			err = withOutcomeReconciliation(err, uid,
+				"Call get_event with this UID and inspect the occurrence. If it is absent, do not repeat the delete; otherwise compare the current ETag before retrying.")
 			return DeleteResult{}, fmt.Errorf("deleting occurrence (uid=%s): %w", uid, err)
 		}
 		return result, nil
@@ -714,7 +734,9 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	if opts != nil && opts.IfMatchETag != "" {
 		etag = opts.IfMatchETag
 	}
-	if err := c.deleteCalendarObjectIfMatch(ctx, obj.Path, etag); err != nil {
+	if err := c.deleteCalendarObjectIfMatch(ctx, calendarPath, obj.Path, etag); err != nil {
+		err = withOutcomeReconciliation(err, uid,
+			"Call get_event with this UID. A not_found result confirms deletion; if it still exists, compare its ETag before deciding whether to retry.")
 		return DeleteResult{}, fmt.Errorf("deleting event (uid=%s): %w", uid, err)
 	}
 	return result, nil
@@ -723,7 +745,7 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 // deleteOccurrence cancels a single occurrence by adding EXDATE to the master
 // (and removing a matching RECURRENCE-ID override if present). It never
 // deletes the series resource. EXDATE form matches master DTSTART.
-func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarObject, recID time.Time, ifMatch string) error {
+func (c *Client) deleteOccurrence(ctx context.Context, calendarPath string, obj *extcaldav.CalendarObject, recID time.Time, ifMatch string) error {
 	vevent, err := findMasterVEvent(obj.Data)
 	if err != nil {
 		return err
@@ -764,14 +786,10 @@ func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarOb
 		kept = append(kept, ch)
 	}
 	obj.Data.Children = kept
-	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
-	seq := 0
-	if p := vevent.Props.Get(ical.PropSequence); p != nil {
-		if n, serr := p.Int(); serr == nil {
-			seq = n
-		}
+	if err := incrementSequence(vevent); err != nil {
+		return err
 	}
-	setSequence(vevent, seq+1)
+	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
 	etag := obj.ETag
 	if ifMatch != "" {
 		etag = ifMatch
@@ -780,14 +798,14 @@ func (c *Client) deleteOccurrence(ctx context.Context, obj *extcaldav.CalendarOb
 		return NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
 			"etag unavailable for conditional update; re-read with get_event and pass etag", nil)
 	}
-	return c.putCalendarObjectIfMatch(ctx, obj.Path, etag, obj.Data)
+	return c.putCalendarObjectIfMatch(ctx, calendarPath, obj.Path, etag, obj.Data)
 }
 
 // deleteCalendarObjectIfMatch DELETEs path with If-Match. Empty etag fails
 // closed (same policy as update/occurrence): unconditional DELETE would be
 // last-writer-wins against a concurrent edit. Callers pass etag from get_event
 // when the lookup response omitted one.
-func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, path, etag string) error {
+func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, calendarPath, path, etag string) error {
 	if err := c.discover(ctx); err != nil {
 		return err
 	}
@@ -799,15 +817,17 @@ func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, path, etag str
 	if err != nil {
 		return fmt.Errorf("invalid event URL (%s): %w", path, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	parsed, err := parseStrongETag(etag)
 	if err != nil {
-		return fmt.Errorf("building DELETE request (%s): %w", path, err)
+		return NewError(CodeProtocolError, 0, "Calendar mutation has an invalid ETag", nil)
 	}
-	req.Header.Set("If-Match", normalizeIfMatch(etag))
-	resp, err := c.http.Do(req)
+	headers := make(http.Header)
+	headers.Set("If-Match", parsed)
+	result, err := c.doCalendarRequest(ctx, http.MethodDelete, target, headers, nil, calendarPath)
 	if err != nil {
 		return err
 	}
+	resp := result.response
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusPreconditionFailed:
@@ -836,8 +856,14 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 	// iCloud names its resources <UID>.ics (verified): first try a direct GET
 	// on that path, which returns the FULL object (suitable for update/delete).
 	directPath := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
-	if obj, err := c.dav.GetCalendarObject(ctx, directPath); err == nil && calendarHasUID(obj.Data, uid) {
+	obj, directErr := c.getCalendarObject(ctx, calendarPath, directPath)
+	if directErr == nil {
+		if err := validateCalendarObjectIdentity(obj.Data, uid); err != nil {
+			return nil, err
+		}
 		return obj, nil
+	} else if ie := AsICloudError(directErr); ie == nil || ie.Code != CodeNotFound {
+		return nil, directErr
 	}
 
 	// Fallback: imported event whose file name != UID. The only server-side
@@ -865,12 +891,12 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 			return nil, fmt.Errorf("finding event (uid=%s): REPORT match has empty path", uid)
 		}
 		// Mandatory re-GET: do not re-PUT filtered REPORT calendar-data.
-		obj, gerr := c.dav.GetCalendarObject(ctx, href)
+		obj, gerr := c.getCalendarObject(ctx, calendarPath, href)
 		if gerr != nil {
 			return nil, fmt.Errorf("re-fetching event after REPORT (uid=%s): %w", uid, gerr)
 		}
-		if !calendarHasUID(obj.Data, uid) {
-			return nil, fmt.Errorf("event not found (uid=%s)", uid)
+		if err := validateCalendarObjectIdentity(obj.Data, uid); err != nil {
+			return nil, err
 		}
 		return obj, nil
 	}
@@ -916,79 +942,59 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 	if err != nil {
 		return nil, fmt.Errorf("invalid calendar URL (%s): %w", calendarPath, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "REPORT", target, strings.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("building REPORT request (%s): %w", calendarPath, err)
-	}
-	req.Header.Set("Content-Type", `application/xml; charset="utf-8"`)
-	req.Header.Set("Depth", "1")
-
-	resp, err := c.http.Do(req)
+	headers := make(http.Header)
+	headers.Set("Content-Type", `application/xml; charset="utf-8"`)
+	headers.Set("Depth", "1")
+	result, err := c.doCalendarRequest(ctx, "REPORT", target, headers, []byte(body), calendarPath)
 	if err != nil {
 		return nil, fmt.Errorf("REPORT request to %s: %w", calendarPath, err)
 	}
+	resp := result.response
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("iCloud authentication refused: check ICLOUD_EMAIL and the app-specific password")
-	}
 	if resp.StatusCode != 207 {
-		return nil, fmt.Errorf("REPORT %s: unexpected HTTP status %d", calendarPath, resp.StatusCode)
+		return nil, classifyStatus(resp.StatusCode)
 	}
 
 	// maxReportBodySize+1 makes overflow detectable (same pattern as PROPFIND).
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReportBodySize+1))
+	data, err := readBoundedCalendarBody(resp.Body, maxReportBodySize, "Calendar REPORT response exceeded its byte limit")
 	if err != nil {
-		return nil, fmt.Errorf("reading REPORT response (%s): %w", calendarPath, err)
+		return nil, err
 	}
-	if len(data) > maxReportBodySize {
-		return nil, fmt.Errorf("REPORT response (%s) too large (> %d bytes)", calendarPath, maxReportBodySize)
-	}
-	var ms msMultistatus
-	if err := xml.Unmarshal(data, &ms); err != nil {
-		return nil, fmt.Errorf("parsing REPORT response (%s): %w", calendarPath, err)
+	responses, err := decodeReportMultiStatus(data, resp.StatusCode)
+	if err != nil {
+		return nil, err
 	}
 
 	var objs []extcaldav.CalendarObject
-	for _, r := range ms.Responses {
+	for _, r := range responses {
 		prop := mergedOKProp(r)
 		if prop == nil || prop.CalendarData == "" {
 			continue
 		}
-		cal, derr := ical.NewDecoder(strings.NewReader(prop.CalendarData)).Decode()
+		cal, derr := decodeRemoteCalendar(strings.NewReader(prop.CalendarData))
 		if derr != nil {
-			slog.Warn("undecodable calendar-data, skipping object", "href", r.Href, "error", derr)
-			continue
+			return nil, derr
 		}
-		// Strip strong ETag quotes the same way go-webdav does on GET so
-		// normalizeIfMatch can re-quote consistently for If-Match. Weak
-		// ETags (W/"...") are left intact for normalizeIfMatch.
-		etag := strings.TrimSpace(prop.GetETag)
-		if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
-			etag = etag[1 : len(etag)-1]
+		if err := validateRemoteCalendar(cal); err != nil {
+			return nil, err
 		}
-		objPath := hrefPath(r.Href)
-		// Reject odd/foreign hrefs from a compromised or buggy multistatus
-		// (must stay path-absolute under the discovered home-set).
-		if err := ValidateCalendarPath(objPath); err != nil {
-			slog.Warn("skipping REPORT href failing path validation", "href", r.Href)
-			continue
+		if err := validateCalendarObjectIdentity(cal, ""); err != nil {
+			return nil, err
 		}
-		if c.homeSetPath != "" && !pathUnderHomeSet(objPath, c.homeSetPath) {
-			slog.Warn("skipping REPORT href outside home-set", "href", r.Href)
-			continue
+		etag, etagErr := strongETagFromResponse(r)
+		if etagErr != nil {
+			return nil, NewError(CodeProtocolError, resp.StatusCode, "Calendar REPORT response has an invalid ETag", nil)
 		}
+		if len(etag) > maxETagBytes {
+			return nil, NewError(CodePayloadTooLarge, resp.StatusCode, "Calendar ETag exceeded its byte limit", nil)
+		}
+		resolved, hrefErr := c.resolveDAVHref(result.url, r.Href, calendarPath)
+		if hrefErr != nil {
+			return nil, hrefErr
+		}
+		objPath := resolved.EscapedPath()
 		objs = append(objs, extcaldav.CalendarObject{Path: objPath, Data: cal, ETag: etag})
 	}
 	return objs, nil
-}
-
-// hrefPath extracts the path from an href (absolute or relative); go-webdav
-// GetCalendarObject/RemoveAll expect a path resolved against the shard
-// endpoint, not an absolute URL.
-func hrefPath(href string) string {
-	if u, err := url.Parse(href); err == nil && u.Path != "" {
-		return u.Path
-	}
-	return href
 }

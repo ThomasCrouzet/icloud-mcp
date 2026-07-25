@@ -189,7 +189,7 @@ func (s *statusDoer) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func TestRetryClassifier_Retries429ThenSucceeds(t *testing.T) {
+func TestRetryClassifier_RetriesRead429ThenSucceeds(t *testing.T) {
 	doer := &statusDoer{statuses: []int{http.StatusTooManyRequests, http.StatusTooManyRequests, http.StatusOK}}
 	rc := &retryClassifier{
 		inner:     doer,
@@ -199,7 +199,7 @@ func TestRetryClassifier_Retries429ThenSucceeds(t *testing.T) {
 		now:       time.Now,
 		rand:      func() float64 { return 0 },
 	}
-	req := mustPUTReq(t)
+	req := mustGETReq(t, context.Background())
 	resp, err := rc.Do(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -212,7 +212,7 @@ func TestRetryClassifier_Retries429ThenSucceeds(t *testing.T) {
 	}
 }
 
-func TestRetryClassifier_Retries503ThenExhausts(t *testing.T) {
+func TestRetryClassifier_RetriesRead503ThenExhausts(t *testing.T) {
 	doer := &statusDoer{statuses: []int{http.StatusServiceUnavailable}} // always 503
 	rc := &retryClassifier{
 		inner:     doer,
@@ -222,7 +222,7 @@ func TestRetryClassifier_Retries503ThenExhausts(t *testing.T) {
 		now:       time.Now,
 		rand:      func() float64 { return 0 },
 	}
-	req := mustPUTReq(t)
+	req := mustGETReq(t, context.Background())
 	_, err := rc.Do(req)
 	if err == nil {
 		t.Fatal("expected an error after retries exhausted")
@@ -246,7 +246,7 @@ func TestRetryClassifier_HonorsRetryAfterSeconds(t *testing.T) {
 		now:       time.Now,
 		rand:      func() float64 { return 0 },
 	}
-	req := mustPUTReq(t)
+	req := mustGETReq(t, context.Background())
 	// We need a 429 response carrying Retry-After: 0 so the wait collapses to
 	// ~0 rather than the absurd base. Replace the doer's canned body approach
 	// with a doer that sets the header on the first response.
@@ -278,7 +278,7 @@ func (d *retryAfterDoer) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func TestRetryClassifier_DoesNotRetryNonRetryable(t *testing.T) {
+func TestRetryClassifier_PassesDefinitiveStatusToOperation(t *testing.T) {
 	doer := &statusDoer{statuses: []int{http.StatusNotFound}}
 	rc := &retryClassifier{
 		inner:     doer,
@@ -289,13 +289,12 @@ func TestRetryClassifier_DoesNotRetryNonRetryable(t *testing.T) {
 		rand:      func() float64 { return 0 },
 	}
 	req := mustPUTReq(t)
-	_, err := rc.Do(req)
-	if err == nil {
-		t.Fatal("expected an error (404 not retried, classified)")
+	resp, err := rc.Do(req)
+	if err != nil {
+		t.Fatalf("definitive response must reach operation: %v", err)
 	}
-	cerr := AsICloudError(err)
-	if cerr == nil || cerr.Code != CodeNotFound {
-		t.Errorf("err = %v, want typed not_found", err)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 	if doer.calls != 1 {
 		t.Errorf("calls = %d, want 1 (404 must not be retried)", doer.calls)
@@ -314,7 +313,7 @@ func TestRetryClassifier_AbortsOnContextDone(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	req := mustPUTReqWithCtx(t, ctx)
+	req := mustGETReq(t, ctx)
 	_, err := rc.Do(req)
 	if err == nil {
 		t.Fatal("expected a context-cancellation error")
@@ -345,7 +344,7 @@ func TestRetryClassifier_ConcurrentClassifiesAll(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := rc.Do(mustPUTReq(t))
+			_, err := rc.Do(mustGETReq(t, context.Background()))
 			if err != nil && AsICloudError(err) != nil {
 				errCount.Add(1)
 			}
@@ -365,6 +364,15 @@ func mustPUTReq(t *testing.T) *http.Request {
 func mustPUTReqWithCtx(t *testing.T, ctx context.Context) *http.Request {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "https://p42-caldav.icloud.com/cal/x.ics", strings.NewReader("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	return req
+}
+
+func mustGETReq(t *testing.T, ctx context.Context) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://p42-caldav.icloud.com/cal/x.ics", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -416,29 +424,18 @@ func TestAsICloudError_UnwrapsWrappedError(t *testing.T) {
 	}
 }
 
-func TestNormalizeIfMatch(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"", ""},
-		{"v1", `"v1"`},           // bare -> quoted
-		{`"v1"`, `"v1"`},         // already quoted -> passthrough
-		{`W/"v1"`, `W/"v1"`},     // weak -> passthrough
-		{"abc-123", `"abc-123"`}, // bare with dash -> quoted
-	}
-	for _, c := range cases {
-		if got := normalizeIfMatch(c.in); got != c.want {
-			t.Errorf("normalizeIfMatch(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 func TestValidateIfMatchETag(t *testing.T) {
 	if err := ValidateIfMatchETag(""); err != nil {
 		t.Fatalf("empty: %v", err)
 	}
 	if err := ValidateIfMatchETag(`"v1"`); err != nil {
 		t.Fatalf("quoted: %v", err)
+	}
+	if err := ValidateIfMatchETag("v1"); err == nil {
+		t.Fatal("expected rejection of an unquoted etag")
+	}
+	if err := ValidateIfMatchETag(`W/"v1"`); err == nil {
+		t.Fatal("expected rejection of a weak etag")
 	}
 	if err := ValidateIfMatchETag("*"); err == nil {
 		t.Fatal("expected rejection of etag=*")
@@ -468,17 +465,16 @@ func TestRetryDelay_HTTPDateForm(t *testing.T) {
 }
 
 func TestNewRetryClassifierReturnsWorkingDoer(t *testing.T) {
-	// The exported constructor must yield a doer that classifies non-retryable
-	// statuses (smoke test of the production wiring path).
+	// Definitive statuses are returned to the Calendar operation for
+	// operation-specific classification.
 	inner := &statusDoer{statuses: []int{http.StatusUnauthorized}}
 	rc := NewRetryClassifier(inner)
-	_, err := rc.Do(mustPUTReq(t))
-	if err == nil {
-		t.Fatal("expected a classified auth error")
+	resp, err := rc.Do(mustGETReq(t, context.Background()))
+	if err != nil {
+		t.Fatal(err)
 	}
-	cerr := AsICloudError(err)
-	if cerr == nil || cerr.Code != CodeAuthenticationRefused {
-		t.Errorf("err = %v, want authentication_refused", err)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }
 
@@ -515,9 +511,9 @@ func (d *bodyCaptureDoer) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestRetryClassifier_RewindsPUTBodyOnRetry(t *testing.T) {
+func TestRetryClassifier_RewindsREPORTBodyOnRetry(t *testing.T) {
 	payload := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
-	req, err := http.NewRequest(http.MethodPut, "https://p42-caldav.icloud.com/cal/x.ics", strings.NewReader(payload))
+	req, err := http.NewRequest("REPORT", "https://p42-caldav.icloud.com/cal/", strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}

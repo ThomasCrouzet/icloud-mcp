@@ -6,7 +6,51 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+The changes below are planned for v0.3.0 and were prepared on 2026-07-25.
+
 ### Added
+- Unified Calendar, Contacts, and Mail server in the existing `icloud-mcp`
+  binary. Calendar remains always enabled; Contacts, Mail read, Mail mutation,
+  and SMTP submission are independently composed from validated capability
+  gates.
+- Global local `icloud_capabilities` tool with version, global read-only state,
+  enabled domains, effective capability groups, exact sorted tool inventory,
+  and count. The default surface is 10 tools, global read-only is 7, and the
+  complete surface is 23.
+- Six opt-in Contacts tools over CardDAV: `list_address_books`,
+  `search_contacts`, `get_contact`, `create_contact`, `update_contact`, and
+  `delete_contact`. Contacts uses lazy successful-cache discovery, opaque
+  address-book identifiers, bounded vCard 3.0/4.0 reads, vCard 3.0 writes,
+  strong ETags, conditional mutations, compatible server-side search
+  prefilters, combined bounded local filtering, and a bounded all-card path for
+  digit-normalized phone search.
+- Three opt-in Mail read tools over IMAP: `list_mailboxes`, `search_messages`,
+  and `get_message`. Reads use fresh sessions, UIDVALIDITY identities,
+  descending bounded UID windows, EXAMINE/PEEK, curated headers, bounded plain
+  text, attachment metadata, and no raw MIME, HTML, or attachment payloads.
+- Three independently gated IMAP mutation tools: `set_message_flags`,
+  `move_message`, and `trash_message`. Mutations check UIDVALIDITY, fail closed
+  with `protocol_error` before STORE when CONDSTORE is advertised because
+  go-imap beta.8 cannot expose MODIFIED, use native MOVE or a UIDPLUS-only
+  fallback, and never use plain EXPUNGE. The unavailable CONDSTORE flag path
+  does not claim `concurrent_modification`.
+- Independently gated `send_message` over authenticated SMTP submission with
+  mandatory STARTTLS, a boot-validated exact-address recipient allowlist,
+  all-RCPT-before-DATA policy, no automatic retry, and explicit
+  `outcome_unknown` reconciliation. `to`, `cc`, and `bcc` are each optional,
+  with at least one aggregate recipient required.
+- Unified 12-variable configuration with strict parsing for all five booleans,
+  dedicated Mail identity/password support, Mail password fallback, and
+  boot-only `file://` support for every identity/password input.
+- Per-domain Calendar/Contacts HTTP allowlists plus fixed IMAP and SMTP socket
+  destinations, TLS 1.2 minimum, separate credentials/transports/rates/
+  semaphores, Mail SASL redaction, and process-local opaque HMAC audit tokens for
+  every Calendar, Contacts, IMAP, and SMTP mutation. Production audit records
+  no longer contain raw Calendar paths or UIDs.
+- Direct protocol dependencies for vCard, IMAP, MIME, SMTP, and SASL, bringing
+  the documented direct dependency set to 10. Added CardDAV and Mail
+  compatibility documentation and expanded architecture, security, setup, and
+  testing guidance for the unified server.
 - Tools: `get_event`, `find_free_slots`, `validate_event`, `calendar_capabilities`.
 - `search_events` optional filters: multi-calendar list, UID, status, all-day,
   cancelled, busy-only, compact (omit notes), stable sort by start+UID.
@@ -34,22 +78,58 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   generative tests). Local event validation shared by create/validate tools.
 - Native Go fuzz targets (paths, UIDs, RRULE, dates, redaction, hosts) and
   MCP in-process E2E registration tests.
-- Docs under `docs/` (architecture, security, CalDAV, testing). CI: mod
-  verify/tidy, fuzz smoke, pinned govulncheck, binary size budget,
+- Docs under `docs/` (architecture, security, CalDAV, CardDAV, Mail, testing).
+  CI: mod verify/tidy, fuzz smoke, pinned govulncheck, binary size budget,
   `InsecureSkipVerify` guard.
 - `CONTRIBUTING.md`; integration runbook in `docs/testing.md`.
 - Redactor also masks password-only Base64 (Std/RawStd/URL/RawURL).
+- Enforced a 1 MiB stdio frame cap, 64 KiB caller-reflecting error threshold,
+  256 KiB Calendar/MCP result caps, 1 MiB SMTP inbound-response budget,
+  XML/IMAP/MIME/iCalendar parser depth and item bounds, and pathological
+  recurrence work budgets.
+- Native fuzz targets in all five parser/security packages, per-package coverage
+  floors, a 78% aggregate coverage gate, and opt-in live Contacts and Mail
+  integration gates. Live tests require credentials and are not run in CI.
 
 ### Fixed
+- SMTP failures or parser panics after DATA starts now retain
+  `outcome_unknown`; cleanup failures cannot overwrite a definitive accepted
+  result. Successful IMAP COPY/MOVE with unusable COPYUID metadata likewise
+  retains reconciliation guidance.
+- `find_free_slots` now fails closed on any incomplete calendar, widens its
+  query for event buffers, and never reports authoritative availability from a
+  truncated recurrence or partial search.
+- Calendar recurrence validation rejects unreachable clock and date selectors
+  before entering non-interruptible dependency loops; unsafe non-RFC or
+  sub-daily selector combinations fail closed. Search now has aggregate
+  event/work bounds and independent 4/2 read/write semaphores. Malformed remote
+  objects fail closed instead of disappearing from results.
+- iCalendar input is structurally preflighted before recursive decoding.
+  VTIMEZONE transitions use exact pre-transition wall times and correct local
+  annual rules; all-day EXDATE/UNTIL values preserve DATE form.
+- CardDAV REPORT/GET redirects remain inside the selected opaque address book.
+  Contacts paths reject encoded traversal/separators and queries, ETags are
+  strict and singular, and ambiguous-write reconciliation reaches MCP clients.
+- Every JSON-RPC output frame is redacted, including protocol errors emitted
+  before tool middleware. Overlapping redaction secrets are processed longest
+  first.
+- Credential files are regular-file-only and capped at 4 KiB. Accepted
+  identities are plain addresses, and credential control characters fail at
+  boot without leaking values.
+- The optional health listener no longer resolves arbitrary hostnames and now
+  has read, write, idle, and header limits.
 - Local rate limiter fails fast (`rate_limited`) when the next token is more
   than 2s away, instead of blocking toward the 25s tool timeout.
-- HTTP retry layer explicitly rewinds request bodies via `GetBody` before each
-  429/5xx attempt (PUT/REPORT safe under retry).
-- Imported-UID fallback scan window widened from ±5 years to ±10 years.
+- Calendar retry handling now rewinds read request bodies only. Automatic
+  retries are limited to reads; PUT, DELETE, and full-series delete are never
+  replayed, and every ambiguous dispatched mutation, including a redirect,
+  returns `outcome_unknown`.
+- Imported-UID fallback scan window widened from +/-5 years to +/-10 years.
 - `gofmt` alignment on `Event.ETag` field.
 - Occurrence update with only `start` keeps duration (DTEND = start + prior length).
 - Client-supplied `etag=*` rejected (no last-writer-wins If-Match).
-- Agent calendar paths bound to the discovered home-set; REPORT hrefs validated.
+- Caller-supplied calendar paths bound to the discovered home-set; REPORT hrefs
+  validated.
 - Expanded occurrences no longer carry the master RRULE; EXDATE re-delete is
   deduped; UID rejects backslash and other controls.
 - Redactor iterates to a fixed point so secrets re-formed across a previous
@@ -59,7 +139,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or filesystem paths (boot failures log before the Redactor is installed).
 - Discovery revalidates port empty-or-443 on production iCloud hostnames
   (principal and home-set), matching the HTTP transport allowlist.
-- Calendar paths reject scheme-relative hosts (`//…`), query/fragment, and
+- Calendar paths reject scheme-relative hosts (`//...`), query/fragment, and
   percent-encoded `..`; PUT/REPORT/DELETE keep the resolved URL on the shard.
 - `update_event` preserves existing DTSTART/DTEND form (DATE / TZID / Z) instead
   of forcing UTC Z; occurrence EXDATE/RECURRENCE-ID match the master form.
@@ -68,7 +148,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `update_event` and series `delete_event` fail closed when no ETag is available
   (no unconditional PUT/DELETE; pass `etag` from `get_event`).
 - `scope=occurrence` requires a recurring master (RRULE); override copy skips
-  ATTENDEE/ORGANIZER; duration defaults honor DURATION / all-day 24h.
+  ATTENDEE/ORGANIZER; duration defaults honor nominal DURATION and next-civil-day
+  all-day semantics across DST.
 - `update_event` rejects non-string optional fields (no silent clear).
 - Discovery failures are no longer cached forever (retry after transient errors).
 - MCP success payloads and path-escaped password forms are redacted; free-slot
@@ -77,11 +158,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Binary version for `calendar_capabilities` is passed via tool deps (no global).
 
 ### Changed
-- Read-only mode now exposes 6 tools (was 2); write tools remain absent.
+- Read-only mode with optional domains disabled now exposes 7 tools (was 2),
+  including the global capability tool; write tools remain absent.
 - Default `ICLOUD_MCP_DEFAULT_TZ` remains UTC for compatibility (operators
   should set the calendar owner timezone explicitly).
-- Docs: operator trust for `file://` secrets, dual retry budget (body rewind +
-  2s local rate-limit cap), CONTRIBUTING; threat model notes `deletedTitle`
+- Docs: operator trust for `file://` secrets, read-request body rewind plus the
+  2s local rate-limit cap, CONTRIBUTING; threat model notes `deletedTitle`
   on MCP success (never in audit logs). README and `docs/` refreshed to match
   current behavior (fair multi-calendar search, TZID+VTIMEZONE recurring
   creates, structured recurrence/alarms). Removed internal audit and V2
@@ -90,6 +172,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `permission_denied`, or `unreadable`) without the path.
 - `make release` pins `golang:1.25` by image digest; `make lint` falls back to
   pinned `golangci-lint` via `go run` when not on PATH.
+- `make build` embeds `VERSION` via the same ldflags as release targets
+  (`make build VERSION=v0.3.0`).
+- Release targets now reject unset/`dev` versions, create `dist/` from a clean
+  checkout, package binaries with license notices, and emit SHA-256 checksums.
+  `make install` now builds for the host instead of installing linux/arm64.
+- Version reporting falls back to Go module build information for
+  `go install ...@version` while preserving the release ldflags override.
+- CI now checks Darwin arm64 builds, release version injection, public-text
+  ASCII policy, forbidden attribution trailers, and unresolved direct network
+  destinations.
 
 ### Security
 - Account identity is never printed on invalid `ICLOUD_EMAIL` at boot.
@@ -114,7 +206,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - REPORT calendar-query requests `D:getetag` with bare `calendar-data`, so
   imported events found only via REPORT still get conditional PUT when ETag is
   present.
-- `findEventByUID` fallback scans about ±5 years around now (not 1970-2100).
+- `findEventByUID` fallback scans about +/-5 years around now (not 1970-2100).
 - MCP tool errors are JSON `{"code","message"}` when a classified CalDAV error
   applies; plain validation errors omit `code`.
 - `search_events` multi-calendar mode stops starting new calendars once the

@@ -1,6 +1,7 @@
 package icloud
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -84,6 +85,15 @@ type NormalizedEvent struct {
 
 // ValidateEventInput validates create/update-shaped input without network I/O.
 func ValidateEventInput(in *EventInput, defaultLoc *time.Location) ValidationResult {
+	return ValidateEventInputContext(context.Background(), in, defaultLoc)
+}
+
+// ValidateEventInputContext is the cancellation-aware validation path used by
+// MCP handlers before they perform network I/O.
+func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *time.Location) ValidationResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var errs, warns []string
 	if in == nil {
 		return ValidationResult{OK: false, Errors: []string{"event cannot be nil"}}
@@ -107,21 +117,26 @@ func ValidateEventInput(in *EventInput, defaultLoc *time.Location) ValidationRes
 	}
 	status := strings.ToUpper(strings.TrimSpace(in.Status))
 	if !AllowedStatus[status] {
-		errs = append(errs, fmt.Sprintf("status must be one of TENTATIVE, CONFIRMED, CANCELLED (got %q)", in.Status))
+		errs = append(errs, "status must be one of TENTATIVE, CONFIRMED, CANCELLED")
 	}
 	transp := strings.ToUpper(strings.TrimSpace(in.Transparency))
 	if !AllowedTransparency[transp] {
-		errs = append(errs, fmt.Sprintf("transparency must be OPAQUE or TRANSPARENT (got %q)", in.Transparency))
+		errs = append(errs, "transparency must be OPAQUE or TRANSPARENT")
 	}
 	if in.URL != "" {
 		if err := validateEventURL(in.URL); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
+	var writeLoc *time.Location
 	if in.Timezone != "" {
-		if _, err := time.LoadLocation(in.Timezone); err != nil {
-			errs = append(errs, fmt.Sprintf("invalid timezone %q", in.Timezone))
+		var err error
+		writeLoc, err = time.LoadLocation(in.Timezone)
+		if err != nil {
+			errs = append(errs, "invalid timezone")
 		}
+	} else {
+		writeLoc = defaultLoc
 	}
 	rrule := strings.TrimSpace(in.Recurrence)
 	if in.Structured != nil {
@@ -139,8 +154,11 @@ func ValidateEventInput(in *EventInput, defaultLoc *time.Location) ValidationRes
 		}
 	}
 	if rrule != "" {
-		if err := ValidateRRULE(rrule); err != nil {
+		if err := validateRRULEForStartContext(ctx, rrule, in.StartTime); err != nil {
 			errs = append(errs, err.Error())
+		}
+		if !in.AllDay && writeLoc != nil && writeLoc != time.UTC && !recurringTimezoneStable(writeLoc, in.StartTime) {
+			errs = append(errs, "timezone does not have a stable annual transition rule for recurring writes")
 		}
 	}
 	if in.ClientUID != "" {
@@ -214,12 +232,12 @@ func collectAlarms(in *EventInput) []int {
 }
 
 func validateEventURL(raw string) error {
-	if len(raw) > 2000 {
-		return fmt.Errorf("url too long (max 2000 characters)")
+	if len(raw) > MaxURLLen {
+		return fmt.Errorf("url too long (max %d UTF-8 bytes)", MaxURLLen)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
+		return fmt.Errorf("invalid url")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
@@ -248,13 +266,13 @@ func ValidateEventUpdateFields(up *EventUpdate) error {
 	if up.Status != nil {
 		s := strings.ToUpper(strings.TrimSpace(*up.Status))
 		if !AllowedStatus[s] {
-			return fmt.Errorf("status must be one of TENTATIVE, CONFIRMED, CANCELLED (got %q)", *up.Status)
+			return fmt.Errorf("status must be one of TENTATIVE, CONFIRMED, CANCELLED")
 		}
 	}
 	if up.Transparency != nil {
 		s := strings.ToUpper(strings.TrimSpace(*up.Transparency))
 		if !AllowedTransparency[s] {
-			return fmt.Errorf("transparency must be OPAQUE or TRANSPARENT (got %q)", *up.Transparency)
+			return fmt.Errorf("transparency must be OPAQUE or TRANSPARENT")
 		}
 	}
 	if up.URL != nil && *up.URL != "" {

@@ -73,11 +73,14 @@ func TestDeleteEventHandler_AuditNeverContainsTitle(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(logLine)), &entry); err != nil {
 		t.Fatalf("audit line is not valid JSON: %v\n%s", err, logLine)
 	}
-	if entry["tool"] != "delete_event" || entry["status"] != "success" || entry["uid"] != "uid-1" {
+	if entry["tool"] != "delete_event" || entry["status"] != "success" ||
+		entry["domain"] != "calendar" || entry["resourceType"] != "event" || entry["resourceToken"] == "" {
 		t.Errorf("unexpected audit entry: %v", entry)
 	}
-	if strings.Contains(logLine, "Very private title") {
-		t.Fatalf("audit line must NEVER contain the deleted title: %s", logLine)
+	for _, forbidden := range []string{"Very private title", "/cal/home/", "uid-1", `"calendar":`, `"uid":`} {
+		if strings.Contains(logLine, forbidden) {
+			t.Fatalf("audit line must not contain raw Calendar data %q: %s", forbidden, logLine)
+		}
 	}
 }
 

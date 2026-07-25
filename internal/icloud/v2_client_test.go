@@ -96,7 +96,7 @@ func TestClient_DeleteEvent_IfMatch412(t *testing.T) {
 	c := m.client()
 
 	_, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-simple-1", &DeleteOptions{
-		IfMatchETag: "stale",
+		IfMatchETag: `"stale"`,
 	})
 	if err == nil {
 		t.Fatal("expected 412")
@@ -118,7 +118,7 @@ func TestClient_DeleteEvent_OccurrenceAddsEXDATE(t *testing.T) {
 	res, err := c.DeleteEvent(context.Background(), testHomeCalendar, "uid-recur-1", &DeleteOptions{
 		Scope:        ScopeOccurrence,
 		RecurrenceID: &recID,
-		IfMatchETag:  "e1",
+		IfMatchETag:  `"e1"`,
 	})
 	if err != nil {
 		t.Fatalf("delete occurrence: %v", err)
@@ -229,7 +229,7 @@ func TestClient_UpdateEvent_OccurrenceScope(t *testing.T) {
 		Title:        &newTitle,
 		Scope:        ScopeOccurrence,
 		RecurrenceID: &recID,
-		IfMatchETag:  "e1",
+		IfMatchETag:  `"e1"`,
 	})
 	if err != nil {
 		t.Fatal(err)

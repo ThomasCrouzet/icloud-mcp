@@ -31,17 +31,23 @@ const (
 	// CodeConflict / CodeConcurrentModification: 409/412.
 	CodeConflict               Code = "conflict"
 	CodeConcurrentModification Code = "concurrent_modification"
-	// CodeRateLimited: 429 after HTTP-layer retry budget exhausted.
+	// CodeRateLimited: 429, after read retries or immediately for a mutation.
 	CodeRateLimited Code = "rate_limited"
 	// CodeTimeout: context deadline or client timeout.
 	CodeTimeout Code = "timeout"
-	// CodeServerUnavailable / CodeUnavailable: 5xx after retries.
+	// CodeServerUnavailable / CodeUnavailable: a definitive unavailable status.
 	CodeServerUnavailable Code = "server_unavailable"
 	CodeUnavailable       Code = "unavailable"
 	// CodePartialFailure: multi-calendar operation succeeded partially.
 	CodePartialFailure Code = "partial_failure"
 	// CodeProtocolError: unexpected protocol / HTTP status not otherwise classified.
 	CodeProtocolError Code = "protocol_error"
+	// CodePayloadTooLarge: a bounded remote resource or serialized result
+	// exceeded its security limit.
+	CodePayloadTooLarge Code = "payload_too_large"
+	// CodeOutcomeUnknown: a mutation was dispatched but its final outcome
+	// cannot be determined safely. Callers must reconcile before retrying.
+	CodeOutcomeUnknown Code = "outcome_unknown"
 	// CodeHTTPError: legacy alias of protocol_error for unexpected HTTP status.
 	CodeHTTPError Code = "http_error"
 	// CodeInternal: unexpected internal error (never carries raw bodies).
@@ -136,6 +142,35 @@ func classifyStatus(status int) *Error {
 		return NewError(CodeProtocolError, status,
 			fmt.Sprintf("iCloud returned an unexpected HTTP status (%d)", status), nil)
 	}
+}
+
+func outcomeUnknownError(status int) *Error {
+	return &Error{
+		Code:    CodeOutcomeUnknown,
+		Status:  status,
+		Message: "the Calendar mutation outcome is unknown",
+		Details: map[string]string{
+			"reconciliation": "Re-read the target event before retrying; do not repeat the mutation blindly.",
+		},
+	}
+}
+
+func withOutcomeReconciliation(err error, uid, reconciliation string) error {
+	typed := AsICloudError(err)
+	if typed == nil || typed.Code != CodeOutcomeUnknown {
+		return err
+	}
+	details := make(map[string]string, len(typed.Details)+2)
+	for key, value := range typed.Details {
+		details[key] = value
+	}
+	if uid != "" {
+		details["uid"] = uid
+	}
+	details["reconciliation"] = reconciliation
+	clone := *typed
+	clone.Details = details
+	return &clone
 }
 
 // PublicCode maps an internal/legacy Code to the objective vocabulary where

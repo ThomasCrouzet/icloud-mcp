@@ -107,6 +107,10 @@ func TestCreateEventHandler_ValidationErrors(t *testing.T) {
 			name: "alarm out of bounds",
 			args: map[string]any{"title": "x", "start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z", "calendar": "/cal/", "alarm_minutes_before": float64(-5)},
 		},
+		{
+			name: "all-day end before start",
+			args: map[string]any{"title": "x", "start": "2026-07-02", "end": "2026-07-01", "calendar": "/cal/", "all_day": true},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,11 +173,13 @@ func TestCreateEventHandler_AuditLogged(t *testing.T) {
 	if entry["tool"] != "create_event" || entry["status"] != "success" {
 		t.Errorf("unexpected audit entry: %v", entry)
 	}
-	if entry["uid"] != "audit-uid" {
-		t.Errorf("audit entry should contain the uid: %v", entry)
+	if entry["domain"] != "calendar" || entry["resourceType"] != "event" || entry["resourceToken"] == "" {
+		t.Errorf("audit entry should contain an opaque Calendar event resource: %v", entry)
 	}
-	if strings.Contains(logLine, "Secret title") {
-		t.Errorf("audit line must NEVER contain the title: %s", logLine)
+	for _, forbidden := range []string{"Secret title", "/cal/home/", "audit-uid", `"calendar":`, `"uid":`} {
+		if strings.Contains(logLine, forbidden) {
+			t.Errorf("audit line must not contain raw Calendar data %q: %s", forbidden, logLine)
+		}
 	}
 }
 

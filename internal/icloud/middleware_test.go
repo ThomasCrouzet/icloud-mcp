@@ -129,6 +129,82 @@ func TestGuardedService_WriteBudgetIndependentFromRead(t *testing.T) {
 	}
 }
 
+type semaphoreTestService struct {
+	countingService
+	listStarted   chan struct{}
+	listRelease   chan struct{}
+	createStarted chan struct{}
+}
+
+func (s *semaphoreTestService) ListCalendars(ctx context.Context) ([]Calendar, error) {
+	select {
+	case s.listStarted <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-s.listRelease:
+		return []Calendar{{Path: "/cal/"}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *semaphoreTestService) CreateEvent(context.Context, string, *NewEvent) (string, error) {
+	s.createStarted <- struct{}{}
+	return "uid", nil
+}
+
+func TestGuardedService_SemaphoresBoundAndSeparateDomains(t *testing.T) {
+	inner := &semaphoreTestService{
+		listStarted:   make(chan struct{}, 2),
+		listRelease:   make(chan struct{}),
+		createStarted: make(chan struct{}, 1),
+	}
+	g := NewGuardedService(inner, 0, time.Millisecond)
+	g.readSem = make(chan struct{}, 1)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := g.ListCalendars(context.Background())
+		firstDone <- err
+	}()
+	<-inner.listStarted
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := g.ListCalendars(context.Background())
+		secondDone <- err
+	}()
+	select {
+	case <-inner.listStarted:
+		t.Fatal("second read bypassed the Calendar read semaphore")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	if _, err := g.CreateEvent(context.Background(), "/cal/", &NewEvent{Title: "write"}); err != nil {
+		t.Fatalf("independent write failed: %v", err)
+	}
+	select {
+	case <-inner.createStarted:
+	default:
+		t.Fatal("write did not use the independent Calendar write semaphore")
+	}
+
+	close(inner.listRelease)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inner.listStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second read did not acquire the released semaphore")
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGuardedService_RetrySucceedsAfterFailures(t *testing.T) {
 	inner := &countingService{listFailN: 2}
 	g := NewGuardedService(inner, 2, time.Millisecond)
@@ -177,19 +253,16 @@ func TestGuardedService_UpdateEventNeverRetried(t *testing.T) {
 	}
 }
 
-func TestGuardedService_DeleteEventRetried(t *testing.T) {
+func TestGuardedService_DeleteEventNeverRetried(t *testing.T) {
 	inner := &countingService{deleteFailN: 1}
 	g := NewGuardedService(inner, 2, time.Millisecond)
 
-	res, err := g.DeleteEvent(context.Background(), "/cal/", "uid", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := g.DeleteEvent(context.Background(), "/cal/", "uid", nil)
+	if err == nil {
+		t.Fatal("expected the first failure")
 	}
-	if res.Title != "deleted-title" {
-		t.Errorf("title = %q, want %q", res.Title, "deleted-title")
-	}
-	if inner.deleteCalls != 2 {
-		t.Errorf("deleteCalls = %d, want 2 (1 failure + 1 successful retry; DeleteEvent is idempotent)", inner.deleteCalls)
+	if inner.deleteCalls != 1 {
+		t.Errorf("deleteCalls = %d, want 1 (DeleteEvent must never be replayed)", inner.deleteCalls)
 	}
 }
 

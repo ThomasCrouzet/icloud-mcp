@@ -223,7 +223,7 @@ func TestBusyBuffers(t *testing.T) {
 	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
 	busy := BusyFromEvents([]Event{{
 		StartTime: start, EndTime: start.Add(time.Hour), Title: "x",
-	}}, true, 15*time.Minute, 15*time.Minute)
+	}}, true, 15*time.Minute, 15*time.Minute, time.UTC)
 	if len(busy) != 1 {
 		t.Fatal()
 	}

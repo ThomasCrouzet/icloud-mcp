@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -32,7 +31,8 @@ type Server struct {
 // statusFn, if non-nil, returns the current rate-limiter state for /status;
 // pass nil when there is no guarded service to report on.
 func Start(addr, version string, statusFn func() any) (*Server, error) {
-	if err := validateLoopbackAddr(addr); err != nil {
+	listenAddr, err := canonicalLoopbackAddr(addr)
+	if err != nil {
 		return nil, err
 	}
 
@@ -68,12 +68,16 @@ func Start(addr, version string, statusFn func() any) (*Server, error) {
 	})
 
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       15 * time.Second,
+		MaxHeaderBytes:    8 << 10,
 	}
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -101,42 +105,25 @@ func (s *Server) Close() error {
 // localhost are accepted. This enforces the documented threat-model rule:
 // never expose /healthz or /status on all interfaces.
 func validateLoopbackAddr(addr string) error {
+	_, err := canonicalLoopbackAddr(addr)
+	return err
+}
+
+func canonicalLoopbackAddr(addr string) (string, error) {
 	if addr == "" {
-		return fmt.Errorf("health address cannot be empty")
+		return "", fmt.Errorf("health address cannot be empty")
 	}
-	host, _, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		// Malformed addresses that are not parseable as host:port are left to
-		// net.Listen so Start keeps failing with a bind error (preserves the
-		// historical TestStart_InvalidAddrFails behavior).
-		return nil
+		return "", fmt.Errorf("health address is invalid: %w", err)
 	}
 
-	// Empty host means "all interfaces" (e.g. ":8797"). Always reject.
-	switch strings.ToLower(host) {
-	case "", "0.0.0.0", "::", "[::]":
-		return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
-	case "localhost", "127.0.0.1", "::1", "[::1]":
-		return nil
+	switch host {
+	case "localhost":
+		return net.JoinHostPort("127.0.0.1", port), nil
+	case "127.0.0.1", "::1":
+		return net.JoinHostPort(host, port), nil
+	default:
+		return "", fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
 	}
-
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip == nil {
-		// Hostname other than localhost: resolve and require every answer to
-		// be loopback. Fail closed if resolution fails.
-		ips, rerr := net.LookupIP(host)
-		if rerr != nil || len(ips) == 0 {
-			return fmt.Errorf("health address %q rejected: cannot resolve host as loopback: %v", addr, rerr)
-		}
-		for _, resolved := range ips {
-			if !resolved.IsLoopback() {
-				return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
-			}
-		}
-		return nil
-	}
-	if !ip.IsLoopback() {
-		return fmt.Errorf("health address %q rejected: must bind to loopback only (use 127.0.0.1 or ::1)", addr)
-	}
-	return nil
 }

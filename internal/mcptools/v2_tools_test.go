@@ -88,6 +88,15 @@ func TestCalendarCapabilities_NoSecrets(t *testing.T) {
 	if !cap.Features["free_slots"] || cap.Features["this_and_future"] {
 		t.Errorf("features: %+v", cap.Features)
 	}
+	calendarNames := map[string]bool{}
+	for _, name := range append(calendarReadToolNames(), calendarWriteToolNames()...) {
+		calendarNames[name] = true
+	}
+	for _, name := range cap.Tools {
+		if !calendarNames[name] {
+			t.Errorf("calendar_capabilities contains non-Calendar tool %q", name)
+		}
+	}
 }
 
 func TestDeleteEventHandler_DryRunNoMutation(t *testing.T) {

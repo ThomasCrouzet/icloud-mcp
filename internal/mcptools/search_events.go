@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,28 +12,31 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
+	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
+
+const maxExplicitSearchCalendars = 10
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
-		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Each occurrence includes recurrenceId (use with scope=occurrence) and etag when known; expanded rows omit master RRULE. Sorted by start then UID, hard-capped at 400 (truncated). Multi-calendar: all calendars are queried then capped fairly; non-auth errors become partialFailure+warnings. Optional filters: calendars, uid, status, all_day, include_cancelled, busy_only, compact, expand_recurrence (default true). Auth errors are never soft-warnings."),
+		mcp.WithDescription("Searches iCloud calendar events over a date range. Recurring events are expanded (capped at 2000/series; truncatedByExpansion). Each occurrence includes recurrenceId (use with scope=occurrence) and etag when known; expanded rows omit master RRULE. Sorted by start then UID, hard-capped at 400 and 256 KiB at event boundaries (truncated). Multi-calendar: all calendars are queried then capped fairly; non-auth errors become partialFailure+warnings. Optional filters: calendars, uid, status, all_day, include_cancelled, busy_only, compact, expand_recurrence (default true). Auth, payload-limit, and protocol errors are never soft-warnings."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Range start", defaultLoc))),
 		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("Range end", defaultLoc)+" At most 366 days after start.")),
 		mcp.WithString("calendar", mcp.Description("Calendar path (see list_calendars). All calendars if omitted (best-effort under the 400-event cap and rate limits).")),
-		mcp.WithString("calendars", mcp.Description("Comma-separated calendar paths (optional; merges with calendar)")),
-		mcp.WithString("query", mcp.MaxLength(icloud.MaxQueryLen), mcp.Description("Optional text filter (title/location/notes, case insensitive)")),
-		mcp.WithString("uid", mcp.Description("Optional exact UID filter")),
-		mcp.WithString("status", mcp.Description("Optional status filter: TENTATIVE, CONFIRMED, CANCELLED")),
+		mcp.WithString("calendars", mcp.Description("Comma-separated calendar paths (at most 10 unique paths, including calendar; optional; merges with calendar)")),
+		mcp.WithString("query", mcp.MaxLength(icloud.MaxQueryLen), mcp.Description("Optional text filter (title/location/notes, case insensitive); runtime limit 200 UTF-8 bytes")),
+		mcp.WithString("uid", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Optional exact UID filter; runtime limit 255 UTF-8 bytes")),
+		mcp.WithString("status", mcp.Enum("TENTATIVE", "CONFIRMED", "CANCELLED"), mcp.Description("Optional status filter")),
 		mcp.WithBoolean("all_day", mcp.Description("If set, keep only all-day (true) or timed (false) events")),
-		mcp.WithBoolean("include_cancelled", mcp.Description("Include CANCELLED events (default true)")),
-		mcp.WithBoolean("busy_only", mcp.Description("If true, exclude TRANSPARENT events")),
-		mcp.WithBoolean("compact", mcp.Description("If true, omit notes from results. Prefer true for wide ranges to reduce PII in the agent context; default false keeps notes for detail views.")),
-		mcp.WithBoolean("expand_recurrence", mcp.Description("Expand RRULE occurrences (default true; false still returns masters overlapping the range via server time-range)")),
-		mcp.WithNumber("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Maximum number of results per page (max 400)")),
-		mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0), mcp.Description("Pagination offset")),
+		mcp.WithBoolean("include_cancelled", mcp.DefaultBool(true), mcp.Description("Include CANCELLED events")),
+		mcp.WithBoolean("busy_only", mcp.DefaultBool(false), mcp.Description("If true, exclude TRANSPARENT events")),
+		mcp.WithBoolean("compact", mcp.DefaultBool(false), mcp.Description("If true, omit notes from results. Prefer true for wide ranges to reduce PII in the agent context; false keeps notes for detail views.")),
+		mcp.WithBoolean("expand_recurrence", mcp.DefaultBool(true), mcp.Description("Expand RRULE occurrences; false still returns masters overlapping the range via server time-range")),
+		mcp.WithInteger("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Maximum number of results per page (max 400)")),
+		mcp.WithInteger("offset", mcp.DefaultNumber(0), mcp.Min(0), mcp.Description("Pagination offset")),
 	)
 }
 
@@ -106,41 +110,50 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			}
 		}
 		statusFilter := strings.ToUpper(strings.TrimSpace(req.GetString("status", "")))
-		includeCancelled := true
-		if v, ok := req.GetArguments()["include_cancelled"]; ok {
-			if b, ok := v.(bool); ok {
-				includeCancelled = b
-			}
+		if statusFilter != "" && statusFilter != "TENTATIVE" && statusFilter != "CONFIRMED" && statusFilter != "CANCELLED" {
+			return errResult(deps.Redactor, "validation", fmt.Errorf("status must be TENTATIVE, CONFIRMED, or CANCELLED")), nil
 		}
-		busyOnly := req.GetBool("busy_only", false)
-		compact := req.GetBool("compact", false)
+		includeCancelled, err := optionalBoolArg(req, "include_cancelled", true)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
+		busyOnly, err := optionalBoolArg(req, "busy_only", false)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
+		compact, err := optionalBoolArg(req, "compact", false)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
 		// expand_recurrence defaults true when omitted.
-		expandRecurrence := true
-		if v, ok := req.GetArguments()["expand_recurrence"]; ok {
-			if b, ok := v.(bool); ok {
-				expandRecurrence = b
-			}
+		expandRecurrence, err := optionalBoolArg(req, "expand_recurrence", true)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
 		}
 		searchOpts := &icloud.SearchOptions{ExpandRecurrence: expandRecurrence}
 		filterAllDay := false
 		allDayWanted := false
-		if v, ok := req.GetArguments()["all_day"]; ok {
-			if b, ok := v.(bool); ok {
-				filterAllDay = true
-				allDayWanted = b
+		if _, ok := req.GetArguments()["all_day"]; ok {
+			allDayWanted, err = optionalBoolArg(req, "all_day", false)
+			if err != nil {
+				return errResult(deps.Redactor, "validation", err), nil
 			}
+			filterAllDay = true
 		}
 
-		limit := req.GetInt("limit", 100)
-		if limit <= 0 {
-			limit = 100
+		limit, err := optionalIntArg(req, "limit", 100)
+		if err != nil || limit < 1 || limit > icloud.MaxResults {
+			if err == nil {
+				err = fmt.Errorf("limit must be between 1 and %d", icloud.MaxResults)
+			}
+			return errResult(deps.Redactor, "validation", err), nil
 		}
-		if limit > icloud.MaxResults {
-			limit = icloud.MaxResults
+		offset, err := optionalIntArg(req, "offset", 0)
+		if err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
 		}
-		offset := req.GetInt("offset", 0)
 		if offset < 0 {
-			offset = 0
+			return errResult(deps.Redactor, "validation", fmt.Errorf("offset must be non-negative")), nil
 		}
 
 		var all []icloud.Event
@@ -156,7 +169,8 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				if ie := icloud.AsICloudError(err); ie != nil {
 					switch ie.Code {
 					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
-						icloud.CodeAuthentication, icloud.CodeAuthorization:
+						icloud.CodeAuthentication, icloud.CodeAuthorization,
+						icloud.CodePayloadTooLarge, icloud.CodeProtocolError:
 						return errResult(deps.Redactor, "searching events", err), nil
 					}
 				}
@@ -228,7 +242,64 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			Warnings:             warnings,
 			Events:               eventsToDTO(page, compact),
 		}
-		return writeJSON(deps.Redactor, resp), nil
+		return writeSearchEventsJSON(deps.Redactor, &resp), nil
+	}
+}
+
+func writeSearchEventsJSON(red *security.Redactor, resp *searchEventsResponse) *mcp.CallToolResult {
+	if resp == nil {
+		return errResult(red, "formatting response", icloud.NewError(icloud.CodeInternal, 0, "Calendar search result is missing", nil))
+	}
+	allEvents := resp.Events
+	probe := *resp
+	probe.Events = []searchEventDTO{}
+	probe.Count = len(allEvents)
+	probe.Truncated = true
+	base, err := json.Marshal(probe)
+	if err != nil {
+		return errResult(red, "formatting response", err)
+	}
+	used := len(red.Redact(string(base)))
+	if used > maxCalendarResultBytes {
+		return writeCalendarEncoded(red, base)
+	}
+
+	selected := make([]searchEventDTO, 0, len(allEvents))
+	for i := range allEvents {
+		encoded, err := json.Marshal(allEvents[i])
+		if err != nil {
+			return errResult(red, "formatting response", err)
+		}
+		addition := len(red.Redact(string(encoded)))
+		if len(selected) > 0 {
+			addition++ // comma between event objects
+		}
+		if used+addition > maxCalendarResultBytes {
+			break
+		}
+		selected = append(selected, allEvents[i])
+		used += addition
+	}
+
+	resp.Events = selected
+	resp.Count = len(selected)
+	if len(selected) < len(allEvents) {
+		resp.Truncated = true
+	}
+	for {
+		encoded, err := json.Marshal(resp)
+		if err != nil {
+			return errResult(red, "formatting response", err)
+		}
+		if len(red.Redact(string(encoded))) <= maxCalendarResultBytes {
+			return writeCalendarEncoded(red, encoded)
+		}
+		if len(resp.Events) == 0 {
+			return writeCalendarEncoded(red, encoded)
+		}
+		resp.Events = resp.Events[:len(resp.Events)-1]
+		resp.Count = len(resp.Events)
+		resp.Truncated = true
 	}
 }
 
@@ -236,6 +307,9 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 	var paths []string
 	seen := map[string]bool{}
 	add := func(p string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		p = strings.TrimSpace(p)
 		if p == "" {
 			return nil
@@ -244,6 +318,9 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 			return err
 		}
 		if !seen[p] {
+			if len(paths) >= maxExplicitSearchCalendars {
+				return fmt.Errorf("calendar selection must contain at most %d unique paths", maxExplicitSearchCalendars)
+			}
 			seen[p] = true
 			paths = append(paths, p)
 		}
@@ -267,6 +344,9 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 		return nil, err
 	}
 	for _, c := range cals {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		paths = append(paths, c.Path)
 	}
 	return paths, nil

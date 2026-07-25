@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mcptools"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
@@ -67,33 +68,25 @@ func TestTimeoutMiddlewarePasses(t *testing.T) {
 	}
 }
 
-// TestBootRedactorMasksSecretEncodings mirrors the secret set registered in
-// main so a future trim of the list is caught without starting the server.
-func TestBootRedactorMasksSecretEncodings(t *testing.T) {
-	email := "user@example.com"
-	password := "app-specific-secret"
-	basicUserPass := []byte(email + ":" + password)
-	pwBytes := []byte(password)
-	red := security.NewRedactor(
-		password,
-		email,
-		base64.StdEncoding.EncodeToString(basicUserPass),
-		base64.RawStdEncoding.EncodeToString(basicUserPass),
-		base64.URLEncoding.EncodeToString(basicUserPass),
-		base64.RawURLEncoding.EncodeToString(basicUserPass),
-		base64.StdEncoding.EncodeToString(pwBytes),
-		base64.RawStdEncoding.EncodeToString(pwBytes),
-		base64.URLEncoding.EncodeToString(pwBytes),
-		base64.RawURLEncoding.EncodeToString(pwBytes),
-		url.QueryEscape(password),
-		url.PathEscape(password),
-	)
+// TestBootRedactorMasksEnabledDomainVariants mirrors main's credential pairs,
+// including Mail SASL PLAIN forms.
+func TestBootRedactorMasksEnabledDomainVariants(t *testing.T) {
+	cfg := &config.Config{
+		Email:        "calendar-user@example.com",
+		Password:     "calendar-app-secret",
+		EnableMail:   true,
+		MailAddress:  "mail-user@icloud.com",
+		MailPassword: "mail-app-secret",
+	}
+	red := newBootRedactor(cfg)
 	samples := []string{
-		password,
-		email,
-		base64.StdEncoding.EncodeToString(basicUserPass),
-		base64.URLEncoding.EncodeToString(pwBytes),
-		url.QueryEscape(password),
+		cfg.Email,
+		cfg.Password,
+		base64.StdEncoding.EncodeToString([]byte(cfg.Email + ":" + cfg.Password)),
+		cfg.MailAddress,
+		cfg.MailPassword,
+		base64.StdEncoding.EncodeToString([]byte("\x00" + cfg.MailAddress + "\x00" + cfg.MailPassword)),
+		base64.StdEncoding.EncodeToString([]byte(cfg.MailAddress + "\x00" + cfg.MailAddress + "\x00" + cfg.MailPassword)),
 	}
 	for _, s := range samples {
 		out := red.Redact("leak:" + s)
@@ -106,26 +99,151 @@ func TestBootRedactorMasksSecretEncodings(t *testing.T) {
 	}
 }
 
-// TestRegisterReadOnlyWiring ensures production Register path (RO) exposes
-// the six read tools and hides writes, matching main's cfg.ReadOnly branch.
+func TestBootRedactorExcludesDisabledMailCredentials(t *testing.T) {
+	cfg := &config.Config{
+		Email:        "calendar-user@example.com",
+		Password:     "calendar-app-secret",
+		EnableMail:   false,
+		MailAddress:  "disabled-mail@icloud.com",
+		MailPassword: "disabled-mail-secret",
+	}
+	output := newBootRedactor(cfg).Redact(cfg.MailAddress + " " + cfg.MailPassword)
+	if output != cfg.MailAddress+" "+cfg.MailPassword {
+		t.Fatalf("disabled Mail credentials were unexpectedly registered: %q", output)
+	}
+}
+
+func TestOptionalServiceConstructionIsLazyAndGated(t *testing.T) {
+	base := config.Config{
+		Email:        "calendar-user@example.com",
+		Password:     "calendar-app-secret",
+		MailAddress:  "mail-user@icloud.com",
+		MailPassword: "mail-app-secret",
+		Timeout:      time.Second,
+	}
+	contactsService, mailService, err := newOptionalServices(&base)
+	if err != nil || contactsService != nil || mailService != nil {
+		t.Fatalf("disabled optional services = contacts:%T mail:%T err:%v", contactsService, mailService, err)
+	}
+
+	contactsConfig := base
+	contactsConfig.EnableContacts = true
+	contactsService, mailService, err = newOptionalServices(&contactsConfig)
+	if err != nil || contactsService == nil || mailService != nil {
+		t.Fatalf("Contacts construction = contacts:%T mail:%T err:%v", contactsService, mailService, err)
+	}
+
+	mailConfig := base
+	mailConfig.EnableMail = true
+	if err := mailConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	contactsService, mailService, err = newOptionalServices(&mailConfig)
+	if err != nil || contactsService != nil || mailService == nil {
+		t.Fatalf("Mail construction = contacts:%T mail:%T err:%v", contactsService, mailService, err)
+	}
+
+	readOnlySendConfig := base
+	readOnlySendConfig.EnableMail = true
+	readOnlySendConfig.EnableMailSend = true
+	readOnlySendConfig.ReadOnly = true
+	readOnlySendConfig.SMTPAllowedRecipients = []string{"allowed@example.com"}
+	if err := readOnlySendConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	_, mailService, err = newOptionalServices(&readOnlySendConfig)
+	if err != nil || mailService == nil || readOnlySendConfig.EffectiveMailSend() {
+		t.Fatalf("read-only Mail send construction = mail:%T effective:%t err:%v",
+			mailService, readOnlySendConfig.EffectiveMailSend(), err)
+	}
+
+	sendConfig := base
+	sendConfig.EnableMail = true
+	sendConfig.EnableMailSend = true
+	sendConfig.SMTPAllowedRecipients = []string{"allowed@example.com"}
+	if err := sendConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	_, mailService, err = newOptionalServices(&sendConfig)
+	if err != nil || mailService == nil || !sendConfig.EffectiveMailSend() {
+		t.Fatalf("enabled Mail send construction = mail:%T effective:%t err:%v",
+			mailService, sendConfig.EffectiveMailSend(), err)
+	}
+}
+
+// TestRegisterReadOnlyWiring ensures production unified registration exposes
+// the seven default read/local tools and hides writes.
 func TestRegisterReadOnlyWiring(t *testing.T) {
 	s := server.NewMCPServer("icloud-mcp-test", "test",
 		server.WithToolCapabilities(false),
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(security.NewRedactor("x"))),
 	)
-	mcptools.Register(s, mcptools.Deps{
+	plan := mcptools.NewCapabilityPlan(true, false, false, false, false)
+	mcptools.RegisterUnified(s, mcptools.Deps{
 		Service:         &icloud.MockService{},
 		Audit:           security.NewAuditLogger(ioDiscard{}),
 		Redactor:        security.NewRedactor("secret-password-xx"),
 		DefaultLocation: time.UTC,
 		Version:         version,
 		HealthEnabled:   false,
-	}, true)
+	}, plan)
+	tools := s.ListTools()
+	if len(tools) != 7 || tools["icloud_capabilities"] == nil {
+		t.Fatalf("default read-only inventory = %v, want 7 tools including icloud_capabilities", tools)
+	}
+	for _, name := range []string{"create_event", "update_event", "delete_event"} {
+		if tools[name] != nil {
+			t.Errorf("read-only inventory contains %q", name)
+		}
+	}
+}
 
-	// List tools via the in-process server if available; otherwise smoke
-	// that Register did not panic (asserted above).
-	_ = s
+func TestProductionServerEnforcesStrictInputSchemas(t *testing.T) {
+	redactor := security.NewRedactor("unused-secret")
+	mcpServer := newMCPServer(redactor)
+	svc := &icloud.MockService{}
+	mcptools.RegisterUnified(mcpServer, mcptools.Deps{
+		Service: svc, Redactor: redactor, DefaultLocation: time.UTC,
+	}, mcptools.NewCapabilityPlan(true, false, false, false, false))
+
+	searchTool := mcpServer.ListTools()["search_events"]
+	if searchTool == nil {
+		t.Fatal("search_events was not registered")
+	}
+	additionalProperties, ok := searchTool.Tool.InputSchema.AdditionalProperties.(bool)
+	if !ok || additionalProperties {
+		t.Fatalf("search_events additionalProperties = %#v, want false", searchTool.Tool.InputSchema.AdditionalProperties)
+	}
+
+	inProcess, err := client.NewInProcessClient(mcpServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = inProcess.Close() }()
+	ctx := context.Background()
+	if err := inProcess.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	initialize := mcp.InitializeRequest{}
+	initialize.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initialize.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "test"}
+	if _, err := inProcess.Initialize(ctx, initialize); err != nil {
+		t.Fatal(err)
+	}
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "search_events"
+	request.Params.Arguments = map[string]any{
+		"start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z",
+		"calendar": "/cal/home/", "unknown_argument": true,
+	}
+	result, err := inProcess.CallTool(ctx, request)
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if svc.SearchCallCount != 0 {
+		t.Fatalf("schema-invalid call reached service %d time(s)", svc.SearchCallCount)
+	}
 }
 
 type ioDiscard struct{}

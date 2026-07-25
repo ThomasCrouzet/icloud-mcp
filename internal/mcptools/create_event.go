@@ -22,28 +22,28 @@ func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
-		mcp.WithString("title", mcp.Required(), mcp.MinLength(1), mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("Event title")),
+		mcp.WithString("title", mcp.Required(), mcp.MinLength(1), mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("Event title; runtime limit 500 UTF-8 bytes (JSON Schema maxLength counts Unicode code points)")),
 		mcp.WithString("start", mcp.Required(), mcp.Description(datetimeParamDescription("Start time", defaultLoc)+" For all_day, a date (YYYY-MM-DD) or any datetime (date component used) is accepted.")),
 		mcp.WithString("end", mcp.Required(), mcp.Description(datetimeParamDescription("End time", defaultLoc)+" Must be after start. For all_day, exclusive end date (day after the last day of the event).")),
-		mcp.WithString("calendar", mcp.Required(), mcp.Description("Calendar path (see list_calendars)")),
-		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("Location (optional)")),
-		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("Notes/description (optional)")),
-		mcp.WithNumber("alarm_minutes_before", mcp.Min(0), mcp.Max(maxAlarmMinutesBefore), mcp.Description("Legacy single alarm N minutes before start, 0 = none (optional)")),
+		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path (see list_calendars); runtime limit 1024 UTF-8 bytes")),
+		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("Optional location; runtime limit 1000 UTF-8 bytes (JSON Schema maxLength counts Unicode code points)")),
+		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("Optional notes/description; runtime limit 4000 UTF-8 bytes (JSON Schema maxLength counts Unicode code points)")),
+		mcp.WithInteger("alarm_minutes_before", mcp.Min(0), mcp.Max(maxAlarmMinutesBefore), mcp.Description("Legacy single alarm N minutes before start, 0 = none (optional)")),
 		mcp.WithString("alarms_minutes", mcp.Description("Comma-separated alarm offsets in minutes before start (e.g. 15,60,1440). Max 5 alarms total with alarm_minutes_before.")),
-		mcp.WithBoolean("all_day", mcp.Description("If true, write an all-day event (VALUE=DATE). Default false.")),
-		mcp.WithString("rrule", mcp.MaxLength(1024), mcp.Description("Optional raw RRULE value without the RRULE: prefix. Mutually exclusive with structured recurrence fields when both would disagree.")),
-		mcp.WithString("recurrence_frequency", mcp.Description("Structured recurrence: daily, weekly, monthly, or yearly (optional; prefer over raw rrule)")),
-		mcp.WithNumber("recurrence_interval", mcp.Min(1), mcp.Max(366), mcp.Description("Structured recurrence interval (default 1)")),
-		mcp.WithNumber("recurrence_count", mcp.Min(1), mcp.Max(2000), mcp.Description("Structured recurrence COUNT (mutually exclusive with recurrence_until)")),
+		mcp.WithBoolean("all_day", mcp.DefaultBool(false), mcp.Description("If true, write an all-day event (VALUE=DATE)")),
+		mcp.WithString("rrule", mcp.MaxLength(1024), mcp.Description("Optional raw RRULE value without the RRULE: prefix; runtime limit 1024 UTF-8 bytes. Mutually exclusive with structured recurrence fields when both would disagree.")),
+		mcp.WithString("recurrence_frequency", mcp.Enum("daily", "weekly", "monthly", "yearly"), mcp.Description("Structured recurrence frequency (optional; prefer over raw rrule)")),
+		mcp.WithInteger("recurrence_interval", mcp.DefaultNumber(1), mcp.Min(1), mcp.Max(366), mcp.Description("Structured recurrence interval")),
+		mcp.WithInteger("recurrence_count", mcp.Min(1), mcp.Max(2000), mcp.Description("Structured recurrence COUNT (mutually exclusive with recurrence_until)")),
 		mcp.WithString("recurrence_until", mcp.Description("Structured recurrence UNTIL (RFC3339 or YYYY-MM-DD)")),
 		mcp.WithString("recurrence_by_day", mcp.Description("Structured recurrence BYDAY, comma-separated MO,TU,WE,TH,FR,SA,SU")),
 		mcp.WithString("recurrence_exceptions", mcp.Description("Comma-separated exception datetimes (EXDATE) interpreted with ICLOUD_MCP_DEFAULT_TZ rules")),
-		mcp.WithString("status", mcp.Description("TENTATIVE, CONFIRMED, or CANCELLED (optional)")),
-		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT (optional)")),
-		mcp.WithString("url", mcp.Description("http(s) URL (optional)")),
-		mcp.WithString("timezone", mcp.Description("IANA timezone for timed writes (TZID+VTIMEZONE). Required for correct wall-clock recurring series across DST; defaults to ICLOUD_MCP_DEFAULT_TZ when recurrence is set and this is omitted. Non-recurring timed events without timezone stay UTC Z.")),
-		mcp.WithString("client_uid", mcp.Description("Optional client UID for idempotent create; conflict if already exists")),
-		mcp.WithString("idempotency_key", mcp.Description("Alias of client_uid when client_uid omitted")),
+		mcp.WithString("status", mcp.Enum("TENTATIVE", "CONFIRMED", "CANCELLED"), mcp.Description("Optional event status")),
+		mcp.WithString("transparency", mcp.Enum("OPAQUE", "TRANSPARENT"), mcp.Description("Optional time transparency")),
+		mcp.WithString("url", mcp.MaxLength(icloud.MaxURLLen), mcp.Description("Optional http(s) URL; runtime limit 2000 UTF-8 bytes")),
+		mcp.WithString("timezone", mcp.MaxLength(255), mcp.Description("IANA timezone for timed writes (TZID+VTIMEZONE). Required for correct wall-clock recurring series across DST; defaults to ICLOUD_MCP_DEFAULT_TZ when recurrence is set and this is omitted. Non-recurring timed events without timezone stay UTC Z.")),
+		mcp.WithString("client_uid", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Optional client UID for idempotent create; conflict if already exists")),
+		mcp.WithString("idempotency_key", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Alias of client_uid when client_uid omitted")),
 	)
 }
 
@@ -57,37 +57,74 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		title, err := req.RequireString("title")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "create_event", "", "", "denied")
 			return errResult(deps.Redactor, "title parameter", err), nil
 		}
 		startStr, err := req.RequireString("start")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "create_event", "", "", "denied")
 			return errResult(deps.Redactor, "start parameter", err), nil
 		}
 		endStr, err := req.RequireString("end")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "create_event", "", "", "denied")
 			return errResult(deps.Redactor, "end parameter", err), nil
 		}
 		calendarPath, err := req.RequireString("calendar")
 		if err != nil {
+			logCalendarMutation(deps.Audit, "create_event", "", "", "denied")
 			return errResult(deps.Redactor, "calendar parameter", err), nil
 		}
-		location := req.GetString("location", "")
-		notes := req.GetString("notes", "")
-		alarm := req.GetInt("alarm_minutes_before", 0)
-		allDay := req.GetBool("all_day", false)
-		rrule := req.GetString("rrule", "")
-		status := req.GetString("status", "")
-		transp := req.GetString("transparency", "")
-		eventURL := req.GetString("url", "")
-		timezone := req.GetString("timezone", "")
-		clientUID := req.GetString("client_uid", "")
-		if clientUID == "" {
-			clientUID = req.GetString("idempotency_key", "")
+		deny := func(context string, err error) (*mcp.CallToolResult, error) {
+			logCalendarMutation(deps.Audit, "create_event", calendarPath, "", "denied")
+			return errResult(deps.Redactor, context, err), nil
 		}
 
-		deny := func(context string, err error) (*mcp.CallToolResult, error) {
-			deps.Audit.LogMutation("create_event", calendarPath, "", "denied")
-			return errResult(deps.Redactor, context, err), nil
+		location, err := optionalStringArg(req, "location", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		notes, err := optionalStringArg(req, "notes", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		alarm, err := optionalIntArg(req, "alarm_minutes_before", 0)
+		if err != nil {
+			return deny("validation", err)
+		}
+		allDay, err := optionalBoolArg(req, "all_day", false)
+		if err != nil {
+			return deny("validation", err)
+		}
+		rrule, err := optionalStringArg(req, "rrule", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		status, err := optionalStringArg(req, "status", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		transp, err := optionalStringArg(req, "transparency", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		eventURL, err := optionalStringArg(req, "url", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		timezone, err := optionalStringArg(req, "timezone", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		clientUID, err := optionalStringArg(req, "client_uid", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		if clientUID == "" {
+			clientUID, err = optionalStringArg(req, "idempotency_key", "")
+			if err != nil {
+				return deny("validation", err)
+			}
 		}
 
 		if err := icloud.ValidateCalendarPath(calendarPath); err != nil {
@@ -108,7 +145,11 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if alarm < 0 || alarm > maxAlarmMinutesBefore {
 			return deny("alarm_minutes_before parameter", fmt.Errorf("must be between 0 and %d (4 weeks)", maxAlarmMinutesBefore))
 		}
-		alarms, aerr := parseAlarmsMinutesList(req.GetString("alarms_minutes", ""))
+		alarmList, aerr := optionalStringArg(req, "alarms_minutes", "")
+		if aerr != nil {
+			return deny("validation", aerr)
+		}
+		alarms, aerr := parseAlarmsMinutesList(alarmList)
 		if aerr != nil {
 			return deny("alarms_minutes parameter", aerr)
 		}
@@ -134,7 +175,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			}
 			// Exclusive end: a single-day event may send the same calendar
 			// date for start and end; extend by one day.
-			if !end.After(start) {
+			if end.Equal(start) {
 				end = start.Add(24 * time.Hour)
 			}
 		} else {
@@ -159,7 +200,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			Alarms: alarms, Structured: structured, ClientUID: clientUID,
 		}
 		// Local validate for status/url/uid/recurrence/alarms before network.
-		vr := icloud.ValidateEventInput(input, deps.DefaultLocation)
+		vr := icloud.ValidateEventInputContext(ctx, input, deps.DefaultLocation)
 		if !vr.OK {
 			return deny("validation", fmt.Errorf("%s", joinErrors(vr.Errors)))
 		}
@@ -201,12 +242,16 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 
 		uid, err := deps.Service.CreateEvent(ctx, calendarPath, ne)
 		if err != nil {
-			deps.Audit.LogMutation("create_event", calendarPath, "", "error")
+			auditUID := clientUID
+			if typed := icloud.AsICloudError(err); auditUID == "" && typed != nil && typed.Code == icloud.CodeOutcomeUnknown {
+				auditUID = typed.Details["uid"]
+			}
+			logCalendarMutation(deps.Audit, "create_event", calendarPath, auditUID, calendarMutationErrorStatus(err))
 			return errResult(deps.Redactor, "creating event", err), nil
 		}
-		deps.Audit.LogMutation("create_event", calendarPath, uid, "success")
+		logCalendarMutation(deps.Audit, "create_event", calendarPath, uid, "success")
 
-		return writeJSON(deps.Redactor, createEventResponse{Success: true, UID: uid, Calendar: calendarPath}), nil
+		return writeCalendarJSON(deps.Redactor, createEventResponse{Success: true, UID: uid, Calendar: calendarPath}), nil
 	}
 }
 
@@ -218,7 +263,7 @@ func parseAllDayDate(name, value string, defaultLoc *time.Location) (time.Time, 
 	}
 	t, err := icloud.ParseDateTime(name, value, defaultLoc)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid all-day %s (%q): use YYYY-MM-DD or a datetime", name, value)
+		return time.Time{}, fmt.Errorf("invalid all-day %s: use YYYY-MM-DD or a datetime", name)
 	}
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), nil
 }
@@ -248,7 +293,7 @@ func parseAlarmsMinutesList(s string) ([]icloud.AlarmSpec, error) {
 		}
 		n, err := strconv.Atoi(part)
 		if err != nil {
-			return nil, fmt.Errorf("invalid alarms_minutes entry %q", part)
+			return nil, fmt.Errorf("invalid alarms_minutes entry")
 		}
 		if n < 0 || n > maxAlarmMinutesBefore {
 			return nil, fmt.Errorf("alarms_minutes entry %d out of range 0..%d", n, maxAlarmMinutesBefore)
@@ -267,25 +312,45 @@ func parseAlarmsMinutesList(s string) ([]icloud.AlarmSpec, error) {
 // parseStructuredRecurrence reads optional structured recurrence MCP fields.
 // Returns nil when frequency is empty.
 func parseStructuredRecurrence(req mcp.CallToolRequest, defaultLoc *time.Location) (*icloud.StructuredRecurrence, error) {
-	freq := strings.TrimSpace(req.GetString("recurrence_frequency", ""))
+	freqValue, err := optionalStringArg(req, "recurrence_frequency", "")
+	if err != nil {
+		return nil, err
+	}
+	freq := strings.TrimSpace(freqValue)
+	interval, err := optionalIntArg(req, "recurrence_interval", 1)
+	if err != nil {
+		return nil, err
+	}
+	count, err := optionalIntArg(req, "recurrence_count", 0)
+	if err != nil {
+		return nil, err
+	}
+	until, err := optionalStringArg(req, "recurrence_until", "")
+	if err != nil {
+		return nil, err
+	}
+	byDay, err := optionalStringArg(req, "recurrence_by_day", "")
+	if err != nil {
+		return nil, err
+	}
+	exceptions, err := optionalStringArg(req, "recurrence_exceptions", "")
+	if err != nil {
+		return nil, err
+	}
 	if freq == "" {
 		// Reject orphan structured fields without frequency.
-		if req.GetString("recurrence_until", "") != "" ||
-			req.GetString("recurrence_by_day", "") != "" ||
-			req.GetString("recurrence_exceptions", "") != "" ||
-			req.GetInt("recurrence_count", 0) > 0 ||
-			req.GetInt("recurrence_interval", 0) > 1 {
+		if until != "" || byDay != "" || exceptions != "" || count > 0 || interval > 1 {
 			return nil, fmt.Errorf("recurrence_frequency is required when using structured recurrence fields")
 		}
 		return nil, nil
 	}
 	sr := &icloud.StructuredRecurrence{
 		Frequency: freq,
-		Interval:  req.GetInt("recurrence_interval", 1),
-		Count:     req.GetInt("recurrence_count", 0),
-		Until:     req.GetString("recurrence_until", ""),
+		Interval:  interval,
+		Count:     count,
+		Until:     until,
 	}
-	if by := req.GetString("recurrence_by_day", ""); by != "" {
+	if by := byDay; by != "" {
 		for _, d := range strings.Split(by, ",") {
 			d = strings.TrimSpace(d)
 			if d != "" {
@@ -293,7 +358,7 @@ func parseStructuredRecurrence(req mcp.CallToolRequest, defaultLoc *time.Locatio
 			}
 		}
 	}
-	if ex := req.GetString("recurrence_exceptions", ""); ex != "" {
+	if ex := exceptions; ex != "" {
 		for _, part := range strings.Split(ex, ",") {
 			part = strings.TrimSpace(part)
 			if part != "" {

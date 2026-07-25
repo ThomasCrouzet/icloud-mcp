@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -17,13 +18,14 @@ const maxRateWait = 2 * time.Second
 
 // GuardedService decorates a Service with rate limiting (two independent
 // budgets: read and write) and bounded retry with exponential backoff.
-// Only idempotent operations are retried (reads + DeleteEvent);
-// CreateEvent/UpdateEvent are NEVER retried (non-idempotent: a retry would
-// create a duplicate or wrongly bump SEQUENCE).
+// Only reads are retried. Mutations are never replayed because a transport
+// failure can occur after the server applied the request.
 type GuardedService struct {
 	inner      Service
 	readLimit  *rate.Limiter // 60 reads/min, burst 10
 	writeLimit *rate.Limiter // 20 writes/min, burst 3
+	readSem    chan struct{} // at most 4 concurrent Calendar reads
+	writeSem   chan struct{} // at most 2 concurrent Calendar writes
 	maxRetries int
 	baseDelay  time.Duration
 }
@@ -36,8 +38,19 @@ func NewGuardedService(inner Service, maxRetries int, baseDelay time.Duration) *
 		inner:      inner,
 		readLimit:  rate.NewLimiter(rate.Every(time.Minute/60), 10),
 		writeLimit: rate.NewLimiter(rate.Every(time.Minute/20), 3),
+		readSem:    make(chan struct{}, 4),
+		writeSem:   make(chan struct{}, 2),
 		maxRetries: maxRetries,
 		baseDelay:  baseDelay,
+	}
+}
+
+func acquireCalendar(ctx context.Context, semaphore chan struct{}) error {
+	select {
+	case semaphore <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return calendarContextError(ctx.Err())
 	}
 }
 
@@ -77,12 +90,19 @@ func (g *GuardedService) waitWrite(ctx context.Context) error {
 // reservation is cancelled and a typed rate_limited error is returned so
 // callers can surface a stable code without sitting on the tool timeout.
 func waitLimiter(ctx context.Context, lim *rate.Limiter, kind string) error {
+	if err := ctx.Err(); err != nil {
+		return calendarContextError(err)
+	}
 	res := lim.Reserve()
 	if !res.OK() {
 		return NewError(CodeRateLimited, 429,
 			fmt.Sprintf("%s rate limit exceeded", kind), nil)
 	}
 	delay := res.DelayFrom(time.Now())
+	if err := ctx.Err(); err != nil {
+		res.Cancel()
+		return calendarContextError(err)
+	}
 	if delay > maxRateWait {
 		res.Cancel()
 		return &Error{
@@ -100,11 +120,18 @@ func waitLimiter(ctx context.Context, lim *rate.Limiter, kind string) error {
 	select {
 	case <-ctx.Done():
 		res.Cancel()
-		return NewError(CodeRateLimited, 429,
-			fmt.Sprintf("%s rate limit exceeded: %v", kind, ctx.Err()), ctx.Err())
+		return calendarContextError(ctx.Err())
 	case <-timer.C:
 		return nil
 	}
+}
+
+func calendarContextError(err error) *Error {
+	message := "Calendar request was canceled"
+	if errors.Is(err, context.DeadlineExceeded) {
+		message = "Calendar request timed out"
+	}
+	return NewError(CodeTimeout, 0, message, err)
 }
 
 // retry retries fn up to maxRetries times with exponential backoff
@@ -120,6 +147,9 @@ func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) 
 		if lastErr == nil {
 			return nil
 		}
+		if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
+			return calendarContextError(lastErr)
+		}
 		if AsICloudError(lastErr) != nil {
 			return lastErr
 		}
@@ -130,7 +160,7 @@ func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) 
 		slog.Warn("retrying", "operation", op, "attempt", attempt+1, "delay", delay, "error", lastErr)
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return calendarContextError(ctx.Err())
 		case <-time.After(delay):
 		}
 	}
@@ -142,6 +172,10 @@ func (g *GuardedService) ListCalendars(ctx context.Context) ([]Calendar, error) 
 	if err := g.waitRead(ctx); err != nil {
 		return nil, err
 	}
+	if err := acquireCalendar(ctx, g.readSem); err != nil {
+		return nil, err
+	}
+	defer func() { <-g.readSem }()
 	var result []Calendar
 	err := g.retry(ctx, "ListCalendars", func() error {
 		var e error
@@ -156,6 +190,10 @@ func (g *GuardedService) SearchEvents(ctx context.Context, calendarPath string, 
 	if err := g.waitRead(ctx); err != nil {
 		return SearchResult{}, err
 	}
+	if err := acquireCalendar(ctx, g.readSem); err != nil {
+		return SearchResult{}, err
+	}
+	defer func() { <-g.readSem }()
 	var result SearchResult
 	err := g.retry(ctx, "SearchEvents", func() error {
 		var e error
@@ -170,6 +208,10 @@ func (g *GuardedService) GetEvent(ctx context.Context, calendarPath, uid string)
 	if err := g.waitRead(ctx); err != nil {
 		return nil, err
 	}
+	if err := acquireCalendar(ctx, g.readSem); err != nil {
+		return nil, err
+	}
+	defer func() { <-g.readSem }()
 	var result *EventDetail
 	err := g.retry(ctx, "GetEvent", func() error {
 		var e error
@@ -184,6 +226,10 @@ func (g *GuardedService) CreateEvent(ctx context.Context, calendarPath string, e
 	if err := g.waitWrite(ctx); err != nil {
 		return "", err
 	}
+	if err := acquireCalendar(ctx, g.writeSem); err != nil {
+		return "", err
+	}
+	defer func() { <-g.writeSem }()
 	return g.inner.CreateEvent(ctx, calendarPath, ev)
 }
 
@@ -193,28 +239,22 @@ func (g *GuardedService) UpdateEvent(ctx context.Context, calendarPath, uid stri
 	if err := g.waitWrite(ctx); err != nil {
 		return err
 	}
+	if err := acquireCalendar(ctx, g.writeSem); err != nil {
+		return err
+	}
+	defer func() { <-g.writeSem }()
 	return g.inner.UpdateEvent(ctx, calendarPath, uid, up)
 }
 
-// DeleteEvent: write. Series/full deletes are retried (idempotent at the
-// resource level). Dry-run never hits the inner service more than once and
-// performs no mutation. Occurrence-scoped deletes are NOT retried (they
-// rewrite the master with EXDATE/override and bump SEQUENCE).
+// DeleteEvent is never retried. A transport error after dispatch cannot prove
+// whether either a series DELETE or an occurrence PUT was applied.
 func (g *GuardedService) DeleteEvent(ctx context.Context, calendarPath, uid string, opts *DeleteOptions) (DeleteResult, error) {
 	if err := g.waitWrite(ctx); err != nil {
 		return DeleteResult{}, err
 	}
-	if opts != nil && opts.DryRun {
-		return g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
+	if err := acquireCalendar(ctx, g.writeSem); err != nil {
+		return DeleteResult{}, err
 	}
-	if opts != nil && opts.Scope == ScopeOccurrence {
-		return g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
-	}
-	var result DeleteResult
-	err := g.retry(ctx, "DeleteEvent", func() error {
-		var e error
-		result, e = g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
-		return e
-	})
-	return result, err
+	defer func() { <-g.writeSem }()
+	return g.inner.DeleteEvent(ctx, calendarPath, uid, opts)
 }

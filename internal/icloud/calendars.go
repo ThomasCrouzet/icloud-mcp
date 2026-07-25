@@ -29,14 +29,17 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 		return nil, err
 	}
 
-	target := c.shardBase + c.homeSetPath
-	ms, err := c.propfind(ctx, target, "1", propfindCalendarsBody)
+	target, err := resolvePathOnBase(c.shardBase, c.homeSetPath)
+	if err != nil {
+		return nil, NewError(CodeProtocolError, 0, "discovered Calendar home-set URL is invalid", nil)
+	}
+	response, err := c.propfind(ctx, target, "1", propfindCalendarsBody, c.homeSetPath)
 	if err != nil {
 		return nil, fmt.Errorf("listing calendars: %w", err)
 	}
 
 	var out []Calendar
-	for _, r := range ms.Responses {
+	for _, r := range response.multistatus.Responses {
 		prop := mergedOKProp(r)
 		if prop == nil {
 			continue
@@ -47,14 +50,19 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 		if prop.ResourceType.ScheduleInbox != nil || prop.ResourceType.ScheduleOutbox != nil {
 			continue
 		}
-		if strings.Contains(r.Href, "/inbox") || strings.Contains(r.Href, "/outbox") || strings.Contains(r.Href, "/notification") {
+		resolved, err := c.resolveDAVHref(response.url, r.Href, c.homeSetPath)
+		if err != nil {
+			return nil, err
+		}
+		path := resolved.EscapedPath()
+		if strings.Contains(path, "/inbox") || strings.Contains(path, "/outbox") || strings.Contains(path, "/notification") {
 			continue
 		}
 		if prop.SupportedComps != nil && !supportsVEvent(prop.SupportedComps) {
 			continue // VTODO-only (Reminders) or another component set without VEVENT
 		}
 		out = append(out, Calendar{
-			Path:        hrefPath(r.Href),
+			Path:        path,
 			Name:        prop.DisplayName,
 			Description: prop.CalendarDescription,
 			Color:       prop.CalendarColor,

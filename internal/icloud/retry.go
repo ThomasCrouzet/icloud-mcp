@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -12,14 +13,14 @@ import (
 // retryClassifier is an httpDoer that wraps the upstream auth+allowlist
 // doer to:
 //
-//  1. Retry idempotent-at-the-server signals (429 Too Many Requests,
-//     502/503/504 gateway errors) honoring Retry-After when present, with
-//     exponential backoff + jitter otherwise. These statuses are the server
-//     asserting it did NOT process the request, so retrying even a PUT is
-//     safe (unlike a connection timeout, where the request may have landed).
-//  2. Classify the final non-2xx response into a typed *Error (see
-//     errors.go), so the MCP layer surfaces a stable code and a clear,
-//     Apple-aware message instead of a raw HTTP status string.
+//  1. Retry read requests on 429 and 502/503/504, honoring Retry-After when
+//     present, with exponential backoff + jitter otherwise.
+//  2. Never replay PUT or DELETE. A gateway 502/503/504 or transport error
+//     after dispatch has an ambiguous mutation outcome and is surfaced as
+//     outcome_unknown. A write-side 429 is definitive and rate_limited.
+//  3. Pass all other HTTP responses to the Calendar operation so it can apply
+//     operation-specific semantics such as create conflict, update conflict,
+//     and idempotent series-delete handling.
 //
 // The retry budget is bounded by the request context (the per-tool 25s
 // timeout in production), so retries stop before the tool timeout fires.
@@ -53,16 +54,44 @@ func NewRetryClassifier(inner httpDoer) httpDoer {
 
 // Do implements httpDoer.
 func (r *retryClassifier) Do(req *http.Request) (*http.Response, error) {
+	write := isCalendarMutationMethod(req.Method)
 	for attempt := 0; ; attempt++ {
+		if err := req.Context().Err(); err != nil {
+			return nil, calendarContextError(err)
+		}
 		if err := rewindRequestBody(req); err != nil {
 			return nil, err
 		}
 		resp, err := r.inner.Do(req)
 		if err != nil {
-			// Network/transport error: do not replay (unsafe for writes).
+			if write {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, outcomeUnknownError(0)
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, calendarContextError(err)
+			}
 			return resp, err
 		}
+		if resp == nil {
+			if write {
+				return nil, outcomeUnknownError(0)
+			}
+			return nil, NewError(CodeProtocolError, 0, "Calendar HTTP client returned no response", nil)
+		}
+		if resp.Body == nil {
+			resp.Body = http.NoBody
+		}
 		if isRetryStatus(resp.StatusCode) {
+			if write {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusTooManyRequests {
+					return nil, classifyStatus(resp.StatusCode)
+				}
+				return nil, outcomeUnknownError(resp.StatusCode)
+			}
 			wait := retryDelay(resp, attempt, r.baseDelay, r.maxDelay, r.now, r.rand)
 			_ = resp.Body.Close()
 			if attempt+1 >= r.maxTries {
@@ -73,18 +102,16 @@ func (r *retryClassifier) Do(req *http.Request) (*http.Response, error) {
 			}
 			continue
 		}
-		if resp.StatusCode/100 == 2 {
-			return resp, nil
-		}
-		// Non-2xx, non-retryable: classify and drain the body.
-		_ = resp.Body.Close()
-		return nil, classifyStatus(resp.StatusCode)
+		return resp, nil
 	}
 }
 
-// rewindRequestBody restores req.Body from GetBody before each attempt so a
-// PUT/REPORT body consumed on a prior 429/5xx retry is not sent empty.
-// No-op when there is no body or GetBody is unset (GET/DELETE).
+func isCalendarMutationMethod(method string) bool {
+	return method == http.MethodPut || method == http.MethodDelete
+}
+
+// rewindRequestBody restores req.Body from GetBody before each read attempt.
+// No-op when there is no body or GetBody is unset.
 func rewindRequestBody(req *http.Request) error {
 	if req == nil || req.GetBody == nil {
 		return nil
@@ -118,14 +145,16 @@ func isRetryStatus(status int) bool {
 func retryDelay(resp *http.Response, attempt int, base, max time.Duration, now func() time.Time, rand func() float64) time.Duration {
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		// Delta-seconds form.
-		if secs, err := strconv.Atoi(ra); err == nil {
-			d := time.Duration(secs) * time.Second
-			if d < 0 {
-				d = 0
+		if secs, err := strconv.ParseInt(ra, 10, 64); err == nil {
+			if secs <= 0 {
+				return 0
 			}
-			return capDelay(d, max)
+			if max <= 0 || secs > int64(max/time.Second) {
+				return max
+			}
+			return time.Duration(secs) * time.Second
 		}
-		// HTTP-date form (RFC 9110 §6.6.7).
+		// HTTP-date form (RFC 9110 section 6.6.7).
 		if t, err := http.ParseTime(ra); err == nil {
 			d := t.Sub(now())
 			if d < 0 {
@@ -154,7 +183,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("retry aborted: %w", ctx.Err())
+			return calendarContextError(ctx.Err())
 		default:
 			return nil
 		}
@@ -163,7 +192,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("retry aborted: %w", ctx.Err())
+		return calendarContextError(ctx.Err())
 	case <-timer.C:
 		return nil
 	}

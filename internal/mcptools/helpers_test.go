@@ -30,3 +30,23 @@ func TestErrResult_StructuredCodeForClassifiedError(t *testing.T) {
 		t.Errorf("message = %q, want context prefix", payload.Message)
 	}
 }
+
+func TestErrResult_OutcomeUnknownIncludesReconciliation(t *testing.T) {
+	red := testDeps(&icloud.MockService{}).Redactor
+	err := &icloud.Error{
+		Code:    icloud.CodeOutcomeUnknown,
+		Message: "mutation outcome is unknown",
+		Details: map[string]string{"reconciliation": "re-read the event before retrying"},
+	}
+	res := errResult(red, "creating event", err)
+	var payload toolErrorPayload
+	if unmarshalErr := json.Unmarshal([]byte(resultText(t, res)), &payload); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
+	}
+	if payload.Code != string(icloud.CodeOutcomeUnknown) || payload.Reconciliation == "" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if status := calendarMutationErrorStatus(err); status != "outcome_unknown" {
+		t.Fatalf("audit status = %q", status)
+	}
+}

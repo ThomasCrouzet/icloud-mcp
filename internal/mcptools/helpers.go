@@ -6,12 +6,23 @@ package mcptools
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
+)
+
+const maxCalendarResultBytes = 256 << 10
+
+const (
+	maxErrorMessageBytes = 64 << 10
+	maxErrorDetailBytes  = 8 << 10
+	maxErrorDetails      = 16
 )
 
 // datetimeParamDescription builds the mcp.Description text for a start/end
@@ -39,11 +50,12 @@ func datetimeParamDescription(label string, defaultLoc *time.Location) string {
 
 // toolErrorPayload is the machine-readable shape of MCP tool errors.
 type toolErrorPayload struct {
-	Code       string            `json:"code,omitempty"`
-	Message    string            `json:"message"`
-	Retryable  bool              `json:"retryable,omitempty"`
-	RetryAfter int               `json:"retry_after_seconds,omitempty"`
-	Details    map[string]string `json:"details,omitempty"`
+	Code           string            `json:"code,omitempty"`
+	Message        string            `json:"message"`
+	Retryable      bool              `json:"retryable,omitempty"`
+	RetryAfter     int               `json:"retry_after_seconds,omitempty"`
+	Reconciliation string            `json:"reconciliation,omitempty"`
+	Details        map[string]string `json:"details,omitempty"`
 }
 
 // errResult builds an error CallToolResult, always routing the message
@@ -52,7 +64,7 @@ type toolErrorPayload struct {
 // with a stable "code" field so agents can match without parsing English text.
 // Raw HTTP/XML bodies are never included.
 func errResult(red *security.Redactor, context string, err error) *mcp.CallToolResult {
-	msg := red.Redact(fmt.Sprintf("%s: %v", context, err))
+	msg := boundedUTF8(redact(red, fmt.Sprintf("%s: %v", context, err)), maxErrorMessageBytes)
 	payload := toolErrorPayload{Message: msg}
 	if ie := icloud.AsICloudError(err); ie != nil {
 		payload.Code = string(icloud.PublicCode(ie.Code))
@@ -69,7 +81,18 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 			payload.RetryAfter = sec
 		}
 		if len(ie.Details) > 0 {
-			payload.Details = ie.Details
+			payload.Details = make(map[string]string, min(len(ie.Details), maxErrorDetails))
+			for key, value := range ie.Details {
+				if len(payload.Details) >= maxErrorDetails {
+					break
+				}
+				key = boundedUTF8(redact(red, key), maxErrorDetailBytes)
+				value = boundedUTF8(redact(red, value), maxErrorDetailBytes)
+				payload.Details[key] = value
+			}
+			if ie.Code == icloud.CodeOutcomeUnknown {
+				payload.Reconciliation = payload.Details["reconciliation"]
+			}
 		}
 	} else if context == "validation" || context == "validation error" {
 		payload.Code = string(icloud.CodeValidation)
@@ -78,7 +101,22 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 	if mErr != nil {
 		return mcp.NewToolResultError(msg)
 	}
+	if len(b) > maxCalendarResultBytes {
+		payload.Details = nil
+		payload.Reconciliation = ""
+		b, mErr = json.Marshal(payload)
+		if mErr != nil || len(b) > maxCalendarResultBytes {
+			return mcp.NewToolResultError("internal error: error response exceeded its byte limit")
+		}
+	}
 	return mcp.NewToolResultError(string(b))
+}
+
+func calendarMutationErrorStatus(err error) string {
+	if typed := icloud.AsICloudError(err); typed != nil && typed.Code == icloud.CodeOutcomeUnknown {
+		return "outcome_unknown"
+	}
+	return "error"
 }
 
 // writeJSON serializes payload as indented JSON and builds a success
@@ -91,5 +129,152 @@ func writeJSON(red *security.Redactor, payload any) *mcp.CallToolResult {
 	if err != nil {
 		return errResult(red, "formatting response", err)
 	}
-	return mcp.NewToolResultText(red.Redact(string(b)))
+	text := redact(red, string(b))
+	if len(text) > maxCalendarResultBytes {
+		return errResult(red, "formatting response", icloud.NewError(
+			icloud.CodePayloadTooLarge, 0, "serialized MCP result exceeded 256 KiB", nil,
+		))
+	}
+	return mcp.NewToolResultText(text)
+}
+
+// writeCalendarJSON applies the Calendar-specific serialized result budget.
+// Local capability/validation tools continue to use writeJSON directly.
+func writeCalendarJSON(red *security.Redactor, payload any) *mcp.CallToolResult {
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return errResult(red, "formatting response", err)
+	}
+	return writeCalendarEncoded(red, b)
+}
+
+func writeCalendarEncoded(red *security.Redactor, encoded []byte) *mcp.CallToolResult {
+	text := redact(red, string(encoded))
+	if len(text) > maxCalendarResultBytes {
+		return errResult(red, "formatting response", icloud.NewError(
+			icloud.CodePayloadTooLarge, 0, "serialized Calendar result exceeded 256 KiB", nil,
+		))
+	}
+	return mcp.NewToolResultText(text)
+}
+
+func logCalendarMutation(audit *security.AuditLogger, tool, calendarPath, uid, status string) {
+	if audit == nil {
+		return
+	}
+	// NUL makes the calendar/UID tuple unambiguous before AuditLogger hashes
+	// it into the opaque, process-scoped resource token.
+	audit.LogDomainMutation(tool, "calendar", "event", calendarPath+"\x00"+uid, status)
+}
+
+func redact(red *security.Redactor, value string) string {
+	if red == nil {
+		return value
+	}
+	return red.Redact(value)
+}
+
+func boundedUTF8(value string, limit int) string {
+	if !utf8.ValidString(value) {
+		value = string([]rune(value))
+	}
+	if limit <= 0 {
+		return ""
+	}
+	if len(value) <= limit {
+		return value
+	}
+	const suffix = "...[truncated]"
+	cut := limit - len(suffix)
+	if cut <= 0 {
+		return suffix[:limit]
+	}
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut] + suffix
+}
+
+func optionalStringArg(req mcp.CallToolRequest, name, defaultValue string) (string, error) {
+	value, ok := req.GetArguments()[name]
+	if !ok {
+		return defaultValue, nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", name)
+	}
+	return text, nil
+}
+
+func optionalBoolArg(req mcp.CallToolRequest, name string, defaultValue bool) (bool, error) {
+	value, ok := req.GetArguments()[name]
+	if !ok {
+		return defaultValue, nil
+	}
+	boolean, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("%s must be a boolean", name)
+	}
+	return boolean, nil
+}
+
+func optionalIntArg(req mcp.CallToolRequest, name string, defaultValue int) (int, error) {
+	value, ok := req.GetArguments()[name]
+	if !ok {
+		return defaultValue, nil
+	}
+	var number int64
+	switch typed := value.(type) {
+	case int:
+		return typed, nil
+	case int8:
+		number = int64(typed)
+	case int16:
+		number = int64(typed)
+	case int32:
+		number = int64(typed)
+	case int64:
+		number = typed
+	case uint:
+		if uint64(typed) > math.MaxInt64 {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = int64(typed)
+	case uint8:
+		number = int64(typed)
+	case uint16:
+		number = int64(typed)
+	case uint32:
+		number = int64(typed)
+	case uint64:
+		if typed > math.MaxInt64 {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = int64(typed)
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || math.Trunc(typed) != typed || typed < -1<<53 || typed > 1<<53 {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = int64(typed)
+	case float32:
+		asFloat := float64(typed)
+		if math.IsNaN(asFloat) || math.IsInf(asFloat, 0) || math.Trunc(asFloat) != asFloat || asFloat < -1<<53 || asFloat > 1<<53 {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = int64(typed)
+	case json.Number:
+		parsed, err := strconv.ParseInt(string(typed), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = parsed
+	default:
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	converted := int(number)
+	if int64(converted) != number {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return converted, nil
 }
