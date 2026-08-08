@@ -38,12 +38,9 @@ const (
 func datetimeParamDescription(label string, defaultLoc *time.Location) string {
 	tz := defaultLocationName(defaultLoc)
 	return fmt.Sprintf(
-		"%s. Prefer a local wall-clock time with NO offset (e.g. 2026-07-01T14:00:00 for 2pm) "+
-			"matching what the user said: it is interpreted as %s (ICLOUD_MCP_DEFAULT_TZ), DST-aware, "+
-			"with no conversion needed on your part. Do NOT append Z or compute an offset yourself "+
-			"unless the user explicitly means a different, specific timezone (e.g. UTC or another city) "+
-			"in which case use full RFC3339 with that explicit offset (e.g. 2026-07-01T14:00:00+02:00, or "+
-			"...Z only if UTC is truly what is meant).",
+		"%s. Prefer local time without an offset (example: 2026-07-01T14:00:00); it is read as %s "+
+			"(ICLOUD_MCP_DEFAULT_TZ), DST-aware. Do not append Z or calculate an offset unless the user "+
+			"explicitly means another timezone; then use RFC3339 with its offset.",
 		label, tz,
 	)
 }

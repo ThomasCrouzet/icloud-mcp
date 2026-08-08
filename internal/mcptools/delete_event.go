@@ -13,16 +13,16 @@ import (
 
 func newDeleteEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("delete_event",
-		mcp.WithDescription("Deletes an event by UID. scope=series (default) removes the whole object; scope=occurrence adds EXDATE for recurrence_id (from search_events.recurrenceId; YYYY-MM-DD for all-day) and never deletes the series. Optional etag (If-Match) yields concurrent_modification on 412; etag=* is rejected. dry_run=true validates and looks up without any PUT/DELETE. Idempotent for series: deleting a missing event returns not_found. Obtain human confirmation before real deletions."),
+		mcp.WithDescription("Deletes a series or excludes one occurrence. Use recurrenceId for an occurrence, etag for concurrency safety, and dry_run to validate. Obtain human confirmation before deletion."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID (see search_events); runtime limit 255 UTF-8 bytes")),
-		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Path of the calendar containing the event; runtime limit 1024 UTF-8 bytes")),
+		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID; max 255 UTF-8 bytes")),
+		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path; max 1024 UTF-8 bytes")),
 		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
-		mcp.WithString("recurrence_id", mcp.Description("Occurrence RECURRENCE-ID when scope=occurrence. Use search_events.recurrenceId. Prefer YYYY-MM-DD for all-day; timed forms follow "+datetimeParamDescription("the same rules as start", defaultLoc))),
-		mcp.WithString("etag", mcp.Description("Optional If-Match ETag from get_event or search_events (opaque token; not *)")),
-		mcp.WithBoolean("dry_run", mcp.DefaultBool(false), mcp.Description("If true, no PUT/DELETE is sent")),
+		mcp.WithString("recurrence_id", mcp.Description("Required for scope=occurrence; copy search_events.recurrenceId. All-day uses YYYY-MM-DD; timed values follow "+datetimeParamDescription("start", defaultLoc))),
+		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *")),
+		mcp.WithBoolean("dry_run", mcp.DefaultBool(false), mcp.Description("Validate without PUT or DELETE")),
 	)
 }
 

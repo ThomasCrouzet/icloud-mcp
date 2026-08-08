@@ -14,12 +14,12 @@ import (
 
 func newGetEventTool() mcp.Tool {
 	return mcp.NewTool("get_event",
-		mcp.WithDescription("Fetches a single iCloud calendar event by calendar path and exact UID. Returns structured fields (title, times, status, transparency, URL, recurrence, alarms, etag) plus bounded overrides[] with recurrenceId for exception targeting. Timed start/end use RFC3339 with an explicit offset in ICLOUD_MCP_DEFAULT_TZ. overridesTruncated and warnings report omissions required by the 256 KiB result budget. Does not expose internal server paths. Available in read-only mode."),
+		mcp.WithDescription("Gets one event by calendar path and exact UID, including recurrence overrides and etag. Results are bounded to 256 KiB; timed values use RFC3339 with an explicit offset."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path (see list_calendars); runtime limit 1024 UTF-8 bytes")),
-		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID (exact match); runtime limit 255 UTF-8 bytes")),
+		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path from list_calendars; max 1024 UTF-8 bytes")),
+		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Exact event UID; max 255 UTF-8 bytes")),
 	)
 }
 

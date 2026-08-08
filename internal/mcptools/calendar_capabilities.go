@@ -11,7 +11,7 @@ import (
 
 func newCalendarCapabilitiesTool() mcp.Tool {
 	return mcp.NewTool("calendar_capabilities",
-		mcp.WithDescription("Returns local server capabilities and limits with NO network access and NO secrets (no email, password path, shard, DSID, local paths, env, calendars, or events). Available in read-only mode."),
+		mcp.WithDescription("Returns local calendar capabilities and limits without network access or private data."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),

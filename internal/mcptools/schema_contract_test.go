@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -36,6 +37,29 @@ func TestSchemaContract_BoundsMatchRuntimeConstants(t *testing.T) {
 	_ = newCalendarCapabilitiesTool()
 	_ = newICloudCapabilitiesTool()
 	_ = newListCalendarsTool()
+}
+
+func TestCalendarToolSchemasStayWithinPromptBudget(t *testing.T) {
+	tools := []mcp.Tool{
+		newICloudCapabilitiesTool(),
+		newListCalendarsTool(),
+		newSearchEventsTool(time.UTC),
+		newGetEventTool(),
+		newFindFreeSlotsTool(time.UTC),
+		newValidateEventTool(time.UTC),
+		newCalendarCapabilitiesTool(),
+		newCreateEventTool(time.UTC),
+		newUpdateEventTool(time.UTC),
+		newDeleteEventTool(time.UTC),
+	}
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const maxSchemaBytes = 17_000
+	if len(encoded) > maxSchemaBytes {
+		t.Fatalf("calendar tool schemas use %d bytes, budget is %d", len(encoded), maxSchemaBytes)
+	}
 }
 
 func TestMCP_E2E_ReadOnlyAndReadWrite(t *testing.T) {
