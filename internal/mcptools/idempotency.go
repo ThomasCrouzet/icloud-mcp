@@ -1,6 +1,7 @@
 package mcptools
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -69,6 +70,13 @@ func namespacedIdempotencyKey(tool, key string) string {
 // When another goroutine holds the same key+params, begin waits for it and
 // re-evaluates (single-flight).
 func (s *idempotencyStore) begin(key, paramsHash string) (payload string, conflict, hit, ready bool) {
+	return s.beginContext(context.Background(), key, paramsHash)
+}
+
+func (s *idempotencyStore) beginContext(ctx context.Context, key, paramsHash string) (payload string, conflict, hit, ready bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if key == "" || paramsHash == "" || len(key) > maxIdempotencyKeyBytes {
 		return "", false, false, false
 	}
@@ -96,9 +104,10 @@ func (s *idempotencyStore) begin(key, paramsHash string) (payload string, confli
 			timer := time.NewTimer(idempotencyTTL)
 			select {
 			case <-wait:
-				if !timer.Stop() {
-					<-timer.C
-				}
+				timer.Stop()
+			case <-ctx.Done():
+				timer.Stop()
+				return "", false, false, false
 			case <-timer.C:
 				return "", false, false, false
 			}

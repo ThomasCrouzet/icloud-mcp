@@ -46,6 +46,9 @@ jobs:
         run: |
           status=0
           non_ascii=$'[^\t -~]'
+          automated_attribution='^[[:space:]]*Co-Authored-By[[:space:]]*:.*(claude|anthropic|openai|chatgpt|codex|copilot|gemini|gpt|assistant|language[[:space:]]+model|automation[[:space:]]+bot)'
+          provenance_signature='^[[:space:]#*/;>-]*(Auto[ -]?)?(Generated|Assisted)[ -]By[[:space:]:]'
+          policy_pattern="(${automated_attribution})|(${provenance_signature})"
           while IFS= read -r -d '' file; do
             if LC_ALL=C grep -nH "$non_ascii" "$file"; then
               echo "Non-ASCII content in public text: $file" >&2
@@ -55,12 +58,12 @@ jobs:
             'Makefile' 'LICENSE*' 'NOTICE*' 'THIRD_PARTY*' 'go.mod' 'go.sum' \
             '.gitignore' '.golangci.yml')
 
-          if git grep -nIE '^[[:space:]]*Co-Authored-By:'; then
-            echo "Forbidden attribution trailer found in tracked tree" >&2
+          if git grep -niE "$policy_pattern"; then
+            echo "Forbidden automated attribution found in tracked tree" >&2
             status=1
           fi
 
-          # New commits on this ref must stay English ASCII without AI trailers.
+          # New commits on this ref must stay English ASCII without automated trailers.
           # Historical debt on older main commits is not rewritten.
           range=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -81,8 +84,8 @@ jobs:
                 echo "Non-ASCII commit message: $commit" >&2
                 status=1
               fi
-              if printf '%s' "$body" | grep -nIE '^[[:space:]]*Co-Authored-By:'; then
-                echo "Forbidden Co-Authored-By trailer in commit $commit" >&2
+              if printf '%s' "$body" | grep -niE "$policy_pattern"; then
+                echo "Forbidden automated attribution in commit $commit" >&2
                 status=1
               fi
             done < <(git rev-list --no-merges "$range" 2>/dev/null || true)

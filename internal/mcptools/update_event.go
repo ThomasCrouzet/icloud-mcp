@@ -224,7 +224,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				return deny("validation", err)
 			}
 			nsKey = namespacedIdempotencyKey("update_event", idemKey)
-			payload, conflict, hit, ready := defaultIdempotency.begin(nsKey, paramsHash)
+			payload, conflict, hit, ready := defaultIdempotency.beginContext(ctx, nsKey, paramsHash)
 			if conflict {
 				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
 					"idempotency_key was reused with different update parameters", nil))
@@ -233,6 +233,11 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				return writeCalendarEncoded(deps.Redactor, []byte(payload)), nil
 			}
 			if !ready {
+				if ctx.Err() != nil {
+					return deny("idempotency wait", icloud.NewError(
+						icloud.CodeTimeout, 0, "tool deadline reached while waiting for the idempotency key", nil,
+					))
+				}
 				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
 					"idempotency_key cache is full; retry without a key or later", nil))
 			}

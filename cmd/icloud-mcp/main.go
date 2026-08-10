@@ -54,16 +54,17 @@ const toolTimeout = 25 * time.Second
 // synthetic timeout. Prefer a real result over a false timeout when possible.
 const toolTimeoutGrace = 2 * time.Second
 
-// maxTimedOutHandlers caps abandoned handler goroutines after a preemptive
-// timeout so a stuck dependency cannot grow without bound.
-const maxTimedOutHandlers = 32
+// maxInFlightHandlers caps handler goroutines so dependencies that ignore
+// cancellation cannot make abandoned work grow without bound.
+const maxInFlightHandlers = 32
 
 // discoveryTimeout bounds the iCloud discovery performed at boot to validate
 // the credentials before starting the MCP server.
 const discoveryTimeout = 20 * time.Second
 
-// timedOutHandlerSlots limits concurrent post-timeout handler drain goroutines.
-var timedOutHandlerSlots = make(chan struct{}, maxTimedOutHandlers)
+// handlerSlots bounds all in-flight handler goroutines. A slot remains held
+// after a client-visible timeout until the underlying handler actually exits.
+var handlerSlots = make(chan struct{}, maxInFlightHandlers)
 
 func main() {
 	healthAddr := flag.String("health", "", "HTTP healthcheck address (e.g. 127.0.0.1:8797), disabled if empty")
@@ -227,16 +228,26 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 // Mutation tools get reconciliation guidance because a late server apply is
 // still possible after the client-visible deadline.
 func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
+	return timeoutMiddlewareWithLimit(d, toolTimeoutGrace, handlerSlots)
+}
+
+func timeoutMiddlewareWithLimit(d, graceDuration time.Duration, slots chan struct{}) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx, cancel := context.WithTimeout(ctx, d)
 			defer cancel()
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return toolTimeoutResult(req.Params.Name), nil
+			}
 			type outcome struct {
 				res *mcp.CallToolResult
 				err error
 			}
 			ch := make(chan outcome, 1)
 			go func() {
+				defer func() { <-slots }()
 				res, err := next(ctx, req)
 				ch <- outcome{res: res, err: err}
 			}()
@@ -244,28 +255,16 @@ func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {
 			case out := <-ch:
 				return out.res, out.err
 			case <-ctx.Done():
-				grace := time.NewTimer(toolTimeoutGrace)
+				grace := time.NewTimer(graceDuration)
 				select {
 				case out := <-ch:
-					if !grace.Stop() {
-						<-grace.C
-					}
+					grace.Stop()
 					// Prefer a real handler result after cancel (success or
 					// classified error) over a synthetic timeout.
 					return out.res, out.err
 				case <-grace.C:
-					// Drain the abandoned handler under a bounded slot budget.
-					select {
-					case timedOutHandlerSlots <- struct{}{}:
-						go func() {
-							defer func() { <-timedOutHandlerSlots }()
-							<-ch
-						}()
-					default:
-						// Slot exhausted: leave the buffered send in next() to
-						// complete without blocking the handler forever.
-						go func() { <-ch }()
-					}
+					// The buffered channel lets the handler finish without a
+					// receiver; its slot is released by the handler goroutine.
 					return toolTimeoutResult(req.Params.Name), nil
 				}
 			}

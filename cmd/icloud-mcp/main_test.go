@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +111,43 @@ func TestTimeoutMiddlewarePasses(t *testing.T) {
 	}
 	if res == nil || len(res.Content) == 0 {
 		t.Fatal("expected result content")
+	}
+}
+
+func TestTimeoutMiddlewareBoundsHandlersIgnoringCancellation(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	mw := timeoutMiddlewareWithLimit(10*time.Millisecond, 10*time.Millisecond, slots)
+	h := mw(func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		calls.Add(1)
+		<-release
+		return mcp.NewToolResultText("late"), nil
+	})
+
+	first, err := h(context.Background(), mcp.CallToolRequest{})
+	if err != nil || first == nil || !first.IsError {
+		t.Fatalf("first result=%+v err=%v", first, err)
+	}
+	if len(slots) != 1 {
+		t.Fatalf("held slots = %d, want 1", len(slots))
+	}
+
+	second, err := h(context.Background(), mcp.CallToolRequest{})
+	if err != nil || second == nil || !second.IsError {
+		t.Fatalf("second result=%+v err=%v", second, err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for len(slots) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(slots) != 0 {
+		t.Fatal("handler slot was not released")
 	}
 }
 

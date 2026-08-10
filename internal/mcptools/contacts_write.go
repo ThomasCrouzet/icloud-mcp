@@ -191,7 +191,7 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 				return deny(err)
 			}
 			nsKey = namespacedIdempotencyKey("update_contact", idemKey)
-			payload, conflict, hit, ready := defaultIdempotency.begin(nsKey, paramsHash)
+			payload, conflict, hit, ready := defaultIdempotency.beginContext(ctx, nsKey, paramsHash)
 			if conflict {
 				return deny(fmt.Errorf("idempotency_key was reused with different update parameters"))
 			}
@@ -199,6 +199,13 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 				return contactsWriteCachedJSON(deps, payload), nil
 			}
 			if !ready {
+				if ctx.Err() != nil {
+					contactsAudit(deps, "update_contact", resource, "error")
+					return contactsErrorResult(deps.Redactor, "idempotency wait", &contacts.Error{
+						Code:    contacts.CodeTimeout,
+						Message: "tool deadline reached while waiting for the idempotency key",
+					}), nil
+				}
 				return deny(fmt.Errorf("idempotency_key cache is full; retry without a key or later"))
 			}
 			idemReady = true

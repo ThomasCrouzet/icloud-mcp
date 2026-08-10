@@ -260,6 +260,9 @@ func TestReadCredentialFileRejectsGroupOrWorldReadable(t *testing.T) {
 	if err := os.WriteFile(path, []byte("app-specific-password"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := readCredentialFile(path)
 	if err == nil || !errors.Is(err, errCredentialFileInsecurePerms) {
 		t.Fatalf("error = %v, want insecure permissions", err)

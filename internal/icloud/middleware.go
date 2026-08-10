@@ -164,9 +164,7 @@ func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) 
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			return calendarContextError(ctx.Err())
 		case <-timer.C:
 		}

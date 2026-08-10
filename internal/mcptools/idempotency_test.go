@@ -1,6 +1,7 @@
 package mcptools
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -147,6 +148,27 @@ func TestIdempotencyStoreAbort(t *testing.T) {
 		t.Fatal("after abort should be ready again")
 	}
 	s.abort("a", h)
+}
+
+func TestIdempotencyStoreWaitHonorsContext(t *testing.T) {
+	s := newIdempotencyStore()
+	h, _ := hashIdempotencyParams("x")
+	_, _, _, ready := s.begin("shared", h)
+	if !ready {
+		t.Fatal("leader should be ready")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	payload, conflict, hit, ready := s.beginContext(ctx, "shared", h)
+	if payload != "" || conflict || hit || ready {
+		t.Fatalf("canceled begin = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("canceled idempotency wait did not return promptly")
+	}
+	s.abort("shared", h)
 }
 
 func TestNamespacedIdempotencyKey(t *testing.T) {
