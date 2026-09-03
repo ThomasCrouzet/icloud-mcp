@@ -189,7 +189,8 @@ Untrusted remote text can influence an LLM on the host; labels are not a
 boundary. A compromised model can call every **registered** tool. Same model for
 every host and vendor.
 
-- **Egress fixed:** Calendar `caldav.icloud.com` / `p[0-9]{1,3}-caldav.icloud.com:443`;
+- **Egress fixed:** Calendar `caldav.icloud.com` / `p[0-9]{1,3}-caldav.icloud.com:443`
+  (and the `.icloud.com.cn` shards that serve mainland China Apple IDs);
   Contacts matching contacts hosts; IMAP `imap.mail.me.com:993`; SMTP
   `smtp.mail.me.com:587` with mandatory STARTTLS. No configurable destinations,
   no proxy env for DAV, TLS 1.2+ verified.

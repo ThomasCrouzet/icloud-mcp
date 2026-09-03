@@ -26,9 +26,11 @@ configurations remain the stronger isolation option.
 ### Security boundaries
 
 - **Per-domain network allowlists:** Calendar can reach only
-  `caldav.icloud.com:443` and `p[0-9]{1,3}-caldav.icloud.com:443`; Contacts can
-  reach only `contacts.icloud.com:443` and
-  `p[0-9]{1,3}-contacts.icloud.com:443`; IMAP can dial only
+  `caldav.icloud.com:443` and `p[0-9]{1,3}-caldav.icloud.com:443` (plus the
+  `.icloud.com.cn` equivalents that serve mainland China Apple IDs); Contacts
+  can reach only `contacts.icloud.com:443` and
+  `p[0-9]{1,3}-contacts.icloud.com:443` (plus their `.icloud.com.cn`
+  equivalents); IMAP can dial only
   `imap.mail.me.com:993`; SMTP can dial only `smtp.mail.me.com:587`.
 - **Verified encryption:** DAV uses HTTPS, IMAP uses implicit TLS, and SMTP
   requires STARTTLS before authentication. TLS verification is always enabled
