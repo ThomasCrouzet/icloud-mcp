@@ -9,6 +9,8 @@ policies; see [CardDAV compatibility](carddav-compatibility.md) and
 
 - Entry: `https://caldav.icloud.com`.
 - Response redirects to a shard `pXX-caldav.icloud.com` (often with explicit `:443`).
+  Apple IDs registered in mainland China are redirected to `pXX-caldav.icloud.com.cn`
+  instead (iCloud there is operated by GCBD); the allowlist accepts both.
 - `go-webdav` `FindCalendarHomeSet` returns a path without the shard host; this
   server uses hand-rolled PROPFIND (`discovery.go`).
 - `net/http` converts 301 to GET; discovery preserves method semantics via

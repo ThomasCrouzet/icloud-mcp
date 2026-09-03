@@ -10,6 +10,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CI fuzz smoke retries once and uses a 5s/2m budget so short coordinator
   shutdown flakes (`context deadline exceeded`, no crash corpus) do not fail
   the job.
+- Calendar and Contacts allowlists accept the `.icloud.com.cn` hosts that serve
+  Apple IDs registered in mainland China. Discovery previously failed with
+  `home-set outside allowlist (pNNN-caldav.icloud.com.cn)` for those accounts.
 
 ## [0.4.0] - 2026-07-25
 

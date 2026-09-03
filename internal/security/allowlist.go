@@ -25,22 +25,26 @@ const ContactsBaseURL = "https://contacts.icloud.com"
 
 // shardHostRe matches the shards returned by iCloud discovery
 // (e.g. p46-caldav.icloud.com, p123-caldav.icloud.com).
-var shardHostRe = regexp.MustCompile(`^p\d{1,3}-caldav\.icloud\.com$`)
+// Apple IDs registered in mainland China are served by iCloud operated by
+// GCBD under the icloud.com.cn domain: discovery against caldav.icloud.com
+// answers with a pNN-caldav.icloud.com.cn home set, so both suffixes are
+// accepted. Nothing else is.
+var shardHostRe = regexp.MustCompile(`^p\d{1,3}-caldav\.icloud\.com(\.cn)?$`)
 
-var contactsShardHostRe = regexp.MustCompile(`^p\d{1,3}-contacts\.icloud\.com$`)
+var contactsShardHostRe = regexp.MustCompile(`^p\d{1,3}-contacts\.icloud\.com(\.cn)?$`)
 
 // IsICloudHost allows caldav.icloud.com and pXX-caldav.icloud.com, nothing
 // else. The comparison is case-sensitive: url.URL.Hostname() returns the
 // host as it appears in the URL (not lowercased by Go), so an uppercase
 // variant is deliberately rejected rather than treated as equivalent.
 func IsICloudHost(host string) bool {
-	return host == "caldav.icloud.com" || shardHostRe.MatchString(host)
+	return host == "caldav.icloud.com" || host == "caldav.icloud.com.cn" || shardHostRe.MatchString(host)
 }
 
 // IsContactsHost allows contacts.icloud.com and its one-to-three-digit iCloud
 // Contacts shards, nothing else. Host matching is deliberately case-sensitive.
 func IsContactsHost(host string) bool {
-	return host == "contacts.icloud.com" || contactsShardHostRe.MatchString(host)
+	return host == "contacts.icloud.com" || host == "contacts.icloud.com.cn" || contactsShardHostRe.MatchString(host)
 }
 
 // PortAllowed accepts an empty port (implicit 443) or an explicit "443".

@@ -20,8 +20,8 @@ prevent disabled optional clients from being constructed.
 
 | Client | Allowed destination | Port | Transport |
 |--------|---------------------|------|-----------|
-| Calendar | `caldav.icloud.com`, `p[0-9]{1,3}-caldav.icloud.com` | implicit or explicit 443 | HTTPS |
-| Contacts | `contacts.icloud.com`, `p[0-9]{1,3}-contacts.icloud.com` | implicit or explicit 443 | HTTPS |
+| Calendar | `caldav.icloud.com`, `p[0-9]{1,3}-caldav.icloud.com`, and their `.icloud.com.cn` equivalents | implicit or explicit 443 | HTTPS |
+| Contacts | `contacts.icloud.com`, `p[0-9]{1,3}-contacts.icloud.com`, and their `.icloud.com.cn` equivalents | implicit or explicit 443 | HTTPS |
 | IMAP | `imap.mail.me.com` | 993 only | Implicit TLS |
 | SMTP | `smtp.mail.me.com` | 587 only | TCP upgraded by mandatory STARTTLS |
 
