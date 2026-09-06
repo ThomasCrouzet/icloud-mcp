@@ -1,6 +1,6 @@
 # MCP error codes and retry semantics
 
-Every tool error is a JSON object in the MCP error text channel:
+Each tool error is a JSON object in the MCP error text channel:
 
 ```json
 {
@@ -11,9 +11,9 @@ Every tool error is a JSON object in the MCP error text channel:
 }
 ```
 
-Field names are stable: `code`, `message`, `retryable`, `retry_after_seconds`,
-`reconciliation`, and optional `details`. Calendar, Contacts, and Mail share the
-same public code vocabulary.
+These field names are stable: `code`, `message`, `retryable`,
+`retry_after_seconds`, `reconciliation`, and optional `details`. Calendar,
+Contacts, and Mail use the same public codes.
 
 ## Codes and agent policy
 
@@ -21,17 +21,17 @@ same public code vocabulary.
 |------|-----------|----------|
 | `validation` | no | Fix arguments; do not retry unchanged. |
 | `authentication` | no | Refresh app-specific password; do not retry. |
-| `authorization` | no | Permission or quota; do not retry blindly. |
-| `not_found` | no | Resource gone; re-list if needed. |
-| `conflict` | no | Create UID exists or state conflict; choose a new key or abort. |
+| `authorization` | no | Check permission or quota. Do not retry without a change. |
+| `not_found` | no | The resource is gone. List resources again if necessary. |
+| `conflict` | no | The create UID exists, or the state conflicts. Select a new key or stop. |
 | `concurrent_modification` | no | Re-read with `get_*`, then patch with fresh `etag`. |
 | `rate_limited` | yes | Wait `retry_after_seconds` (default 5) then retry. |
-| `timeout` | no (tool deadline) | Tool middleware deadline is non-retryable. After cancel it waits a short grace for a real result. Mutation tools include `reconciliation` because a late server apply is still possible. Prefer re-read; use `client_uid` / `idempotency_key` / `etag`. |
+| `timeout` | no (tool deadline) | The tool deadline is not retryable. After cancellation, the server waits briefly for a real result. A mutation can still finish late. Use `reconciliation`. Read the resource again. Use `client_uid`, `idempotency_key`, or `etag`. |
 | `unavailable` | yes | Back off with `retry_after_seconds` (default 2). |
 | `partial_failure` | no | Inspect warnings; do not assume full success. |
-| `protocol_error` | no | Library/server protocol gap (e.g. CONDSTORE flags). |
-| `payload_too_large` | no | Narrow the query, range, or calendar selection (includes multi-calendar search above the 10,000-event materialization budget). |
-| `outcome_unknown` | no | Mutation may have applied. Follow `reconciliation`; use `client_uid` / `idempotency_key` if present. |
+| `protocol_error` | no | The library or server has a protocol gap. CONDSTORE flags are one example. |
+| `payload_too_large` | no | Narrow the query, range, or calendar selection. This includes more than 10,000 materialized events in a multi-calendar search. |
+| `outcome_unknown` | no | The mutation might already be complete. Follow `reconciliation`. Use `client_uid` or `idempotency_key` if present. |
 | `internal_error` | no | Bug or unexpected failure; report with redacted logs. |
 
 ## Examples
@@ -47,7 +47,7 @@ same public code vocabulary.
 }
 ```
 
-Agent: sleep `retry_after_seconds`, then retry the same read.
+Agent: wait for `retry_after_seconds`. Then, repeat the same read.
 
 ### Authentication
 
@@ -58,7 +58,7 @@ Agent: sleep `retry_after_seconds`, then retry the same read.
 }
 ```
 
-Agent: stop. Ask the operator to rotate the app-specific password.
+Agent: stop. Ask the operator to replace the app-specific password.
 
 ### Concurrent modification
 
@@ -69,7 +69,8 @@ Agent: stop. Ask the operator to rotate the app-specific password.
 }
 ```
 
-Agent: call `get_event`, merge intent, retry update with the new `etag`.
+Agent: call `get_event`. Apply the intended changes to that result. Then, repeat
+the update with the new `etag`.
 
 ### Outcome unknown
 
@@ -81,17 +82,17 @@ Agent: call `get_event`, merge intent, retry update with the new `etag`.
 }
 ```
 
-Agent: if `client_uid` / `idempotency_key` was supplied, re-submit with the same
-key (create returns conflict if already present; update returns the cached
-success when the process-local cache still holds the entry). Update
-`idempotency_key` is **process-local**, in-memory, **15 minute TTL**, and does
-not survive restart or another process. Otherwise re-read by UID before
-deciding.
+Agent: if the request had `client_uid` or `idempotency_key`, submit it again with
+the same key. Create returns conflict if the event is already present. Update
+returns cached success while the process-local cache contains the entry.
+
+An update `idempotency_key` stays **in memory** for **15 minutes** in one
+process. It does not remain after a restart. Another process cannot use the
+entry. Without a key, read the UID again before you decide.
 
 ## Internal retries
 
-The server already retries **safe Calendar and Contacts reads** on HTTP 429/502/
-503/504 with bounded backoff and `Retry-After`. Mutations and Mail send are
-never auto-replayed. Agents should still honor `retryable` and
-`retry_after_seconds` on the final MCP error after the server exhausted its own
-budget.
+The server already retries **safe Calendar and Contacts reads** after HTTP 429,
+502, 503, or 504. It uses bounded backoff and `Retry-After`. The server never
+repeats mutations or Mail send automatically. After its retry limit, obey
+`retryable` and `retry_after_seconds` in the final MCP error.

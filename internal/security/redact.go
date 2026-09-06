@@ -79,14 +79,14 @@ type Redactor struct {
 	secrets []string
 }
 
-// NewRedactor builds a Redactor from the secrets to mask. Empty or too-short
-// strings (fewer than 4 characters) are ignored: replacing them everywhere
-// would produce unusable noise (replacing "" or "ab" would mask passages
-// unrelated to any secret). Secrets containing newlines are also ignored:
-// RedactingWriter emits complete lines and cannot mask a secret that spans
-// line boundaries (app-specific passwords and emails never contain newlines;
-// file:// secrets are TrimSpace'd at load). Accepted secrets are deduplicated
-// and sorted by descending byte length so overlaps redact the complete value.
+// NewRedactor builds a Redactor from the secrets to mask. It ignores strings
+// shorter than four characters. Masking "" or "ab" would also mask unrelated
+// text. It also ignores secrets that contain newlines because RedactingWriter
+// emits complete lines. App-specific passwords and emails never contain
+// newlines. The boot loader applies TrimSpace to file:// secrets.
+//
+// NewRedactor removes duplicate secrets and sorts them by decreasing byte
+// length. This order makes overlapping values redact the complete secret.
 func NewRedactor(secrets ...string) *Redactor {
 	r := &Redactor{}
 	seen := make(map[string]struct{}, len(secrets))
@@ -140,10 +140,10 @@ func (r *Redactor) Redact(s string) string {
 	return out
 }
 
-// RedactingWriter wraps an io.Writer (typically stderr) and redacts secrets
-// before forwarding. Bytes are buffered across Write calls so a secret split
-// mid-stream is still masked: only complete lines are emitted, and the
-// trailing partial line stays buffered until its line terminator arrives.
+// RedactingWriter wraps an io.Writer, typically stderr, and redacts secrets
+// before forwarding. It buffers bytes across Write calls to mask split
+// secrets. It emits only complete lines. It retains a partial final line until
+// the line terminator arrives.
 type RedactingWriter struct {
 	w          io.Writer
 	r          *Redactor
@@ -163,9 +163,9 @@ func NewRedactingWriter(w io.Writer, r *Redactor) *RedactingWriter {
 	return &RedactingWriter{w: w, r: r}
 }
 
-// Write implements io.Writer. It returns len(p) on success (not the length
-// of the redacted text, which may differ): callers (slog, log.Logger) expect
-// Write to consume the entire original buffer without a short-write error.
+// Write implements io.Writer. On success, it returns len(p), even if redaction
+// changes the output length. Callers such as slog and log.Logger require Write
+// to consume the full input without a short-write error.
 func (rw *RedactingWriter) Write(p []byte) (int, error) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
@@ -217,11 +217,11 @@ func (rw *RedactingWriter) Write(p []byte) (int, error) {
 
 // emitLocked redacts and forwards the buffered bytes that are safe to emit.
 //
-// A secret never contains a newline, so it can never straddle a line
-// terminator: everything up to and including the last '\n' is safe to emit,
-// while the trailing partial line must stay buffered, since the next Write
-// may complete a secret started at its end. Write handles oversized records
-// separately and never lets this buffer reach maxRedactBuf without a newline.
+// A secret never contains a newline and cannot cross a line terminator. Thus,
+// bytes through the last '\n' are safe to emit. Keep the partial final line
+// because the next Write can complete a secret at its end. Write handles
+// oversized records separately. It never lets this buffer reach maxRedactBuf
+// without a newline.
 //
 // force drains everything, including the trailing partial line.
 func (rw *RedactingWriter) emitLocked(force bool) error {

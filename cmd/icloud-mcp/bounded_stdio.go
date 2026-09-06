@@ -148,7 +148,7 @@ func (w *boundedErrorWriter) Write(p []byte) (int, error) {
 // sanitizeOutputFrame enforces the reflected-error threshold and the absolute
 // stdout frame budget. Caller-reflecting protocol/tool errors are replaced
 // above 64 KiB. Any remaining frame above 256 KiB is replaced so a missed
-// domain result cap cannot blow the stdio channel.
+// domain result cap cannot exceed the stdio limit.
 func sanitizeOutputFrame(frame []byte) []byte {
 	if len(frame) <= maxReflectedProtocolErrorBytes {
 		return frame

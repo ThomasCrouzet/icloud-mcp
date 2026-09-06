@@ -10,24 +10,24 @@ clients. Mail is independent from Calendar CalDAV and Contacts CardDAV.
 | IMAP | `imap.mail.me.com` | 993 | Required implicit verified TLS | Mail address local part first, then full address fallback |
 | SMTP submission | `smtp.mail.me.com` | 587 | Mandatory verified STARTTLS | Full iCloud Mail address |
 
-Both protocols use an app-specific password. POP is not supported. Apple does
-not document every IMAP capability, mailbox name, SPECIAL-USE mapping, MOVE,
-UIDPLUS, CONDSTORE behavior, authentication detail, or SMTP Sent-copy behavior.
-The implementation negotiates or fails closed rather than hardcoding those
-properties.
+Both protocols use an app-specific password. The client does not support POP.
+Apple does not document all related behavior. Examples include IMAP
+capabilities, mailbox names, SPECIAL-USE mappings, MOVE, UIDPLUS, CONDSTORE,
+authentication details, and SMTP Sent copies. The client negotiates these
+properties or fails closed. It does not use fixed assumptions.
 
-The socket destinations are fixed and not configurable. IMAP requires exactly
-`imap.mail.me.com:993`; SMTP requires exactly `smtp.mail.me.com:587`. TLS uses
-system trust, fixed server names, and TLS 1.2 or later. Protocol debug writers
-are not enabled.
+The client uses fixed socket destinations. IMAP requires exactly
+`imap.mail.me.com:993`. SMTP requires exactly `smtp.mail.me.com:587`. TLS uses
+system trust, fixed server names, and TLS 1.2 or later. The client does not
+enable protocol debug writers.
 
 ## Session lifecycle and authentication
 
-Each tool attempt opens a new socket and closes the authenticated session after
-the operation. No selected mailbox, IDLE connection, IMAP session, or SMTP
-session persists between calls.
+Each tool attempt opens a new socket. It closes the authenticated session after
+the operation. Selected mailboxes, IDLE connections, IMAP sessions, and SMTP
+sessions do not remain between calls.
 
-IMAP performs this sequence:
+IMAP uses this sequence:
 
 ```text
 fixed dial -> verified implicit TLS -> greeting -> LOGIN -> capability snapshot
@@ -35,20 +35,20 @@ fixed dial -> verified implicit TLS -> greeting -> LOGIN -> capability snapshot
 ```
 
 The first LOGIN username is the local part of `ICLOUD_MAIL_ADDRESS`. The adapter
-retries exactly once with the full address only when the first response is an
-explicit authentication rejection. It does not fall back after a network,
-timeout, or generic protocol error, and errors do not reveal which identity was
-attempted.
+tries the full address once after an explicit authentication rejection. It does
+not use this fallback after a network, timeout, or generic protocol error.
+Errors do not identify the attempted identity.
 
-A transient Mail read may open one replacement session if no result was
-returned. Mutation and SMTP paths never retry. Cancellation closes the active
-connection.
+A transient Mail read can open one replacement session if the first session
+returned no result. Mutation and SMTP paths never retry. Cancellation closes
+the active connection.
 
 ## Mailbox and message identity
 
-Mailbox names, hierarchy delimiters, and attributes come from LIST. The server
-does not infer Inbox, Sent, Trash, or another purpose from an English display
-name. `list_mailboxes` performs no STATUS fan-out and returns at most 200 items.
+LIST supplies mailbox names, hierarchy delimiters, and attributes. The server
+does not infer a mailbox purpose from an English display name. This rule applies
+to Inbox, Sent, Trash, and other purposes. `list_mailboxes` sends no STATUS
+fan-out and returns at most 200 items.
 
 A message identity is:
 
@@ -56,59 +56,62 @@ A message identity is:
 (mailbox, UIDVALIDITY, UID)
 ```
 
-`search_messages` returns UIDVALIDITY with every page and message. `get_message`
-and every mutation require it. After SELECT, a mismatch returns
-`concurrent_modification` before fetching or changing the requested message.
-UID zero and UIDVALIDITY zero are invalid.
+`search_messages` returns UIDVALIDITY with each page and message. `get_message`
+and each mutation require it. After SELECT, a mismatch returns
+`concurrent_modification`. This check occurs before the client gets or changes
+the message. UID zero and UIDVALIDITY zero are invalid.
 
 ## Search and pagination
 
-`search_messages` accepts one mailbox plus optional TEXT, From, To, Subject,
-inclusive `since`, exclusive `before`, unseen, and flagged criteria. Search
-strings are capped at 512 UTF-8 bytes and are passed through typed go-imap search
-criteria rather than concatenated into protocol syntax. Dates use `YYYY-MM-DD`
-and IMAP internal-date day granularity.
+`search_messages` accepts one mailbox and optional search criteria. The criteria
+are TEXT, From, To, Subject, inclusive `since`, exclusive `before`, unseen, and
+flagged. Search strings have a 512-byte UTF-8 limit. Typed go-imap criteria send
+them without protocol string concatenation. Dates use `YYYY-MM-DD` and IMAP
+internal-date day granularity.
 
-The search walks descending UID ranges in windows of up to 5,000, beginning
-below UIDNEXT or below exclusive `before_uid`. It scans at most 50,000 UID values
-and never issues an unrestricted mailbox-wide search. A cursor must include the
-same UIDVALIDITY returned by the previous page.
+The search reads descending UID ranges in windows of at most 5,000. It starts
+below UIDNEXT or the exclusive `before_uid`. It scans at most 50,000 UID values.
+It never sends an unrestricted mailbox-wide search. A cursor must include the
+UIDVALIDITY from the previous page.
 
-Results are sorted by UID descending within one UIDVALIDITY. UID order is append
-order, not message header-date order. The default result limit is 20 and the
+Results sort by descending UID within one UIDVALIDITY. UID order is append
+order, not message header-date order. The default result limit is 20. The
 maximum is 50. `nextBeforeUid` is the next exclusive cursor.
-`scanLimitReached` means older UID space was not searched; `truncated` means the
-result count or 256 KiB output budget removed summaries.
 
-Search fetches only UID, flags, envelope, internal date, RFC822 size, MODSEQ when
-available, and BODYSTRUCTURE. It fetches no snippet or body section.
+`scanLimitReached` means that the search did not read older UID space.
+`truncated` means that the count or 256 KiB output limit removed summaries.
+
+Search gets only UID, flags, envelope, internal date, RFC822 size, and
+BODYSTRUCTURE. It also gets MODSEQ when available. It gets no snippet or body
+section.
 
 ## Message retrieval
 
 Read tools select mailboxes read-only and use PEEK. They must not set Seen.
 
-`get_message` first fetches metadata, BODYSTRUCTURE, and only these additional
-headers: Message-ID, In-Reply-To, References, and Reply-To. It chooses the first
-inline `text/plain` leaf with no attachment/filename semantics, then fetches the
-part MIME header and that part body with bounded partial PEEK requests. It never
-fetches an unbounded `BODY.PEEK[]`.
+`get_message` first gets metadata, BODYSTRUCTURE, and four additional headers:
+Message-ID, In-Reply-To, References, and Reply-To. It selects the first inline
+`text/plain` leaf without attachment or filename semantics. Then, bounded
+partial PEEK requests get the MIME header and body. It never gets an unbounded
+`BODY.PEEK[]`.
 
-The result contains curated envelope/header metadata, decoded plain text, and
-attachment metadata. It never returns raw MIME, raw headers, Received/authentication
-headers, HTML, or attachment payloads. Attachment metadata is derived from
-BODYSTRUCTURE without fetching content. Attached `message/rfc822` and descendants
-are treated as attachments rather than traversed for body text.
+The result contains selected envelope and header metadata. It also contains
+decoded plain text and attachment metadata. It never contains raw MIME, raw
+headers, Received or authentication headers, HTML, or attachment payloads.
+BODYSTRUCTURE supplies attachment metadata without content retrieval. The
+client treats attached `message/rfc822` parts and their descendants as
+attachments. It does not inspect them for body text.
 
-If no plain text exists, metadata is returned with `html_only` or
-`no_plain_text`. If wire/decoded text is too large or decoding is unsafe, the
-body is omitted with a bounded warning. A body that fits its requested ceiling
-can be truncated at a valid UTF-8 boundary to fit the 256 KiB result. Metadata
-that cannot fit returns `payload_too_large`.
+If no plain text exists, the result has metadata with `html_only` or
+`no_plain_text`. If wire or decoded text is too large, the client omits the body
+and adds a bounded warning. Unsafe decoding has the same result. The client can truncate an otherwise valid
+body at a valid UTF-8 boundary. This truncation keeps the result within 256 KiB.
+Metadata that cannot fit returns `payload_too_large`.
 
 ## IMAP decode limits
 
-The beta go-imap client is isolated behind `internal/mail/imapadapter`. Before
-the library materializes recursive BODYSTRUCTURE values, `guardedConn` enforces:
+`internal/mail/imapadapter` isolates the beta go-imap client. Before the library
+creates recursive BODYSTRUCTURE values, `guardedConn` applies these limits:
 
 | Resource | Limit |
 |----------|-------|
@@ -118,7 +121,7 @@ the library materializes recursive BODYSTRUCTURE values, `guardedConn` enforces:
 | Protocol lists | 512 |
 | Quoted protocol string | 8,194 bytes |
 
-The modeled layer additionally enforces:
+The modeled layer applies these additional limits:
 
 | Resource | Limit |
 |----------|-------|
@@ -132,50 +135,53 @@ The modeled layer additionally enforces:
 
 ## Flag mutation
 
-`set_message_flags` accepts exactly one add/remove operation and one to three
-unique values from Seen, Flagged, and Answered. It cannot replace FLAGS, set
-Deleted or Recent, or create arbitrary keywords.
+`set_message_flags` accepts exactly one add or remove operation. It also accepts
+one to three unique values from Seen, Flagged, and Answered. It cannot replace
+FLAGS, set Deleted or Recent, or create arbitrary keywords.
 
-The session selects the mailbox read-write, checks UIDVALIDITY, and verifies the
-message exists. When CONDSTORE is absent, the adapter sends one delta-only
-`+FLAGS.SILENT` or `-FLAGS.SILENT`, never a full replacement. The result reports
-`conditionalUpdate: false`, then attempts to fetch resulting flags.
+The session selects the mailbox for read and write. It checks UIDVALIDITY and
+the existence of the message. Without CONDSTORE, the adapter sends one
+delta-only `+FLAGS.SILENT` or `-FLAGS.SILENT`. It never sends a full replacement.
+The result reports `conditionalUpdate: false`. Then, it tries to get the
+resulting flags.
 
-When CONDSTORE is advertised, `expected_modseq` is required. The reviewed
-go-imap beta.8 API does not safely expose the tagged MODIFIED result. The current
-adapter therefore returns `protocol_error` before STORE, even when
-`expected_modseq` is present. It does not silently degrade to an unconditional
-mutation and does not claim `concurrent_modification` on this path. Conditional
-flag writes remain unavailable until MODIFIED detection can be proven.
+When the IMAP server advertises CONDSTORE, flag updates require `expected_modseq`.
+The reviewed go-imap beta.8 API cannot safely expose the tagged MODIFIED result.
+Thus, the adapter returns `protocol_error` before STORE. This rule applies even
+when `expected_modseq` is present. The adapter does not send an unconditional
+mutation. It does not report `concurrent_modification` on this path.
+
+Conditional flag writes stay unavailable until the project proves MODIFIED
+detection.
 
 ## Move and trash
 
-`move_message` first verifies that the destination occurs exactly once as a
-selectable LIST mailbox. It then selects the source read-write, checks
-UIDVALIDITY, and verifies the source UID.
+`move_message` first verifies that LIST contains exactly one selectable match
+for the destination. It then selects the source for read and write. It checks
+UIDVALIDITY and the source UID.
 
-- When MOVE is advertised, it uses native UID MOVE.
-- Otherwise it requires UIDPLUS and performs UID COPY, add Deleted to that UID,
-  then UID EXPUNGE for that UID.
+- When the server advertises MOVE, the client uses native UID MOVE.
+- Otherwise, it requires UIDPLUS. It sends UID COPY, adds Deleted to that UID,
+  and then sends UID EXPUNGE for that UID.
 - It never uses plain EXPUNGE or mailbox-wide EXPUNGE.
-- It waits for definitive completion before each next step and never retries or
+- It waits for definitive completion before the next step. It never retries or
   compensates automatically.
 
-A native or COPY transport ambiguity returns `outcome_unknown`. A definitive
-failure after COPY or after adding Deleted returns a bounded `partial_failure`;
-an ambiguous later step returns `outcome_unknown`. Reconciliation tells callers
-which mailboxes/state to inspect.
+A transport ambiguity during native MOVE or COPY returns `outcome_unknown`. A
+definitive failure after COPY or Deleted returns a bounded `partial_failure`.
+An ambiguous later step returns `outcome_unknown`. Reconciliation identifies
+the mailboxes and state that the caller must inspect.
 
 `trash_message` requires exactly one selectable LIST mailbox with SPECIAL-USE
-`\Trash`, then applies the same move policy. Zero or multiple Trash targets fail
-closed. It exposes no permanent-delete action and rejects a source already in
-that Trash mailbox.
+`\Trash`. It then applies the same move policy. Zero or multiple Trash targets
+fail closed. The tool has no permanent-delete action. It rejects a source that
+is already in that Trash mailbox.
 
 ## SMTP submission
 
-SMTP send is registered only when Mail is enabled, global read-only is false,
-Mail send is requested, and the recipient policy is valid. Mail mutation is not
-required.
+The server registers SMTP send only when all send gates are active. Mail must be
+enabled, global read-only must be false, and configuration must request Mail send. The
+recipient policy must also be valid. Mail mutation is not required.
 
 The path is:
 
@@ -184,40 +190,47 @@ smtp.mail.me.com:587 -> EHLO -> mandatory STARTTLS -> verified TLS -> EHLO
                      -> AUTH PLAIN -> MAIL FROM -> every RCPT TO -> DATA
 ```
 
-There is no plaintext-authentication fallback. From in both envelope and MIME is
-exactly `ICLOUD_MAIL_ADDRESS`. The message is UTF-8 plain text with locally
-generated Date and Message-ID. To and Cc appear in headers; Bcc is envelope-only.
-HTML, attachments, raw MIME, custom headers, display-name recipients, groups,
-caller-selected From, header newlines, and NUL are rejected.
+There is no plaintext-authentication fallback. The envelope and MIME From value
+is exactly `ICLOUD_MAIL_ADDRESS`. The message is UTF-8 plain text. The client
+generates Date and Message-ID locally. To and Cc occur in headers. Bcc occurs
+only in the envelope.
 
-The local policy validates all To/Cc/Bcc addresses before connecting. It permits
-only exact configured addresses, using ASCII case-insensitive matching, unless
-the complete policy is literal `*`. Recipients must be unique and are capped at
-50. `to`, `cc`, and `bcc` are each optional; at least one recipient is required
-across the three arrays. Subject is capped at 998 bytes, body at 100 KiB, and the
-complete encoded message at 256 KiB. Aggregate inbound SMTP responses are
-capped at 1 MiB per session.
+The client rejects HTML, attachments, raw MIME, custom headers, and display-name
+recipients. It also rejects groups, caller-selected From, header newlines, and
+NUL.
 
-Every RCPT command is attempted unless a non-definitive protocol/transport
-failure makes further commands unsafe. Any definitive RCPT rejection causes
-RSET when possible and prevents DATA, so accepted subsets are never submitted.
+The local policy validates all To, Cc, and Bcc addresses before connection. It
+permits only exact configured addresses with ASCII case-insensitive matching.
+The literal complete policy `*` permits all addresses. Recipients must be unique,
+with a limit of 50.
+
+`to`, `cc`, and `bcc` are each optional. The three arrays must contain at least
+one recipient in total. Subject has a 998-byte limit. Body has a 100 KiB limit.
+The complete encoded message has a 256 KiB limit. Inbound SMTP responses have a
+total 1 MiB limit for each session.
+
+The client tries each RCPT command unless an ambiguous failure makes more
+commands unsafe. The failure can come from the protocol or transport. A
+definitive RCPT rejection prevents DATA. The client sends RSET when possible.
+Thus, it never submits an accepted subset.
 
 Submission outcomes are:
 
 - `accepted` only after a definitive successful final DATA response.
-- A `rejected` result when at least one RCPT receives a definitive rejection, or
-  when DATA receives a definitive rejection.
-- A structured validation, authorization, authentication, protocol, size, or
-  availability tool error for local/policy, STARTTLS, AUTH, MAIL FROM, or other
-  pre-DATA failures. No message has been submitted on those paths.
+- `rejected` when at least one RCPT receives a definitive rejection. A
+  definitive DATA rejection has the same result.
+- A structured tool error for validation, authorization, authentication,
+  protocol, size, or availability failures before DATA. These paths include
+  local policy, STARTTLS, AUTH, and MAIL FROM failures. The client submits no
+  message on these paths.
 - `outcome_unknown` if connection loss or cancellation occurs after DATA may
   have reached the server and no definitive final response is available.
 
-SMTP is never retried. After `outcome_unknown`, inspect Sent and recipients
-before deciding whether to send again. The implementation never APPENDs a Sent
-copy and therefore returns `sentCopyUnavailable: true` after accepted SMTP.
-That field means the client did not ensure a copy; whether iCloud creates one is
-server behavior and is not assumed by the client.
+The client never retries SMTP. After `outcome_unknown`, inspect Sent and the
+recipients before another send. The client never uses APPEND for a Sent copy.
+Thus, accepted SMTP returns `sentCopyUnavailable: true`. This field means that
+the client did not make sure that a copy exists. iCloud can create one, but the
+client does not assume this behavior.
 
 ## Rates and concurrency
 
@@ -227,6 +240,5 @@ server behavior and is not assumed by the client.
 | IMAP mutation | 20/minute, burst 3 | 1 | None |
 | SMTP send | 20/minute, burst 3 | 1 | None |
 
-Every attempt consumes the applicable rate budget. All operations remain within
-the 25 second MCP tool deadline, and socket deadlines are clamped by the active
-context.
+Each attempt uses the applicable rate budget. All operations have a 25 second
+MCP tool deadline. The active context also limits each socket deadline.

@@ -44,14 +44,14 @@ func init() {
 	}
 }
 
-// toolTimeout bounds the execution of each MCP tool call, strictly below the
-// HTTP timeout (30s) so the tool fails cleanly before the underlying HTTP
-// request times out on its own.
+// toolTimeout limits each MCP tool call to 25 seconds. This limit is lower than
+// the 30-second HTTP timeout. The tool can therefore fail cleanly before the
+// HTTP request reaches its timeout.
 const toolTimeout = 25 * time.Second
 
-// toolTimeoutGrace is how long the middleware waits after cancel for a handler
-// that already finished (or fails fast on cancelled I/O) before returning a
-// synthetic timeout. Prefer a real result over a false timeout when possible.
+// toolTimeoutGrace defines how long the middleware waits after cancellation.
+// During this period, completed work or cancelled I/O can produce a real
+// handler result instead of a synthetic timeout.
 const toolTimeoutGrace = 2 * time.Second
 
 // maxInFlightHandlers caps handler goroutines so dependencies that ignore
@@ -83,9 +83,9 @@ func main() {
 	}
 
 	// 1. Configuration: failure = os.Exit(1) BEFORE any network access.
-	// config.Load error strings are required to omit email and password
-	// (see config.Validate / loadCredential) because this path still uses
-	// the default log sink before the Redactor below is installed.
+	// config.Load errors must omit the email and password. This path uses the
+	// default log sink before it installs the Redactor. See config.Validate and
+	// loadCredential.
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
@@ -127,11 +127,11 @@ func main() {
 	}
 	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
 	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
-	// Retry (429/502/503/504 with Retry-After + backoff + jitter) and error
-	// classification (stable codes + Apple-aware messages) sit ON TOP of the
-	// allowlist+auth doer, so every CalDAV request, whether hand-rolled
-	// (discovery, REPORT, conditional PUT) or via go-webdav, goes through
-	// both. See internal/icloud/retry.go.
+	// The retry classifier handles 429, 502, 503, and 504 responses. It applies
+	// Retry-After, backoff, jitter, stable codes, and Apple-aware messages.
+	// Every CalDAV request passes through the allowlist, authentication, and
+	// retry layers. This includes custom discovery, REPORT, conditional PUT,
+	// and go-webdav requests. See internal/icloud/retry.go.
 	doer := icloud.NewRetryClassifier(authHTTP)
 	contactsService, mailService, err := newOptionalServices(cfg)
 	if err != nil {
@@ -210,11 +210,9 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 		server.WithToolCapabilities(false),
 		server.WithInputSchemaValidation(),
 		server.WithStrictInputSchemaDefault(),
-		// WithRecovery remains as an extra safety net, but it is
-		// mcptools.RecoverRedactMiddleware (registered below, hence closer
-		// to the handler in the stack) that intercepts a panic first and
-		// produces a REDACTED response; otherwise WithRecovery alone would
-		// serialize the raw (unredacted) error onto the JSON-RPC channel.
+		// RecoverRedactMiddleware runs closer to the handler and catches panics
+		// first. It redacts each error before JSON-RPC serializes it. Keep
+		// WithRecovery as a second safety layer.
 		server.WithRecovery(),
 		server.WithInstructions("Unified Apple/iCloud server. Calendar is always available; optional Contacts and Mail tools appear only when enabled. Call the relevant list tool before using domain-specific resource identifiers."),
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
@@ -223,8 +221,9 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 }
 
 // timeoutMiddleware bounds the execution time of each tool call. It cancels
-// the handler context at the deadline, waits a short grace for a real result
-// (cancelled I/O or just-finished work), then returns a synthetic timeout.
+// the handler context at the deadline. It then waits briefly for cancelled I/O
+// or work that just finished. If no result arrives, it returns a synthetic
+// timeout.
 // Mutation tools get reconciliation guidance because a late server apply is
 // still possible after the client-visible deadline.
 func timeoutMiddleware(d time.Duration) server.ToolHandlerMiddleware {

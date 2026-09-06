@@ -1,5 +1,5 @@
-# Pinned linter config for icloud-mcp. Keep minimal: match go vet + a few
-# high-signal checks without fighting the hand-rolled CalDAV style.
+# Use a fixed linter configuration for icloud-mcp.
+# Add a small set of checks to go vet. Keep the custom CalDAV code style.
 version: "2"
 
 linters:

@@ -22,11 +22,10 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// End-to-end redaction test (key security requirement): the password must
-// not appear in ANY output, neither stderr nor the tools' JSON responses,
-// even when the remote CalDAV server returns errors that echo the
-// credentials in their body (real go-webdav behavior on a non-2xx
-// text/plain response: the body is included in the returned error).
+// These tests verify the main redaction requirement from end to end. A password
+// must not appear in stderr or tool JSON responses. This rule also applies when
+// a remote CalDAV error body echoes credentials. For a non-2xx text/plain
+// response, go-webdav includes that body in the returned error.
 
 const (
 	redactionPrincipalPath = "/121234567/principal/"
@@ -34,10 +33,9 @@ const (
 	redactionCalendarPath  = redactionHomeSetPath + "home/"
 )
 
-// redactionTestServer serves the iCloud discovery normally, and can be
-// configured to fail REPORT/PUT/DELETE with an error body containing the
-// password and the raw Authorization header (simulating a buggy or hostile
-// echoing server).
+// redactionTestServer serves iCloud discovery normally. Tests can make REPORT,
+// PUT, or DELETE fail. The error body then contains the password and raw
+// Authorization header to simulate a faulty or hostile echoing server.
 type redactionTestServer struct {
 	password    string
 	authFail401 bool
@@ -115,13 +113,14 @@ func (h *redactionTestServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// writeHostileError simulates a buggy CalDAV server that echoes the
-// received credentials in its error response body, in THREE FORMS (raw
-// password, raw Authorization header = base64(email:password), and a
-// url-encoded form, e.g. a system echoing through a redirect query string).
-// go-webdav (internal.Client.Do) includes this text/plain body in the Go
-// error returned to the caller; that is the leak path this test exercises:
-// all 3 forms must be redacted, not just the raw password.
+// writeHostileError simulates a faulty CalDAV server that echoes credentials
+// in an error body. It includes the raw password, the raw Authorization header,
+// and a URL-encoded value. The header contains base64(email:password). The
+// encoded value simulates an echo through a redirect query string.
+//
+// go-webdav internal.Client.Do includes this text/plain body in the returned
+// Go error. This is the leak path under test. Redaction must remove all three
+// forms, not only the raw password.
 func (h *redactionTestServer) writeHostileError(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusInternalServerError)
@@ -152,21 +151,18 @@ func newTestRedactor(email, password string) *security.Redactor {
 	)
 }
 
-// TestNoPasswordLeak_DiscoveryAuthFailure: this test is deliberately
-// "vacuously true" as far as a real positive control goes. The simulated
-// 401 response has an empty body, and above all: discovery.go NEVER
-// includes the response body in its error for a 401; the message is a
-// fixed constant (`c.propfind`, see discovery.go), read BEFORE any
-// io.ReadAll of the body. No credential can therefore leak through THIS
-// specific path, redaction or not: an honest positive control cannot be
-// built here (a 401 body echoing the password would prove nothing, since
-// our code never reads it). The REAL proof that redaction works on a
-// response body echoing credentials is provided by
-// TestNoPasswordLeak_HostileServerEchoesCredentials below
-// (REPORT/PUT/DELETE via go-webdav, which DOES include the body in the
-// returned error). This test remains useful to check that a 401 does not
-// crash any tool and leaks nothing OTHER than the body (e.g. the error's
-// stack/context).
+// TestNoPasswordLeak_DiscoveryAuthFailure does not provide a positive control
+// for a response-body leak. The simulated 401 response has an empty body.
+// discovery.go also excludes a 401 body from its error. It reads the fixed
+// c.propfind message before any io.ReadAll call. Thus, this path cannot leak a
+// credential from the body, even without redaction.
+//
+// A 401 body that echoes the password would not prove anything because this
+// code never reads it. TestNoPasswordLeak_HostileServerEchoesCredentials
+// provides the positive control. It covers REPORT, PUT, and DELETE through
+// go-webdav, which includes the response body in the returned error. This test
+// still verifies that a 401 does not crash a tool. It also checks other leak
+// sources, such as error context.
 func TestNoPasswordLeak_DiscoveryAuthFailure(t *testing.T) {
 	const email = "user@example.com"
 	const password = "SENTINEL-PW-abc123-XYZ" // gitleaks:allow, test sentinel, not a real secret
@@ -212,7 +208,7 @@ func TestNoPasswordLeak_HostileServerEchoesCredentials(t *testing.T) {
 
 	// Positive control: without redaction, a hostile error carrying the
 	// three secret forms must still contain them. Create/update now use a
-	// hand-rolled PUT that classifies status without embedding response
+	// custom PUT that classifies status without embedding response
 	// bodies (so CreateEvent is no longer a reliable leak vector). Prove
 	// the redactor still masks all forms when a secret does appear.
 	rawBasicAuth := base64.StdEncoding.EncodeToString([]byte(email + ":" + password))
@@ -271,10 +267,10 @@ type toolCall struct {
 	args map[string]any
 }
 
-// callAllTools spins up an in-process MCP client against s, calls each tool
-// in calls, and returns the concatenation of all textual contents of the
-// responses (success AND error). allMustFail additionally asserts that
-// every call fails (used for the 401 scenario).
+// callAllTools starts an in-process MCP client for s. It invokes each tool in
+// calls and joins all response text, including success and error responses.
+// When allMustFail is true, it also verifies that each call fails. The 401 test
+// uses this option.
 func callAllTools(t *testing.T, s *server.MCPServer, calls []toolCall, allMustFail bool) string {
 	t.Helper()
 	c, err := client.NewInProcessClient(s)
@@ -316,9 +312,10 @@ func callAllTools(t *testing.T, s *server.MCPServer, calls []toolCall, allMustFa
 	return combined.String()
 }
 
-// assertNoLeak checks that none of the 3 forms of the secret (raw password,
-// base64(email:password) as echoed by a raw Authorization header, and
-// url.QueryEscape(password)) appear in toolResults NOR in capturedStderr.
+// assertNoLeak checks three forms of the secret. They are the raw password,
+// base64(email:password) from an Authorization header, and
+// url.QueryEscape(password). Neither toolResults nor capturedStderr can
+// contain these forms.
 func assertNoLeak(t *testing.T, email, password, toolResults, capturedStderr string) {
 	t.Helper()
 	forms := map[string]string{
@@ -336,19 +333,17 @@ func assertNoLeak(t *testing.T, email, password, toolResults, capturedStderr str
 	}
 }
 
-// TestRecoverRedactMiddleware_PanicDoesNotLeakSecret. The JSON-RPC error
-// channel (triggered by a panic inside a tool handler) bypasses the stderr
-// RedactingWriter: that writer only covers stderr, not the serialization of
-// protocol errors on stdout. server.WithRecovery() does convert a panic
-// into a Go error, but that error is then serialized AS IS (err.Error())
-// into the JSON-RPC message, without going through redaction. This test
-// registers a dummy tool that panics while carrying the password, and
-// checks:
-//   - positive control: WITHOUT RecoverRedactMiddleware (WithRecovery
-//     alone, the vulnerable configuration), the password does leak into the
-//     protocol error; otherwise this test would prove nothing;
-//   - WITH RecoverRedactMiddleware, the password NEVER leaks: the panic is
-//     absorbed and turned into a redacted error CallToolResult.
+// TestRecoverRedactMiddleware_PanicDoesNotLeakSecret covers the JSON-RPC error
+// channel. A panic in a tool handler can bypass RedactingWriter because that
+// writer protects only stderr. It does not protect protocol errors on stdout.
+// server.WithRecovery converts a panic into a Go error. Without the redaction
+// middleware, JSON-RPC serializes err.Error() without redaction.
+//
+// The test registers a dummy tool that panics with the password. The positive
+// control uses WithRecovery without RecoverRedactMiddleware. It verifies that
+// the password leaks into the protocol error. The protected configuration uses
+// RecoverRedactMiddleware. It converts the panic into a redacted error
+// CallToolResult, and the password must not leak.
 func TestRecoverRedactMiddleware_PanicDoesNotLeakSecret(t *testing.T) {
 	const email = "user@example.com"
 	const password = "SENTINEL-PW-panic-abc123-XYZ" // gitleaks:allow, test sentinel, not a real secret

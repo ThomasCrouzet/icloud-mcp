@@ -3,53 +3,60 @@
 ## Overview
 
 `icloud-mcp` is one stdio MCP server for Apple/iCloud Calendar, Contacts, and
-Mail. It runs as a child process of any MCP-compatible host, speaks JSON-RPC on
-stdin/stdout, takes configuration only from the process environment, and
-produces one release artifact. It does not embed or prefer a particular model
-vendor or agent product. Calendar is always enabled; Contacts, Mail read, Mail
-mutation, and Mail send are composable capabilities.
+Mail. Any MCP-compatible host can run it as a child process. It uses JSON-RPC on
+stdin and stdout. It reads configuration only from the process environment. The
+build produces one release artifact.
 
-The protocol boundary is deliberately narrow:
+The server does not embed or prefer a model vendor or agent product. Calendar
+is always enabled. Contacts, Mail read, Mail mutation, and Mail send are
+composable capabilities.
+
+The protocol boundary is narrow:
 
 - Calendar uses CalDAV over HTTPS.
 - Contacts uses CardDAV over HTTPS.
 - Mail reads and mutations use IMAP over implicit TLS.
 - Mail send uses authenticated SMTP submission with mandatory STARTTLS.
 
-No private Apple API, browser automation, local Apple framework, local synced
-database, external protocol executable, plugin, or runtime-downloaded code is
-used.
+The server does not use a private Apple API or browser automation. It does not
+use a local Apple framework or synced database. It also does not use an external
+protocol executable, plugin, or runtime-downloaded code.
 
 ## Boot and lifecycle
 
-1. `config.Load` reads and validates the 12-variable environment contract. It
-   resolves boot-only `file://` values for configured identities/passwords
-   (regular file, at most 4 KiB, mode 0600 or stricter). Configuration failure
-   occurs before network access. Literal SMTP recipient policy `*` is accepted
-   when send is requested and emits a boot warning on stderr.
-2. A shared `security.Redactor` is built from the enabled credential pairs,
-   including Basic-auth and SASL PLAIN encodings. All stderr and stdlib logging
-   is redirected through `RedactingWriter`.
-3. One immutable `CapabilityPlan` applies global read-only and the optional
+1. `config.Load` reads and validates the 12 environment variables. It resolves
+   boot-only `file://` identity and password values.
+2. Each secret file must be a regular file of 4 KiB or less. Its mode must be
+   0600 or stricter.
+3. Configuration failure occurs before network access. When configuration
+   requests send, the literal SMTP recipient policy `*` is valid.
+4. This policy writes a boot warning to stderr.
+5. The server builds a shared `security.Redactor` from the enabled credential
+   pairs. The variants include Basic-auth and SASL PLAIN encodings.
+6. `RedactingWriter` receives all stderr and standard library logs.
+7. One immutable `CapabilityPlan` applies global read-only and the optional
    domain gates. It is the source of both tool registration and
    `icloud_capabilities` output.
-4. Separate Calendar, Contacts, IMAP, and SMTP transports/dialers are built only
-   for enabled capabilities. Calendar and Contacts receive distinct copied
+8. The server builds separate Calendar, Contacts, IMAP, and SMTP transports or
+   dialers only for enabled capabilities. Calendar and Contacts receive separate
    credential objects and authenticated HTTP clients.
-5. Calendar performs eager two-step CalDAV discovery under a 20 second boot
+9. Calendar runs eager two-step CalDAV discovery under a 20 second boot
    deadline. Failure prevents stdio from starting.
-6. Contacts performs no boot network access. Its first call runs discovery under
-   a concurrency-safe gate with a 10 second attempt deadline. Only a complete,
-   validated success is cached; failure is not cached.
-7. Mail performs no boot network access. Every read, mutation, or send attempt
-   creates and closes a fresh authenticated protocol session. A transient read
-   may make one replacement-session attempt; mutations and SMTP never retry.
-8. MCP handlers register from the finalized plan. Optional loopback-only
-   `-health` starts, then `ServeStdio` owns stdin/stdout.
+10. Contacts makes no boot network access. Its first call starts discovery
+    through a concurrency-safe gate with a 10 second attempt deadline.
+11. Contacts caches only a complete, validated discovery. It does not cache a
+    failure.
+12. Mail makes no boot network access. Each attempt creates and closes a new
+    authenticated protocol session.
+13. A transient Mail read can use one replacement session. Mutations and SMTP
+    never retry.
+14. The finalized plan registers the MCP handlers. The optional loopback-only
+    `-health` endpoint starts next.
+15. Then, `ServeStdio` controls stdin and stdout.
 
 After boot, a Contacts, IMAP, or SMTP failure affects only that tool call. It
-does not unregister tools, poison a successful Contacts discovery cache, or
-alter another domain client.
+does not unregister tools or change another domain client. It also does not
+change a successful Contacts discovery cache.
 
 ## Packages
 
@@ -58,20 +65,20 @@ alter another domain client.
 | `cmd/icloud-mcp` | Configuration wiring, domain construction, eager Calendar discovery, capability plan, timeouts, stdio |
 | `internal/config` | Strict booleans, environment validation, `file://` secrets (0600+, 4 KiB), Mail recipient policy |
 | `internal/security` | DAV and socket allowlists, TLS policy, redaction, process-local audit tokens |
-| `internal/icloud` | Calendar CalDAV, iCalendar, recurrence, free slots, validation, Calendar retry/rate policy; per-calendar search materialization 2,500; multi-calendar filtered materialization 10,000; imported-UID REPORT +/-50y |
+| `internal/icloud` | Calendar CalDAV, iCalendar, recurrence, free slots, and validation.<br>Calendar retry/rate policy; per-calendar materialization 2,500; multi-calendar materialization 10,000; imported-UID REPORT +/-50y. |
 | `internal/contacts` | Lazy CardDAV discovery, bounded DAV/XML, vCard model, search, conditional writes |
 | `internal/mail` | Mail service, MIME handling, IMAP mutation policy, SMTP submission |
 | `internal/mail/imapadapter` | Narrow beta go-imap boundary and decode-time protocol guard |
 | `internal/mcptools` | Compositional schemas, handlers, capability reporting, redacted results, mutation audit |
 | `internal/health` | Optional loopback-only `/healthz` and `/status` with version, domain enablement, and multi-domain rate limits |
 
-`internal/icloud` retains its historical name but is scoped to Calendar. Shared
-code may provide pure redaction, audit formatting, result sizing, and limiter
-primitives; it does not own a cross-domain authenticated client.
+`internal/icloud` keeps its historical name but contains only Calendar code.
+Shared code can provide redaction, audit formatting, result sizing, and limiter
+primitives. It does not own an authenticated client for multiple domains.
 
 ## Capability composition
 
-The complete surface is grouped as follows:
+The following table groups the complete surface:
 
 | Capability group | Read/local tools | Mutation tools |
 |------------------|------------------|----------------|
@@ -82,16 +89,18 @@ The complete surface is grouped as follows:
 | Mail mutation | none | `set_message_flags`, `move_message`, `trash_message` |
 | Mail send | none | `send_message` |
 
-Default registration is 10 tools: 9 Calendar tools plus the global capability
-tool. Global read-only with optional domains disabled is 7 tools. The complete
-surface is 23 tools. Disabled tools have no handler and disabled optional domains
-have no client.
+Default registration has 10 tools: nine Calendar tools and the global capability
+tool. Global read-only with optional domains disabled has seven tools. The
+complete surface has 23 tools. Disabled tools have no handler. Disabled optional
+domains have no client.
 
-`icloud_capabilities` is local and generated from the same immutable plan used
-for registration. It reports version, global read-only state, healthcheck state,
-configured domains, effective capability groups, sorted tool names, and count.
-It exposes no identity, secret, host, shard, path, mailbox, recipient, or runtime
-error. `calendar_capabilities` remains Calendar-specific.
+The same immutable registration plan generates the local
+`icloud_capabilities` result. It reports the version, global read-only state,
+healthcheck state, configured domains, and effective capability groups. It also
+reports sorted tool names and the count.
+
+The result contains no identity, secret, host, shard, path, mailbox, recipient,
+or runtime error. `calendar_capabilities` contains only Calendar data.
 
 ## Domain request paths
 
@@ -102,17 +111,21 @@ tool -> 25s context -> Calendar read/write limiter -> 4/2 semaphore -> retry pol
      -> Calendar Basic-auth client -> Calendar allowlist -> verified HTTPS
 ```
 
-Calendar discovery is eager and successful state is immutable. Reads have
-bounded service retries. The HTTP classifier retries 429, 502, 503, and 504 with
-bounded `Retry-After`/backoff and rewinds read request bodies; it does not retry
-transport errors. PUT and DELETE are never replayed, including full-series
-delete. A transport failure or gateway 502/503/504 after mutation dispatch maps
-to `outcome_unknown`. Update and delete re-read full objects and use conditional
-requests. Multi-calendar `search_events` queries every selected calendar, then
-sorts and applies the fair 400-event return cap; filtered materialization above
-10,000 events fails closed with `payload_too_large` (per-calendar REPORT
-materialization is 2,500). Imported-UID REPORT fallback uses a +/-50-year window
-around now when `<uid>.ics` is missing.
+Calendar discovery is eager. A successful discovery state is immutable. Reads
+have bounded service retries. The HTTP classifier retries 429, 502, 503, and
+504. It uses bounded `Retry-After` or backoff and rewinds read request bodies. It
+does not retry transport errors.
+
+The client never repeats PUT, DELETE, or full-series delete. A transport failure
+after mutation dispatch maps to `outcome_unknown`. Gateway 502, 503, and 504
+have the same result. Update and delete read the full object again and use
+conditional requests.
+
+Multi-calendar `search_events` queries each selected calendar. It then sorts the
+events and applies the fair 400-event result limit. More than 10,000 filtered
+materialized events cause `payload_too_large`. The per-calendar REPORT
+materialization limit is 2,500. When `<uid>.ics` is missing, imported-UID REPORT
+fallback uses a 50-year window on each side of now.
 
 ### Contacts
 
@@ -122,17 +135,19 @@ tool -> 25s context -> lazy discovery -> Contacts read/write limiter
      -> Contacts allowlist -> verified HTTPS
 ```
 
-Discovery resolves current-user-principal, one or more address-book home sets,
-and up to 100 books. Validated collection URLs are pinned behind opaque book
-identifiers. Reads can retry bounded HTTP status failures. PUT and DELETE are
-never replayed, and transport ambiguity maps to `outcome_unknown`.
+Discovery resolves current-user-principal and one or more address-book home
+sets. It also resolves at most 100 books. Opaque book identifiers refer to fixed,
+validated collection URLs. Reads can retry bounded HTTP status failures. The
+client never repeats PUT or DELETE. Transport ambiguity maps to
+`outcome_unknown`.
 
 Contact search uses CardDAV text predicates as a bounded prefilter when their
-semantics match. A general query uses any-of FN/N/EMAIL/TEL/ORG; when no general
-query is supplied, email uses EMAIL. Every supplied query, email, phone, and
-group condition is then combined locally. Phone matching normalizes digits, so a
-phone-only search uses a bounded all-card VERSION-presence query instead of a
-server TEL predicate.
+meaning matches. A general query uses any-of FN/N/EMAIL/TEL/ORG. Without a
+general query, email uses EMAIL. The client then combines each query, email,
+phone, and group condition locally.
+
+Phone matching normalizes digits. Thus, a phone-only search uses a bounded
+all-card VERSION-presence query instead of a server TEL predicate.
 
 ### Mail read and mutation
 
@@ -143,14 +158,14 @@ tool -> 25s context -> Mail limiter/semaphore -> fixed IMAP dial
 ```
 
 Read operations use EXAMINE and PEEK. Search scans bounded descending UID
-windows. Message retrieval fetches metadata, curated headers, BODYSTRUCTURE, and
-at most one selected plain-text MIME section. A guarded connection enforces the
-4 MiB inbound session budget and protocol nesting/list caps before go-imap can
-materialize a recursive BODYSTRUCTURE.
+windows. Message retrieval gets metadata, selected headers, BODYSTRUCTURE, and
+at most one selected plain-text MIME section. A guarded connection applies the 4 MiB
+inbound session limit. It also limits protocol nesting and lists before go-imap
+creates a recursive BODYSTRUCTURE.
 
-Mutation sessions reselect the source mailbox read-write and compare
-UIDVALIDITY before mutation. Only one mutation executes at a time. Mutation
-commands are never automatically retried.
+Mutation sessions select the source mailbox for read and write. They compare
+UIDVALIDITY before mutation. Only one mutation runs at a time. The client never
+retries a mutation command automatically.
 
 ### Mail send
 
@@ -161,15 +176,15 @@ tool -> local input/recipient/message validation -> 25s context
      -> MAIL FROM -> every RCPT TO -> DATA only if all recipients succeeded
 ```
 
-The encoded message is built in bounded memory before connecting. From is the
-configured Mail address. `to`, `cc`, and `bcc` are individually optional, with
-at least one aggregate recipient required. Bcc exists only in the envelope. No
-SMTP session is retained and no stage is retried.
+The client builds the encoded message in bounded memory before connection. From
+is the configured Mail address. `to`, `cc`, and `bcc` are individually optional.
+Together, they must contain at least one recipient. Bcc exists only in the
+envelope. The client keeps no SMTP session and retries no stage.
 
 ## State and concurrency
 
-MCP handlers may run concurrently. Shared mutable state is limited and
-concurrency-safe:
+MCP handlers can run concurrently. The server limits and protects this shared
+mutable state:
 
 - Calendar successful discovery state, independent rate buckets, and 4/2
   read/write semaphores.
@@ -178,61 +193,70 @@ concurrency-safe:
 - Mail independent read/mutation/send buckets and 2/1/1 semaphores.
 - Process-local keyed audit token material.
 
-There is no selected-mailbox state, Mail connection pool, SMTP session, contact
-write cache, local event/contact/message store, or cross-call remote-content
-cache.
+The server has no selected-mailbox state, Mail connection pool, or SMTP session.
+It has no contact write cache or local event, contact, or message store. It also
+has no remote-content cache across calls.
 
 ## Consistency tokens
 
-- Calendar and Contacts expose ETags. Update/delete perform a full GET, require a
-  usable strong server ETag, and always send a specific `If-Match`; a caller ETag
-  can strengthen the precondition. Create uses `If-None-Match: *`.
+- Calendar and Contacts expose ETags. Update and delete send a full GET and
+  require a usable, strong server ETag.
+- They always send a specific `If-Match`. A caller ETag can make the precondition
+  stronger. Create uses `If-None-Match: *`.
 - A Mail message reference is `(mailbox, UIDVALIDITY, UID)`. Get and mutation
   compare UIDVALIDITY after selecting the mailbox. Search cursors pair
   `before_uid` with the preceding page's UIDVALIDITY.
 - Reads expose MODSEQ when CONDSTORE is available. The current adapter cannot
-  safely detect tagged MODIFIED responses, so conditional flag mutation fails
-  with `protocol_error` before STORE instead of degrading to an unconditional
-  update. That unavailable beta.8 path does not report
-  `concurrent_modification`.
+  safely detect tagged MODIFIED responses.
+- Thus, a conditional flag mutation fails with `protocol_error` before STORE. It
+  does not become an unconditional update.
+- This unavailable beta.8 path does not report `concurrent_modification`.
 
 ## Output model
 
 Calendar text, contact data, and Mail content are untrusted. The stdio reader
-accepts at most 1 MiB per JSON-RPC frame. Protocol/schema errors that could
-reflect caller input are passed through only up to 64 KiB; larger records are
-replaced with bounded local errors. Every serialized MCP result, including
-Calendar, is capped at 256 KiB.
+accepts at most 1 MiB in each JSON-RPC frame. Protocol or schema errors can
+reflect caller input. The server passes them through only up to 64 KiB. It
+replaces larger records with bounded local errors. Each serialized MCP result,
+including Calendar, has a 256 KiB limit.
 
-Search tools return summary models. Contact PHOTO/raw vCard and Mail raw
-MIME/raw headers/HTML/body attachments are excluded. Calendar REPORT XML is
-bounded to depth 32 and 262,144 tokens, with response/property item caps;
-iCalendar has component, property, parameter, override, alarm, and EXDATE caps.
-Contact DAV XML is bounded to depth 32 and 100,000 tokens, with propstat/property
-caps, and each vCard has a 10,000-property cap. Recurrence expansion returns at
-most 2,000 occurrences and performs at most 100,000 iterator advances per
-series. IMAP guards protocol nesting/list counts before recursive decode and
-modeled MIME parts/depth afterward. SMTP accepts at most 1 MiB of aggregate
-inbound responses per session.
+Search tools return summary models. Contact results exclude PHOTO and raw vCard.
+Mail results exclude raw MIME, raw headers, HTML, and attachment bodies.
+
+Calendar REPORT XML has depth 32 and 262,144-token limits. It also has response
+and property item limits. iCalendar limits components, properties, parameters,
+overrides, alarms, and EXDATE values.
+
+Contact DAV XML has depth 32 and 100,000-token limits. It also limits propstats
+and properties. Each vCard has a 10,000-property limit.
+
+Calendar recurrence expansion returns at most 2,000 occurrences. Its iterator
+advances at most 100,000 times for each series.
+
+IMAP limits protocol nesting and list counts before recursive decode. It limits
+modeled MIME parts and depth after decode. SMTP accepts at most 1 MiB of inbound
+responses in each session.
 
 ## Hand-rolled DAV boundaries
 
-Calendar keeps hand-rolled discovery, iCloud-compatible REPORT, and conditional
-PUT/DELETE because go-webdav v0.7.0 loses shard authority in discovery and lacks
-the required conditional write API. Calendar update always GETs the full object
-before PUT so VERSION, PRODID, and VTIMEZONE survive.
+Calendar uses custom discovery, iCloud-compatible REPORT, and conditional PUT or
+DELETE code. go-webdav v0.7.0 loses shard authority during discovery. It also
+lacks the required conditional write API. Calendar update always gets the full
+object before PUT. Thus, VERSION, PRODID, and VTIMEZONE remain.
 
-Contacts uses hand-rolled bounded PROPFIND, REPORT, GET, PUT, DELETE, href
-resolution, redirects, and XML decoding. Resource hrefs are arbitrary and are
-never derived from a contact UID.
+Contacts uses custom bounded PROPFIND, REPORT, GET, PUT, and DELETE code. It also
+uses custom href resolution, redirects, and XML decoding. Resource hrefs are
+arbitrary. The client never derives them from a contact UID.
 
 ## Mutation audit model
 
-Every production Calendar, Contacts, IMAP, and SMTP mutation emits the same
-resource-safe shape: tool, `domain`, `resourceType`, process-local opaque HMAC
-`resourceToken`, and status. Calendar hashes its path/UID tuple before logging;
-no production audit record contains the raw Calendar path or UID. Contact UIDs,
-mailbox/UIDVALIDITY/UID tuples, and recipients are likewise never logged raw.
+Each production Calendar, Contacts, IMAP, and SMTP mutation writes the same safe
+fields. They are tool, `domain`, `resourceType`, process-local opaque HMAC
+`resourceToken`, and status.
+
+Calendar hashes its `path/UID` tuple before logging. Production audit records
+contain no raw Calendar path or UID. They also contain no raw contact UID,
+`mailbox/UIDVALIDITY/UID` tuple, or recipient.
 
 See [CalDAV compatibility](caldav-compatibility.md),
 [CardDAV compatibility](carddav-compatibility.md),

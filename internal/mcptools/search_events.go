@@ -166,7 +166,7 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		for i, path := range calendarPaths {
 			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
 			if err != nil {
-				// Auth/security must never be masked as a soft warning.
+				// Do not mask an authentication or security error as a warning.
 				if ie := icloud.AsICloudError(err); ie != nil {
 					switch ie.Code {
 					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,

@@ -7,12 +7,10 @@ import (
 	"time"
 )
 
-// TestMockService_ConcurrentAccessIsRaceFree: MCP handlers may be invoked
-// from concurrent goroutines (GuardedService retries with backoff,
-// potentially in parallel with other calls), so MockService must stay
-// race-free under concurrent calls. This test only proves something when
-// run with `go test -race`; without that flag, a race on unprotected
-// ints/pointers is not reliably detected on every run.
+// TestMockService_ConcurrentAccessIsRaceFree verifies concurrent calls to
+// MockService. GuardedService can retry with backoff while other calls run.
+// Run this test with `go test -race`. Without that flag, a run might not detect
+// a race on an unprotected integer or pointer.
 func TestMockService_ConcurrentAccessIsRaceFree(t *testing.T) {
 	svc := &MockService{
 		Calendars: []Calendar{{Path: "/cal/"}},

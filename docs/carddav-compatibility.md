@@ -6,95 +6,108 @@ This document is Contacts-specific. Calendar uses the separate CalDAV client in
 ## Endpoint and authentication
 
 - Entry URL: `https://contacts.icloud.com/`.
-- Authentication: HTTP Basic over verified TLS using a Contacts-owned copy of
+- Authentication uses HTTP Basic over verified TLS. Contacts owns a copy of
   `ICLOUD_EMAIL` and `ICLOUD_PASSWORD`.
-- Allowed authorities: case-sensitive equality to `contacts.icloud.com:443` and
-  lowercase `p[0-9]{1,3}-contacts.icloud.com:443` shards only (hosts are not
-  folded before comparison).
-- TLS uses verified system roots and TLS 1.2 or later. The transport has
+- The allowlist uses case-sensitive equality. It accepts
+  `contacts.icloud.com:443` and lowercase
+  `p[0-9]{1,3}-contacts.icloud.com:443` shards only.
+- The client does not change host case before comparison.
+- TLS uses verified system roots and TLS 1.2 or later. The transport sets
   `Proxy: nil`.
-- Calendar credentials cannot be attached by the Contacts transport, and
-  Contacts redirects cannot switch to the Calendar allowlist.
+- The Contacts transport cannot attach Calendar credentials. A Contacts
+  redirect cannot use the Calendar allowlist.
 
-Apple documents third-party Contacts access with app-specific passwords and
-CardDAV configuration. Exact shard/discovery behavior is an interoperability
-property, not a guarantee that arbitrary iCloud regional authorities are safe.
-The allowlist intentionally excludes unreviewed host patterns.
+Apple documents third-party Contacts access through CardDAV and app-specific
+passwords. Exact shard and discovery behavior is an interoperability property.
+It does not prove that any iCloud regional authority is safe. The allowlist
+excludes host patterns that the project did not review.
 
 ## Lazy discovery
 
-The first Contacts call performs:
+The first Contacts call sends these requests:
 
 1. Depth 0 PROPFIND for `current-user-principal`.
 2. Depth 0 PROPFIND on the principal for `addressbook-home-set`.
-3. Depth 1 PROPFIND on every validated home set for address-book collections,
-   display metadata, supported address data, and maximum resource size.
+3. Send Depth 1 PROPFIND on each validated home set. Request address-book
+   collections, display metadata, supported address data, and maximum resource
+   size.
 
-Discovery is serialized across concurrent callers and capped at 10 seconds
-within the 25 second tool deadline. Only a complete validated success is cached.
-A failed attempt can be retried by a later call. Successful principal, home-set,
-collection, and shard authorities remain pinned for the process lifetime.
+Discovery runs once for concurrent callers. Its limit is 10 seconds within the
+25 second tool deadline. The client caches only a complete, validated success.
+A later call can retry after failure. Successful principal, home-set,
+collection, and shard authorities stay fixed for the process lifetime.
 
-Zero home sets maps to `not_found`. Duplicate homes/books, collection escape,
-unapproved authorities, and more than 100 books fail closed. Tools receive only
-opaque `book-...` identifiers derived from validated collection URLs; callers
-cannot supply a CardDAV URL.
+Zero home sets maps to `not_found`. Duplicate homes or books fail closed.
+Collection escape, unapproved authorities, and more than 100 books also fail
+closed. Tools receive only opaque `book-...` identifiers from validated
+collection URLs. Callers cannot supply a CardDAV URL.
 
 ## Redirects and hrefs
 
-Automatic HTTP redirects are disabled. For reads, the Contacts client follows
-301, 302, 307, and 308 manually for no more than three hops, preserving the
-request method and body. Relative `Location` and DAV href values are resolved
-against the exact response URL that supplied them, then HTTPS, case-sensitive
-host allowlist match (production hosts are lowercase), port, and collection
-containment are revalidated. Read-side 303 and other redirect codes are
-rejected. A redirect observed after PUT or DELETE dispatch is never followed and
-returns `outcome_unknown`, including malformed or policy-violating redirects.
+The client disables automatic HTTP redirects. For reads, it manually follows
+301, 302, 307, and 308 for at most three hops. It preserves the request method
+and body.
 
-CardDAV resource hrefs are arbitrary. The client never assumes that UID maps to
-`UID.vcf`. UID lookup uses an `addressbook-query`, requires exactly one match,
-retains the returned href internally, and performs a full GET before exposing or
-mutating the contact.
+The client resolves relative `Location` and DAV href values against the exact
+response URL. It then validates HTTPS, the port, and collection containment. It
+also uses a case-sensitive host allowlist. Production hosts use lowercase.
+
+The client rejects read-side 303 and all other redirect codes. It never follows
+a redirect after PUT or DELETE dispatch. Such a redirect returns
+`outcome_unknown`. This rule also applies to malformed or policy-violating
+redirects.
+
+CardDAV resource hrefs are arbitrary. The client never assumes that a UID maps
+to `UID.vcf`. UID lookup uses an `addressbook-query` and requires exactly one
+match. The client keeps the returned href internally. It sends a full GET before
+it returns or changes the contact.
 
 ## vCard model
 
-- vCard 3.0 and 4.0 are accepted on reads.
-- Writes encode vCard 3.0 only. An address book is writable when it advertises
-  3.0 or omits `supported-address-data`.
+- Reads accept vCard 3.0 and 4.0.
+- Writes encode only vCard 3.0. An address book is writable when it advertises
+  3.0 or does not include `supported-address-data`.
 - Create includes VERSION, PRODID, UID, FN, and N.
-- A caller can provide `client_uid`; otherwise the client generates a
+- A caller can provide `client_uid`. Otherwise, the client generates a
   UUIDv4-compatible UID with `crypto/rand`.
-- PHOTO bytes, raw vCards, and raw extension values are not returned. Full
-  contact reads expose `hasPhoto` when a PHOTO property is present so agents
-  can detect an avatar without receiving image bytes.
+- Results do not contain PHOTO bytes, raw vCards, or raw extension values. Full
+  contact reads set `hasPhoto` when a PHOTO property is present.
+- Thus, a caller can detect an avatar without image bytes.
 - A vCard 3.0 update modifies the full decoded object, preserving PHOTO and
   unknown properties that fit the resource limit.
-- vCard 4.0 objects are read-only to avoid silent downgrade through the 3.0
-  encoder.
-- Apple group cards are readable and excluded from search by default. Group
-  mutation is rejected.
-- Birthday is returned only when it is a valid `YYYY-MM-DD`; unsupported forms
-  produce `unsupportedFields: ["birthday"]` without the raw value.
+- vCard 4.0 objects are read-only. This rule prevents a silent downgrade through
+  the 3.0 encoder.
+- Apple group cards are readable and excluded from search by default. The server
+  rejects group mutation.
+- The result includes a birthday only when it is a valid `YYYY-MM-DD` value.
+  Unsupported forms produce `unsupportedFields: ["birthday"]` without the raw
+  value.
 
-Modeled contact detail can include display/structured name, organization, title,
-nickname, birthday, typed emails/phones/URLs, postal addresses, notes, ETag, and
-the address-book identifier. Search summaries omit notes, addresses, URLs,
-birthday, raw cards, and photos.
+Modeled contact detail can include these fields:
+
+- Display and structured names
+- Organization, title, nickname, and birthday
+- Typed email addresses, phone numbers, and URLs
+- Postal addresses and notes
+- ETag and address-book identifier.
+
+Search summaries omit notes, addresses, URLs, birthdays, raw cards, and photos.
 
 ## Search behavior
 
-`search_contacts` uses a bounded CardDAV server predicate where its text-match
-semantics match the requested filter. A general `query` sends one any-of
-FN/N/EMAIL/TEL/ORG contains filter. When no general query is supplied, `email`
-uses an EMAIL contains filter. The full returned cards are then checked locally
-so every supplied `query`, `email`, `phone`, and `include_groups` condition is
-combined rather than allowing the server prefilter to define final semantics.
+`search_contacts` uses a bounded CardDAV server predicate when its text matching
+has the requested meaning. A general `query` sends one any-of
+FN/N/EMAIL/TEL/ORG contains filter. Without a general query, `email` uses an
+EMAIL contains filter.
 
-Phone matching is digit-normalized locally and is never sent as a TEL text
-predicate. A phone-only search therefore issues the bounded VERSION-presence
-all-card query. When phone is combined with query or email, that compatible
-server predicate narrows the bounded candidate set and the phone condition is
-then applied locally.
+The client then checks each returned card locally. It combines all supplied
+`query`, `email`, `phone`, and `include_groups` conditions. Thus, the server
+prefilter does not define the final result.
+
+The client normalizes digits for local phone matching. It never sends phone as
+a TEL text predicate. Thus, a phone-only search sends the bounded
+VERSION-presence all-card query. A compatible query or email predicate can
+reduce the candidate set. The client then applies the phone condition locally.
 
 Local matching is:
 
@@ -103,39 +116,42 @@ Local matching is:
 - `phone`: digit-normalized TEL substring.
 - `include_groups`: false by default.
 
-All selected books share aggregate budgets of 2,000 decoded cards and 32 MiB of
-REPORT responses. Results sort by normalized display name, then UID, then book,
-and are capped at 100 summaries, default 50. There is no offset or continuation
-cursor. `truncated` means the output limit/result-byte cap removed matches;
-`scanLimitReached` means not every selected card/book fit the scan budget. Narrow
-the book or filters when either is true.
+All selected books share total limits of 2,000 decoded cards and 32 MiB of
+REPORT responses. Results sort by normalized display name, then UID, then book.
+The default result limit is 50, and the maximum is 100. There is no offset or
+continuation cursor.
+
+`truncated` means that the result count or byte limit removed matches.
+`scanLimitReached` means that the scan limit excluded selected cards or books.
+Narrow the book or filters when either field is true.
 
 ## Conditional writes
 
 Create:
 
-- Generates a random `.vcf` child resource name independently from contact UID.
+- Generates a random `.vcf` child resource name independently of the contact
+  UID.
 - Sends `Content-Type: text/vcard; charset=utf-8` and `If-None-Match: *`.
-- Does not replay PUT after a transport failure; ambiguous transport outcomes
-  return `outcome_unknown` with a re-read instruction.
-- Re-GETs after definitive success for server normalization and a fresh ETag.
-  If that GET fails, create remains successful with `resultIncomplete`.
+- Does not repeat PUT after a transport failure. An ambiguous transport outcome
+  returns `outcome_unknown` with an instruction to read again.
+- Sends another GET after definitive success to obtain normalized data and a
+  fresh ETag. If GET fails, create stays successful with `resultIncomplete`.
 
 Update/delete:
 
-1. Query exact UID and full-GET the returned resource.
+1. Query the exact UID and get the full returned resource.
 2. Require a usable specific strong server ETag.
-3. Use a valid caller ETag when supplied; otherwise use the GET ETag.
+3. Use a valid caller ETag when supplied. Otherwise, use the GET ETag.
 4. Reject wildcard, weak, malformed, and missing ETags.
 5. Send a specific `If-Match` on every real PUT/DELETE.
 6. Map HTTP 412 to `concurrent_modification`.
 7. Re-GET after successful update for normalized data and ETag.
 
-`delete_contact` dry run performs lookup and validation but sends no DELETE.
+`delete_contact` dry run runs lookup and validation. It sends no DELETE.
 DAV `no-uid-conflict`, `valid-address-data`, and `max-resource-size`
 preconditions map to `conflict`, `validation`, and `payload_too_large`.
-Unknown or malformed preconditions map to `protocol_error`; raw XML is never
-returned.
+Unknown or malformed preconditions map to `protocol_error`. Results never
+contain raw XML.
 
 ## Limits
 
@@ -155,13 +171,17 @@ returned.
 | Concurrent DAV requests | 4 |
 | Read/write rates | 60/20 per minute, bursts 10/3 |
 
-All byte caps read at most cap plus one when overflow must be distinguished.
-Remote names and fields are truncated only at valid UTF-8 boundaries where the
-modeled read contract permits truncation.
+To detect overflow, byte-limited reads read at most one byte above the limit.
+The client truncates remote names and fields only at valid UTF-8 boundaries.
+Truncation occurs only where the modeled read contract permits it.
 
-The real-iCloud Contacts integration suite is behind the `integration` build tag
-and `ICLOUD_MCP_ENABLE_CONTACTS=true`. It exercises discovery, bounded search,
-and get. Its separately write-gated disposable CRUD fixture verifies general
-query matches through FN, N, EMAIL, and ORG, exact email search, digit-normalized
-phone search, UID lookup, update, and exact-fixture cleanup. The suite is opt-in,
-never runs in CI, and is not executed without credentials.
+The real-iCloud Contacts integration suite requires the `integration` build tag
+and `ICLOUD_MCP_ENABLE_CONTACTS=true`. It tests discovery, bounded search, and
+get.
+
+A separate write gate controls its disposable CRUD fixture. The fixture tests
+general query matches through FN, N, EMAIL, and ORG. It also tests exact email
+search, digit-normalized phone search, UID lookup, update, and exact fixture
+cleanup.
+
+The suite is optional and never runs in CI. It does not run without credentials.

@@ -15,11 +15,11 @@ import (
 
 // --- Mocked CalDAV server (httptest) -----------------------------------
 //
-// Serves both the hand-rolled discovery requests (PROPFIND issued manually
-// by icloud.Client) and the go-webdav/caldav client requests
-// (REPORT/PUT/DELETE). A single TLS server plays the role of the main
-// server AND of the "shard" (its own host), which is enough to exercise
-// the discovery's absolute URL resolution logic.
+// The mock server handles both the custom discovery requests (PROPFIND issued
+// manually by icloud.Client) and the go-webdav/caldav client requests
+// (REPORT/PUT/DELETE). One TLS server represents both the main server and its
+// shard. Its own host is the shard host. This setup exercises absolute URL
+// resolution during discovery.
 
 const (
 	testPrincipalPath = "/121234567/principal/"
@@ -70,10 +70,11 @@ type mockCalDAV struct {
 	gets           []string
 
 	// etags maps an object path to its current ETag (quotes included, as
-	// served in the ETag header). When a path has an entry, the mock
-	// returns it on GET (so icloud.Client can do a conditional PUT) and
-	// ENFORCES If-Match on PUT: a mismatch yields 412 Precondition Failed,
-	// a match accepts the PUT and bumps the etag. Tests that do not populate
+	// served in the ETag header). When a path has an entry, the mock returns
+	// its ETag on GET. The client can then send a conditional PUT. The mock
+	// enforces If-Match on that PUT. A mismatch returns 412 Precondition Failed.
+	//
+	// A match accepts the PUT and updates the ETag. Tests that do not populate
 	// this map keep the legacy unconditional behavior (no ETag on GET, no
 	// If-Match check), so existing fixtures are unchanged.
 	etags map[string]string
@@ -112,9 +113,9 @@ func (m *mockCalDAV) client() *Client {
 	return NewClient(authHTTP, m.srv.URL, func(string) bool { return true })
 }
 
-// nextEtag synthesizes a deterministic new ETag value for a path after the nth
-// PUT, so the mock's conditional-PUT logic can bump the ETag on each
-// successful write and reject a stale If-Match.
+// nextEtag creates a deterministic ETag for a path after its nth PUT. The mock
+// updates the ETag after each successful conditional PUT. It can then reject a
+// stale If-Match value.
 func nextEtag(path string, n int) string {
 	return fmt.Sprintf("v%d-%s", n, path)
 }
@@ -147,11 +148,11 @@ func (d basicAuthDoer) Do(req *http.Request) (*http.Response, error) {
 	return d.inner.Do(req)
 }
 
-// spyDoer records each contacted host (Do) and blocks any request to a
-// given host WITHOUT ever touching the real network; used to prove that a
-// host outside the allowlist is NEVER contacted, including for discovery
-// step 1 (principal), without depending on real network access (slow and
-// nondeterministic) to an arbitrary host such as evil.example.com.
+// spyDoer records each host passed to Do. It blocks a specified host before
+// any real network access. Tests use it to prove that discovery never contacts
+// a host outside the allowlist. This includes the principal in discovery step
+// 1. The proof does not depend on slow, nondeterministic access to a host such
+// as evil.example.com.
 type spyDoer struct {
 	inner          httpDoer
 	blockedHost    string
@@ -203,15 +204,15 @@ func (m *mockCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// If the path has a tracked ETag, enforce If-Match (conditional
-		// PUT). A missing/empty If-Match on a tracked path is also a
-		// 412 per RFC 7232 (the resource is not "unmapped"), but iCloud's
-		// real behavior is to accept an unconditional PUT; the mock
-		// mirrors iCloud and only rejects an If-Match that does not match.
+		// PUT). RFC 7232 also specifies 412 for an empty or missing If-Match on
+		// a tracked path because the resource is not "unmapped". However, iCloud
+		// accepts an unconditional PUT. The mock matches iCloud and rejects only
+		// an If-Match value that does not match.
 		if current, ok := m.etags[r.URL.Path]; ok && ifMatch != "" && ifMatch != current {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
-		// Bump the ETag on a successful PUT.
+		// Update the ETag after a successful PUT.
 		m.etags[r.URL.Path] = `"` + nextEtag(r.URL.Path, len(m.puts)) + `"`
 		w.Header().Set("ETag", m.etags[r.URL.Path])
 		w.Header().Set("Content-Type", "text/plain")
@@ -240,9 +241,9 @@ func (m *mockCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGet serves a direct GET on an object's path (used by UpdateEvent:
-// GetCalendarObject before PUT, to retrieve the full VCALENDAR rather than
-// the filtered data of a REPORT).
+// handleGet serves a direct GET on an object path. UpdateEvent uses this route
+// for GetCalendarObject before PUT. It receives the full VCALENDAR instead of
+// filtered REPORT data.
 func (m *mockCalDAV) handleGet(w http.ResponseWriter, r *http.Request) {
 	for _, obj := range m.objects {
 		if obj.path != r.URL.Path {
@@ -270,10 +271,9 @@ func (m *mockCalDAV) handleGet(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-// reportProbe decodes just enough of a REPORT calendar-query request body
-// to distinguish a UID lookup (findEventByUID) from a time-range search
-// (SearchEvents), and to extract the time-range bounds so tests can verify
-// them.
+// reportProbe decodes the required parts of a REPORT calendar-query body. It
+// distinguishes a UID lookup by findEventByUID from a time-range search by
+// SearchEvents. It also extracts the time-range bounds for tests.
 type reportProbe struct {
 	Filter struct {
 		CompFilter struct {
@@ -520,10 +520,10 @@ const icsAllDayNoDtend = "BEGIN:VCALENDAR\r\n" +
 	"END:VEVENT\r\n" +
 	"END:VCALENDAR\r\n"
 
-// icsFilteredReportOnly reproduces iCloud's real behavior on a REPORT
-// calendar-query: the returned calendar-data contains ONLY the requested
-// VEVENT, without VERSION/PRODID (VCALENDAR level) or VTIMEZONE, even if
-// the object stored server-side has them. A direct go-ical.Encode of this
+// icsFilteredReportOnly reproduces iCloud behavior for a REPORT calendar-query.
+// Returned calendar-data contains only the requested VEVENT. It omits VERSION
+// and PRODID from VCALENDAR, and it omits VTIMEZONE. The stored object can
+// still contain them. A direct go-ical.Encode of this
 // data fails ("want exactly one PRODID property, got 0").
 const icsFilteredReportOnly = "BEGIN:VCALENDAR\r\n" +
 	"BEGIN:VEVENT\r\n" +
@@ -535,9 +535,10 @@ const icsFilteredReportOnly = "BEGIN:VCALENDAR\r\n" +
 	"END:VEVENT\r\n" +
 	"END:VCALENDAR\r\n"
 
-// icsFullGetVersion is what a direct GET on the same object returns from
-// iCloud: the full VCALENDAR, with VERSION/PRODID and the VTIMEZONE
-// required by the DTSTART/DTEND in TZID=America/New_York.
+// icsFullGetVersion contains the direct GET response for the same iCloud
+// object. It includes the full VCALENDAR with VERSION and PRODID. It also
+// includes the VTIMEZONE required by DTSTART and DTEND in
+// TZID=America/New_York.
 const icsFullGetVersion = "BEGIN:VCALENDAR\r\n" +
 	"VERSION:2.0\r\n" +
 	"PRODID:-//test//EN\r\n" +
@@ -686,14 +687,15 @@ func TestClient_Discover_AllowsExplicit443ICloudPort(t *testing.T) {
 	}
 }
 
-// TestClient_Discover_PrincipalOutsideAllowlist. The principal (discovery
-// step 1, current-user-principal) must be revalidated (https + allowHost)
-// just like the home-set (step 3, shard); at some point only the home-set
-// was explicitly revalidated, and a hostile principal was only caught in
-// production by the downstream AllowlistTransport (an inconsistency).
-// spyDoer proves, WITHOUT real network access, that a principal outside
-// the allowlist is NEVER contacted: validation must happen before any
-// network dispatch, not merely be caught lower in the stack.
+// TestClient_Discover_PrincipalOutsideAllowlist checks the principal from
+// discovery step 1. The client must revalidate its https scheme and allowHost
+// result, as it does for the shard home-set in step 3. Previously, only the
+// home-set had an explicit check. AllowlistTransport caught a hostile principal
+// later in the production stack, which made validation inconsistent.
+//
+// spyDoer proves that the client does not contact a principal outside the
+// allowlist. It performs this proof without real network access. Validation
+// must occur before network dispatch, not only in a lower layer.
 func TestClient_Discover_PrincipalOutsideAllowlist(t *testing.T) {
 	m := newMockCalDAV(t)
 	m.principalHrefFunc = func(string) string { return "https://evil.example.com/121234567/principal/" }
@@ -1082,10 +1084,10 @@ func TestClient_UpdateEvent_PreservesAllDayFormat(t *testing.T) {
 // TestClient_UpdateEvent_UsesGETNotFilteredREPORTData. The REPORT
 // (findEventByUID) returns FILTERED calendar-data (bare VEVENT, without
 // VERSION/PRODID/VTIMEZONE), just like the real iCloud under a
-// calendar-query filter. UpdateEvent MUST re-read the full object via GET
-// (GetCalendarObject) before modifying and PUTting it, otherwise
-// go-ical.Encode fails (missing VERSION/PRODID) or the event's VTIMEZONE
-// is lost in the round-trip.
+// calendar-query filter. UpdateEvent must read the full object again with
+// GetCalendarObject before it modifies and PUTs it. Otherwise, go-ical.Encode
+// fails because VERSION or PRODID is missing. The round trip can also lose the
+// event's VTIMEZONE.
 func TestClient_UpdateEvent_UsesGETNotFilteredREPORTData(t *testing.T) {
 	m := newMockCalDAV(t)
 	objPath := testHomeCalendar + "uid-tz-1.ics"

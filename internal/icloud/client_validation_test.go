@@ -129,9 +129,10 @@ func TestClient_CreateEvent_AllDayAndRRULE(t *testing.T) {
 	}
 }
 
-// TestClient_UpdateEvent_ReportPathSendsIfMatch: when the object is only
-// reachable via REPORT (filename != UID), a mandatory re-GET supplies the
-// ETag used for If-Match on the subsequent PUT (not the REPORT getetag).
+// TestClient_UpdateEvent_ReportPathSendsIfMatch covers an object that REPORT
+// finds because its filename differs from its UID. The required re-GET
+// supplies the ETag for If-Match on the next PUT. The code must not use the
+// getetag value from REPORT.
 func TestClient_UpdateEvent_ReportPathSendsIfMatch(t *testing.T) {
 	m := newMockCalDAV(t)
 	// Object stored under a path that is NOT <uid>.ics so direct GET fails.

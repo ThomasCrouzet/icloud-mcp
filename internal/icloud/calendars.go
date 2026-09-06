@@ -8,8 +8,8 @@ import (
 
 // propfindCalendarsBody requests resourcetype/displayname/description/
 // Apple color/supported components on the calendar-home-set (Depth: 1).
-// go-webdav v0.7.0 (caldav.Calendar) does not expose the color: a
-// hand-rolled PROPFIND is required for list_calendars.
+// go-webdav v0.7.0 (caldav.Calendar) does not expose the color.
+// list_calendars requires a custom PROPFIND.
 const propfindCalendarsBody = `<?xml version="1.0" encoding="UTF-8"?>
 <A:propfind xmlns:A="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:IC="http://apple.com/ns/ical/">
   <A:prop>

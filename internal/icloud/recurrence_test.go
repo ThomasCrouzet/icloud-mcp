@@ -142,14 +142,12 @@ func TestExpandOccurrences_OverrideReplacesOccurrence(t *testing.T) {
 	}
 }
 
-// TestExpandOccurrences_PreservesTimezoneAcrossDST: a weekly event at 10:00
-// America/New_York wall clock time must stay at 10:00 wall clock across a
-// DST change (US DST ends on 2026-11-01), hence at a different UTC offset
-// before and after (-04:00 then -05:00, i.e. 14:00Z then 15:00Z). Forcing
-// .UTC() on the Dtstart before expansion would pin the occurrence to a
-// constant UTC offset, shifting it by 1h on the wall clock after the DST
-// change; that would violate RFC 5545 (the recurrence time must be the
-// local wall clock time, not a fixed UTC instant).
+// TestExpandOccurrences_PreservesTimezoneAcrossDST verifies a weekly event at
+// 10:00 in America/New_York. It must stay at 10:00 across the US DST change on
+// 2026-11-01. Its offset changes from -04:00 to -05:00, or from 14:00Z to
+// 15:00Z. Converting Dtstart to UTC before expansion would keep a fixed offset.
+// The wall-clock time would then shift by one hour after DST. This would
+// violate RFC 5545, which requires local wall-clock recurrence.
 func TestExpandOccurrences_PreservesTimezoneAcrossDST(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -157,10 +155,9 @@ func TestExpandOccurrences_PreservesTimezoneAcrossDST(t *testing.T) {
 	}
 	start := time.Date(2026, 10, 5, 10, 0, 0, 0, loc) // Monday 10:00 NY wall clock
 
-	// Excluded occurrence (EXDATE): simulates
-	// EXDATE;TZID=America/New_York:20261019T100000 as resolved by ical.go
-	// (already converted to an absolute UTC instant at this point;
-	// parseExDateProp performs the TZID to UTC conversion upstream).
+	// Simulate EXDATE;TZID=America/New_York:20261019T100000 after ical.go
+	// resolves it. At this point, the value is an absolute UTC instant.
+	// parseExDateProp performs the TZID-to-UTC conversion upstream.
 	excludedWallClock := time.Date(2026, 10, 19, 10, 0, 0, 0, loc)
 
 	master := Event{
@@ -244,11 +241,10 @@ func TestExpandOccurrences_AcceptsCaseInsensitiveRule(t *testing.T) {
 	}
 }
 
-// TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart: an
-// overnight recurring occurrence (22:00 to 02:00, crossing midnight) whose
-// instance starts the day before rangeStart but spills into it (its end is
-// after rangeStart) must be included, for consistency with eventOverlaps,
-// which is already used for the non-recurring path.
+// TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart verifies an
+// overnight recurring occurrence from 22:00 to 02:00. Its instance starts the
+// day before rangeStart and ends after rangeStart. The result must include it
+// to match eventOverlaps behavior on the non-recurring path.
 func TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart(t *testing.T) {
 	master := Event{
 		UID:        "uid-overnight",
@@ -258,9 +254,8 @@ func TestExpandOccurrences_IncludesOccurrenceOverlappingRangeStart(t *testing.T)
 		Recurrence: "FREQ=WEEKLY;COUNT=4",
 	}
 
-	// The range starts after the July 6 occurrence begins but before it
-	// ends (it spills past midnight): the occurrence overlaps the start of
-	// the range and must be included.
+	// The range starts after the July 6 occurrence begins but before it ends.
+	// The occurrence crosses midnight and overlaps rangeStart, so include it.
 	rangeStart := mustParse(t, "2026-07-07T01:00:00Z")
 	rangeEnd := mustParse(t, "2026-08-10T00:00:00Z")
 

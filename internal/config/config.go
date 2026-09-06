@@ -141,13 +141,17 @@ type Config struct {
 	// DefaultLocation is the timezone used to interpret a start/end value
 	// supplied WITHOUT an explicit RFC3339 offset (e.g. "2026-07-01T14:00:00",
 	// no "Z", no "+02:00"). Set via ICLOUD_MCP_DEFAULT_TZ (IANA name, e.g.
-	// "Europe/Paris"); defaults to UTC if unset, which keeps the previous
-	// strict behavior (a bare RFC3339 offset is still respected literally,
-	// this only affects the offset-less fallback). See
-	// internal/icloud.ParseDateTime for the parsing rules and the incident
-	// that motivated this: an agent echoing a local hour back as "...Z"
-	// (UTC) instead of converting it, shifting events by the local UTC
-	// offset (2h during CEST).
+	// "Europe/Paris").
+	//
+	// An unset value defaults to UTC and keeps the previous
+	// strict behavior. The parser still respects an explicit RFC3339 offset.
+	// This setting changes only the offset-less fallback. See
+	// internal/icloud.ParseDateTime for the parsing rules and the related
+	// incident.
+	//
+	// In that incident, an agent returned a local hour as "...Z"
+	// instead of converting it. The error shifted events by the local UTC
+	// offset, which is two hours during CEST.
 	DefaultLocation *time.Location
 }
 
@@ -236,11 +240,10 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// loadDefaultLocation resolves ICLOUD_MCP_DEFAULT_TZ to a *time.Location,
-// defaulting to UTC when unset. Failing fast here (before any network
-// access, alongside the other config validation) is deliberate: a typo in
-// the IANA name would otherwise surface much later as a silently wrong
-// event time instead of a clear boot error.
+// loadDefaultLocation resolves ICLOUD_MCP_DEFAULT_TZ to a *time.Location. It
+// defaults to UTC when the setting is empty. It validates the IANA name before
+// network access. Without this check, a typo could silently produce an
+// incorrect event time instead of a clear boot error.
 func loadDefaultLocation(tz string) (*time.Location, error) {
 	if tz == "" {
 		return time.UTC, nil
@@ -252,10 +255,10 @@ func loadDefaultLocation(tz string) (*time.Location, error) {
 	return loc, nil
 }
 
-// Validate checks credential formats and minimum lengths. Error
-// messages NEVER contain the password or the email (not even an excerpt):
-// boot failures are logged before the production Redactor is installed, so
-// every config error string must be free of credentials and account identity.
+// Validate checks credential formats and minimum lengths. Its errors never
+// contain the password, email, or an excerpt of either value. Boot failures
+// use the logger before production installs the Redactor. Thus, each config
+// error must exclude credentials and the account identity.
 func (c *Config) Validate() error {
 	if len(c.Email) < minRedactableIdentityBytes || hasCredentialControl(c.Email) {
 		return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
@@ -370,13 +373,14 @@ func hasCredentialControl(value string) bool {
 	return strings.ContainsAny(value, "\r\n\x00")
 }
 
-// loadCredential reads an environment variable. If its value starts with
-// "file://", the secret is read from the referenced file (Docker secrets
-// pattern); this is the ONLY disk read the program is allowed to perform.
-// The path is fully trusted to the operator who set the env (no chroot): a
-// process that can set ICLOUD_* can already read the same files. A path
-// segment equal to ".." is rejected as a footgun guard, not as a security
-// boundary (no chroot, no symlink resolution).
+// loadCredential reads an environment variable. A "file://" prefix selects a
+// referenced file, as used by Docker secrets. This is the only permitted disk
+// read. The function trusts the operator who sets the environment to select
+// the path. A process that can set ICLOUD_* can read the same files.
+//
+// The function rejects a ".." path segment as a configuration safeguard. This
+// check is not a security boundary because there is no chroot or symlink
+// resolution.
 func loadCredential(envVar string) (string, error) {
 	val := os.Getenv(envVar)
 	if strings.HasPrefix(val, "file://") {
@@ -398,10 +402,9 @@ func loadCredential(envVar string) (string, error) {
 	return val, nil
 }
 
-// readCredentialFile accepts only a small regular file that is not group or
-// world accessible (mode must be 0600 or stricter). The checks around the
-// nonblocking open prevent a path swap from turning the read into a FIFO or
-// device wait while still allowing symlinks to regular secret files.
+// readCredentialFile accepts only a small regular file with mode 0600 or
+// stricter. Its nonblocking checks prevent a path swap from causing a FIFO or
+// device wait. The checks still allow symlinks to regular secret files.
 func readCredentialFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {

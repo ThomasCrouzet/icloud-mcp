@@ -18,8 +18,9 @@ const (
 	maxReportPropertyCount = 32768
 )
 
-// encoding/xml structures for the PROPFIND responses (207 Multi-Status) of
-// the hand-rolled discovery and of list_calendars. Namespace note:
+// The following encoding/xml structures model the PROPFIND responses from
+// custom discovery and list_calendars. These responses use 207 Multi-Status.
+// Namespace note:
 // encoding/xml matches an unqualified tag regardless of namespace; the
 // non-DAV props (CalDAV, Apple) are qualified to remove any ambiguity with
 // same-named properties.
@@ -238,11 +239,10 @@ func parseDAVStatus(status string) (int, bool) {
 	return code, err == nil
 }
 
-// mergedOKProp merges all successful (200) propstats of a response into a
-// single msProp. In practice a CalDAV server returns a single 200 block
-// grouping all found properties and a 404 block for the missing ones, but
-// merging is done for robustness in case several 200 blocks exist. Returns
-// nil if no propstat is successful.
+// mergedOKProp merges all successful 200 propstats into one msProp. A CalDAV
+// server usually groups found properties in one 200 block. It puts missing
+// properties in a 404 block. The merge also supports responses with multiple
+// 200 blocks. The function returns nil when no propstat succeeds.
 func mergedOKProp(r msResponse) *msProp {
 	var merged msProp
 	found := false

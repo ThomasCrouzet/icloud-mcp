@@ -17,5 +17,5 @@ coverage.html
 .idea/
 .vscode/
 
-# Internal open-source preparation notes (must never land in the public history).
+# Internal open-source preparation notes (must never enter the public history).
 /OPEN-SOURCE.md

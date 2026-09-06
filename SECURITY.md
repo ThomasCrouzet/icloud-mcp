@@ -2,96 +2,104 @@
 
 ## Threat model
 
-`icloud-mcp` is a host-agnostic stdio child process: any MCP-compatible client
-that spawns it with an environment and wires stdin/stdout can drive the tools.
-Calendar text, contact fields, mailbox metadata, and message content are
-untrusted remote data and may contain prompt-injection text. Assume an LLM
-driving the host can be manipulated into invoking any registered tool,
-regardless of which host or model vendor is used.
+`icloud-mcp` is a host-agnostic stdio child process. Any MCP-compatible client
+can start it with an environment and connect stdin and stdout. The client can
+then use the tools.
 
-The effective blast radius is every enabled domain and capability for one
-configured iCloud account. With global read-only disabled, this can include
-Calendar and Contacts mutation, Mail flag/move/trash mutation, and SMTP delivery
-to configured recipients.
+Calendar text, contact fields, mailbox metadata, and message content are
+untrusted remote data. This data can contain prompt-injection text. Assume that
+an attacker can manipulate the host LLM and invoke any registered tool. This
+assumption applies to all hosts and model vendors.
+
+The effective blast radius includes all enabled domains and capabilities for
+one configured iCloud account. If you disable global read-only mode, the host
+can change Calendar and Contacts data. It can also change Mail flags, move or
+trash messages, and send Mail to configured recipients.
 
 ### Shared-process residual risk
 
-The unified binary deliberately trades stronger process isolation for simpler
-deployment. A memory-disclosure or arbitrary-code defect in any enabled domain
-can expose every credential held by that process. Feature flags remove tools and
-prevent optional client construction, but do not remove compiled code. Mail may
-use a dedicated app-specific password, and separate process/account
-configurations remain the stronger isolation option.
+The unified binary makes deployment simple, but process isolation is lower. A
+memory disclosure or arbitrary-code defect in one enabled domain can expose all
+credentials in the process. Feature flags remove tools and prevent construction
+of optional clients. They do not remove compiled code. Mail can use a dedicated
+app-specific password. Use separate process and account configurations for
+stronger isolation.
 
 ### Security boundaries
 
 - **Per-domain network allowlists:** Calendar can reach only
-  `caldav.icloud.com:443` and `p[0-9]{1,3}-caldav.icloud.com:443`; Contacts can
+  `caldav.icloud.com:443` and `p[0-9]{1,3}-caldav.icloud.com:443`. Contacts can
   reach only `contacts.icloud.com:443` and
-  `p[0-9]{1,3}-contacts.icloud.com:443`; IMAP can dial only
-  `imap.mail.me.com:993`; SMTP can dial only `smtp.mail.me.com:587`.
-- **Verified encryption:** DAV uses HTTPS, IMAP uses implicit TLS, and SMTP
-  requires STARTTLS before authentication. TLS verification is always enabled
-  with TLS 1.2 or later. DAV proxy environment variables are ignored.
-- **Credential isolation:** Calendar and Contacts have distinct authenticated
-  HTTP clients. IMAP and SMTP use fixed dialers and fresh sessions. There is no
-  union authenticated client or response-controlled destination.
+  `p[0-9]{1,3}-contacts.icloud.com:443`. IMAP can dial only
+  `imap.mail.me.com:993`. SMTP can dial only `smtp.mail.me.com:587`.
+- **Verified encryption:** DAV uses HTTPS, and IMAP uses implicit TLS. SMTP
+  requires STARTTLS before authentication. The server always verifies TLS and
+  requires TLS 1.2 or later. DAV ignores proxy environment variables.
+- **Credential isolation:** Calendar and Contacts use separate authenticated
+  HTTP clients. IMAP and SMTP use fixed dialers and fresh sessions. No client
+  authenticates to multiple domains. A response cannot control a destination.
 - **Global read-only:** `ICLOUD_MCP_READ_ONLY=true` removes every Calendar and
   Contacts write, every Mail mutation, and Mail send from `tools/list`.
-- **Independent Mail gates:** Mail read grants neither mutation nor send. SMTP
-  send additionally requires an exact-address recipient allowlist; literal `*`
-  is an explicit allow-all policy and emits a boot warning. Prefer exact
-  addresses in production.
-- **Secret redaction:** configured identities, passwords, Basic-auth variants,
-  SASL PLAIN variants, and URL-escaped forms are redacted from stderr, tool
-  errors, success payloads, and panic responses.
-- **Bounded remote content:** DAV XML/vCard, IMAP protocol data, MIME structure,
-  decoded bodies, list/search results, and SMTP messages have byte, item, depth,
-  or result caps. Mail list/search never returns bodies. Message retrieval never
-  returns raw MIME, raw headers, HTML, or attachment bytes. Stdio frames are
-  capped at 1 MiB, caller-reflecting error records above 64 KiB are replaced,
-  and serialized MCP results are capped at 256 KiB.
-- **Optimistic concurrency:** Calendar and Contacts update/delete require
-  specific ETags on the wire. Mail references include UIDVALIDITY; conditional
-  flag updates fail closed when MODSEQ/MODIFIED safety cannot be established.
-- **No mutation replay:** Calendar PUT/DELETE, including series delete, Contacts
-  writes, IMAP mutations, and SMTP submission are not automatically replayed.
-  Calendar retries apply to reads only. Ambiguous mutation or post-DATA SMTP
-  failures return `outcome_unknown` with reconciliation guidance.
-- **Mutation audit:** every production mutation emits `domain`, `resourceType`,
-  and a process-local opaque HMAC `resourceToken`, never a raw Calendar path or
-  UID. Records also exclude contact UIDs, mailbox identities, recipients,
-  Calendar title/location/notes, contact fields, message subjects, addresses,
-  bodies, Message-IDs, and attachment names.
+- **Independent Mail gates:** Mail read does not permit mutation or send. SMTP
+  send also requires an exact-address recipient allowlist. The literal `*`
+  permits all recipients and causes a boot warning. Use exact addresses in
+  production.
+- **Secret redaction:** the server removes configured identities, passwords,
+  Basic-auth variants, SASL PLAIN variants, and URL-escaped forms. It removes
+  them from stderr, tool errors, success payloads, and panic responses.
+- **Bounded remote content:** the server limits DAV XML, vCard data, IMAP
+  protocol data, and MIME structures. It also limits decoded bodies, list and
+  search results, and SMTP messages. It applies byte, item, depth, or result
+  limits. Mail list and
+  search operations never return bodies. Message retrieval never returns raw
+  MIME, raw headers, HTML, or attachment bytes. The server limits stdio frames
+  to 1 MiB and serialized MCP results to 256 KiB. It replaces reflected error
+  records that exceed 64 KiB.
+- **Optimistic concurrency:** Calendar and Contacts update and delete operations
+  require specific ETags on the wire. Mail references include UIDVALIDITY.
+  Conditional flag updates fail closed if the server cannot establish
+  MODSEQ/MODIFIED safety.
+- **No mutation replay:** the server does not automatically replay Calendar PUT
+  or DELETE, Contacts writes, IMAP mutations, or SMTP submission. Calendar
+  series delete follows the same rule. The server retries only Calendar reads.
+  Ambiguous mutation failures return `outcome_unknown` with reconciliation
+  guidance. SMTP failures after DATA starts use the same result.
+- **Mutation audit:** each production mutation emits `domain`, `resourceType`,
+  and a process-local opaque HMAC `resourceToken`. It never emits a raw Calendar
+  path or UID. Audit records also exclude contact UIDs, mailbox identities,
+  recipients, Calendar titles, locations, and notes. They exclude contact
+  fields, message subjects, addresses, bodies, Message-IDs, and attachment
+  names.
 - **Minimal local surface:** there is no `os/exec`, telemetry, plugin loading,
-  runtime code download, or disk write. The only disk access is optional
-  boot-time `file://` secret loading from regular files capped at 4 KiB and
-  required to be mode 0600 or stricter (not group or world accessible). The
-  optional health listener is loopback-only and accepts no arbitrary hostname.
+  runtime code download, or disk write. Optional boot-time `file://` secret
+  loading is the only disk access. It accepts regular files of at most 4 KiB
+  with mode 0600 or stricter. The files must not permit group or world access. The
+  optional health listener uses loopback only and does not accept arbitrary
+  hostnames.
 - **Revocable credentials:** use app-specific passwords, never the main Apple
-  Account password. They can be revoked independently at appleid.apple.com.
+  Account password. You can revoke them independently at appleid.apple.com.
 
-The network and registration boundaries limit what a manipulated MCP caller can
-do through the tool surface. They do not make remote content trustworthy and do
-not eliminate vulnerabilities in this process or its dependencies.
+The network and registration boundaries limit the actions of a manipulated MCP
+caller. Remote content remains untrusted. These boundaries do not remove
+vulnerabilities from the process or its dependencies.
 
-`delete_event` may include `deletedTitle` in a successful MCP response for target
-confirmation. It is never included in the audit trail. Mail `outcome_unknown`
-must never be retried without checking Sent and the recipients.
+For target confirmation, a successful `delete_event` response can include
+`deletedTitle`. The audit trail never includes it. Before you retry a Mail
+operation with `outcome_unknown`, check Sent and the recipients.
 
 When an IMAP server advertises CONDSTORE, go-imap beta.8 cannot expose the
-tagged MODIFIED response required for a safe conditional STORE.
-`set_message_flags` therefore returns `protocol_error` before STORE and does not
-claim `concurrent_modification` on that path. For SMTP, `to`, `cc`, and `bcc`
-are each optional, but their aggregate must contain at least one recipient.
+tagged MODIFIED response. A safe conditional STORE requires this response.
+Thus, `set_message_flags` returns `protocol_error` before STORE. It does not
+report `concurrent_modification` on that path. For SMTP, `to`, `cc`, and `bcc`
+are optional. Together, they must contain at least one recipient.
 
 Implementation details: [docs/security.md](docs/security.md).
 
 ## Reporting a vulnerability
 
-Report security issues privately through GitHub's
+Report security issues privately through GitHub
 [private vulnerability reporting](https://github.com/ThomasCrouzet/icloud-mcp/security/advisories/new)
-rather than opening a public issue. Include the affected domain, whether a
-credential or remote-content boundary is involved, and a minimal reproduction
-without real account data or secrets. You should receive an acknowledgement
-within a few days.
+instead of a public issue. Identify the affected domain and the applicable
+credential or remote-content boundary. Include a minimal reproduction without
+real account data or secrets. You should receive an acknowledgement within a
+few days.

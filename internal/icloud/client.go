@@ -38,19 +38,18 @@ const maxReportBodySize = 32 << 20 // 32 MiB
 // entirely outside this window are reported as not found on the fallback path.
 const uidLookupWindow = 50 * 365 * 24 * time.Hour
 
-// httpDoer is the minimal slice of an HTTP client used by the hand-rolled
-// discovery, compatible with both *http.Client and the return value of
-// webdav.HTTPClientWithBasicAuth (the webdav.HTTPClient interface), which
-// declares the same single Do method.
+// httpDoer is the minimal HTTP client interface for custom discovery. Both
+// *http.Client and webdav.HTTPClient implement it. The latter is the return
+// type of webdav.HTTPClientWithBasicAuth. Each type provides the same Do
+// method.
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client implements Service against iCloud via go-webdav/caldav, with a
-// hand-rolled shard discovery (see discovery.go). go-webdav v0.7.0 loses
-// the shard host in FindCalendarHomeSet (it only returns the path), so a
-// hand-rolled discovery is needed to route subsequent requests to the
-// right shard (pXX-caldav.icloud.com).
+// Client implements Service against iCloud through go-webdav/caldav. It uses
+// custom shard discovery from discovery.go. In go-webdav v0.7.0,
+// FindCalendarHomeSet returns only the path and loses the shard host. Custom
+// discovery routes later requests to the correct pXX-caldav.icloud.com shard.
 type Client struct {
 	http    httpDoer
 	baseURL string
@@ -359,9 +358,9 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	if err != nil {
 		return err
 	}
-	// findEventByUID returns the FULL object (direct GET on <uid>.ics, or a
-	// time-range scan as fallback, never filtered calendar-data): VERSION/PRODID
-	// and VTIMEZONE are preserved, so it can be modified and re-PUT as is.
+	// findEventByUID returns the full object, never filtered calendar-data. It
+	// uses a direct GET on <uid>.ics or a time-range fallback scan. The object
+	// retains VERSION, PRODID, and VTIMEZONE for modification and re-PUT.
 	vevent, err := findMasterVEvent(found.Data)
 	if err != nil {
 		return err
@@ -378,9 +377,8 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		if err := applyFieldUpdate(vevent, up); err != nil {
 			return err
 		}
-		// Consistency validation after merging (needed when only one of the two
-		// start/end bounds is provided: consistency can only be checked after
-		// re-reading the existing event).
+		// Validate consistency after merging. When input provides only one bound,
+		// this check requires the other bound from the existing event.
 		startProp := vevent.Props.Get(ical.PropDateTimeStart)
 		endProp := vevent.Props.Get(ical.PropDateTimeEnd)
 		if startProp != nil && endProp != nil {
@@ -888,10 +886,10 @@ func (c *Client) deleteCalendarObjectIfMatch(ctx context.Context, calendarPath, 
 // guaranteed to equal the UID for imported events (e.g. from another
 // client): never guess a path, always search by UID.
 //
-// Always returns a full object suitable for re-PUT: direct GET on <uid>.ics
-// when possible; otherwise REPORT discovers the href, then GET re-fetches
-// the complete VCALENDAR (VERSION/PRODID/VTIMEZONE). REPORT calendar-data
-// alone can omit components required by go-ical encode.
+// The function always returns a full object suitable for re-PUT. It uses a
+// direct GET on <uid>.ics when possible. Otherwise, REPORT discovers the href
+// and GET fetches the complete VCALENDAR with VERSION, PRODID, and VTIMEZONE.
+// REPORT calendar-data alone can omit components that go-ical needs to encode.
 func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (*extcaldav.CalendarObject, error) {
 	// iCloud REJECTS calendar-query <prop-filter> (412 Precondition Failed,
 	// observed 2026-07-12), so filtering by UID server-side is impossible. But
@@ -963,18 +961,17 @@ func calendarHasUID(cal *ical.Calendar, uid string) bool {
 	return false
 }
 
-// reportCalendarQuery sends a REPORT calendar-query (Depth:1) requesting the
-// FULL calendar-data (bare <C:calendar-data/>) and getetag with the provided
-// filter, then decodes each object via go-ical. getetag populates
+// reportCalendarQuery sends a Depth:1 REPORT calendar-query. It requests full
+// calendar-data with bare <C:calendar-data/>, getetag, and the specified
+// filter. It then decodes each object with go-ical. getetag populates
 // CalendarObject.ETag so UpdateEvent can send If-Match even when the object
 // was located via this REPORT path (imported events, filename != UID).
 //
-// Hand-rolled request (not go-webdav QueryCalendar) because iCloud does NOT
-// return component properties for a PARTIAL calendar-data retrieval (a
-// nested <comp name="VEVENT"><allprop/></comp> yields empty VEVENTs;
-// AllProps+AllComps on VCALENDAR yields zero sub-components), observed
-// against the real iCloud on 2026-07-12. Only the bare <calendar-data/>
-// works, and go-webdav's QueryCalendar always emits a <comp>.
+// This custom request does not use go-webdav QueryCalendar. On 2026-07-12,
+// iCloud did not return component properties for a partial calendar-data
+// request. A nested <comp name="VEVENT"><allprop/></comp> produced empty
+// VEVENTs. AllProps+AllComps on VCALENDAR produced no sub-components. Only a
+// bare <calendar-data/> worked, but QueryCalendar always emits a <comp>.
 func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXML string) ([]extcaldav.CalendarObject, error) {
 	body := `<?xml version="1.0" encoding="utf-8"?>` +
 		`<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">` +

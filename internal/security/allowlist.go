@@ -30,9 +30,8 @@ var shardHostRe = regexp.MustCompile(`^p\d{1,3}-caldav\.icloud\.com$`)
 var contactsShardHostRe = regexp.MustCompile(`^p\d{1,3}-contacts\.icloud\.com$`)
 
 // IsICloudHost allows caldav.icloud.com and pXX-caldav.icloud.com, nothing
-// else. The comparison is case-sensitive: url.URL.Hostname() returns the
-// host as it appears in the URL (not lowercased by Go), so an uppercase
-// variant is deliberately rejected rather than treated as equivalent.
+// else. The comparison is case-sensitive. url.URL.Hostname() preserves the
+// case from the URL. Thus, this function rejects an uppercase variant.
 func IsICloudHost(host string) bool {
 	return host == "caldav.icloud.com" || shardHostRe.MatchString(host)
 }
@@ -55,9 +54,9 @@ func PortAllowed(port string) bool {
 
 // AllowlistTransport is an http.RoundTripper that REJECTS any request whose
 // scheme is not https or whose host is not authorized by `allowed`.
-// A RoundTripper (rather than a DialContext) intercepts the request before
-// any DNS resolution, and also covers every redirect hop: the stdlib
-// http.Client sends each redirected request through the same Transport.
+// A RoundTripper checks the request before DNS resolution. Unlike a
+// DialContext, it also checks each redirect. The standard http.Client sends
+// each redirected request through the same Transport.
 type AllowlistTransport struct {
 	inner   http.RoundTripper
 	allowed func(host string) bool

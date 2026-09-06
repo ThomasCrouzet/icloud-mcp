@@ -15,10 +15,9 @@ const (
 	maxPublicRetryAfter          = 60 * time.Second
 )
 
-// Code is a stable, greppable error code surfaced to the MCP client. It is
-// part of the public contract of the CalDAV client: an MCP host may match
-// on it to adapt its behavior (e.g. re-read and retry on
-// CodeConcurrentModification). Stable across releases.
+// Code identifies a stable error in the public CalDAV contract. MCP hosts can
+// use it to select a response, such as re-reading after
+// CodeConcurrentModification. Codes remain stable across releases.
 type Code string
 
 const (
@@ -62,10 +61,9 @@ const (
 	CodeInternal Code = "internal_error"
 )
 
-// Error is the typed CalDAV/MCP error returned for classified failures. Its
-// Error() text starts with the stable Code so the code is visible even
-// without structured access. Message never contains raw HTTP/XML bodies or
-// credentials (callers must still run the Redactor on the way out).
+// Error describes a classified CalDAV or MCP failure. Error() starts with the
+// stable Code for clients without structured access. Message excludes raw HTTP
+// or XML bodies and credentials. Callers must still apply the Redactor.
 type Error struct {
 	Code       Code
 	Status     int
@@ -93,7 +91,7 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// Unwrap implements errors.Wrapper so errors.As / errors.Is reach the cause.
+// Unwrap lets errors.As and errors.Is inspect the cause.
 func (e *Error) Unwrap() error { return e.Cause }
 
 // AsICloudError returns the typed *Error wrapping err, or nil if err is not
@@ -106,15 +104,15 @@ func AsICloudError(err error) *Error {
 	return nil
 }
 
-// classifyStatus maps an HTTP status code to a typed Error. Used by the
-// retry/classify doer and by the hand-rolled requests as a fallback when the
-// doer is a plain test client (no classification).
+// classifyStatus maps an HTTP status code to a typed Error. The retry
+// classifier and manual requests use it. Manual requests use it as a fallback
+// with plain test clients.
 func classifyStatus(status int) *Error {
 	return classifyStatusWithRetryAfter(status, 0)
 }
 
-// classifyStatusWithRetryAfter is classifyStatus plus an optional Retry-After
-// hint from the last HTTP response. Zero retryAfter keeps the code defaults.
+// classifyStatusWithRetryAfter adds an optional Retry-After value to the
+// classified status. A zero value keeps the default delay.
 func classifyStatusWithRetryAfter(status int, retryAfter time.Duration) *Error {
 	err := classifyStatusBare(status)
 	if err == nil {
@@ -210,9 +208,8 @@ func withOutcomeReconciliation(err error, uid, reconciliation string) error {
 	return &clone
 }
 
-// PublicCode maps an internal/legacy Code to the objective vocabulary where
-// useful, while keeping concurrent_modification as the preferred conflict
-// signal for agents that already match on it.
+// PublicCode maps internal and legacy codes to the public vocabulary. It keeps
+// concurrent_modification as the preferred conflict code.
 func PublicCode(c Code) Code {
 	switch c {
 	case CodeAuthenticationRefused:

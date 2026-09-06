@@ -28,7 +28,7 @@ const (
 	MaxIMAPSessionRead = 4 * 1024 * 1024
 )
 
-// Config is copied by NewService and is immutable for the service lifetime.
+// Config contains the immutable service settings. NewService copies it.
 type Config struct {
 	Address         string          `json:"-"`
 	Password        string          `json:"-"`

@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Go modules: security advisories + version bumps for direct dependencies.
+  # Go modules: security notices and version updates for direct dependencies.
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -9,17 +9,17 @@ updates:
     labels:
       - "dependencies"
       - "go"
-    # group minor/patch bumps to keep the PR noise low; major bumps get
-    # individual PRs so they can be reviewed against the pinned dependency
-    # policy (README: 10 direct deps max, no addition without written
-    # justification).
+    # Group minor and patch updates to reduce the number of pull requests.
+    # Use a separate pull request for each major update. Check it against the
+    # dependency policy in README: 10 direct dependencies, with written reasons
+    # for each addition.
     groups:
       go-patches:
         update-types:
           - "minor"
           - "patch"
 
-  # GitHub Actions: keep action versions current (security + newer features).
+  # GitHub Actions: update action versions for security fixes and new features.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

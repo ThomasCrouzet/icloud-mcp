@@ -24,10 +24,9 @@ const maxRecurrenceExpansionWork int64 = 100000
 const maxRecurrenceSearchWork int64 = 250000
 
 // ExpandOccurrences expands a recurring event within [rangeStart, rangeEnd].
-// Handles RRULE + EXDATE (exclusions); RECURRENCE-ID overrides replace the
-// matching generated occurrence (compared at second precision, in UTC);
-// overrides falling inside the range but absent from the generated series
-// (moved out of their original slot) are still included.
+// It applies RRULE and EXDATE exclusions. RECURRENCE-ID overrides replace
+// generated occurrences that match at UTC second precision. It also includes
+// an override moved into the range from outside the generated series.
 // maxOccurrences bounds the expansion; if <= 0, the package default is used.
 // truncated is true when the per-series cap dropped occurrences that the
 // RRULE would otherwise have produced inside the widened selection window.
@@ -79,13 +78,11 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	if !normalizeRecurrenceSelectorLists(ropt) {
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule has excessive selector cardinality", nil)
 	}
-	// Do NOT force .UTC() here: RFC 5545 requires the recurrence to follow
-	// the local WALL CLOCK time of the Dtstart (TZID), not a fixed UTC
-	// instant. Converting to UTC would destroy the Location and pin every
-	// occurrence to the original Dtstart's UTC offset, shifting it by 1h
-	// from the expected wall clock time as soon as a DST change happens in
-	// between. If the event is already in Z (UTC), StartTime.Location() is
-	// already time.UTC and no information is lost.
+	// Do not force .UTC() here. RFC 5545 requires recurrences to follow the
+	// local wall-clock time of Dtstart and its TZID. A UTC conversion would
+	// remove the Location and keep the original UTC offset. After a DST change,
+	// that fixed offset would shift the wall-clock time by one hour. An event in
+	// Z already has time.UTC as its StartTime.Location(), so it loses no data.
 	ropt.Dtstart = master.StartTime
 	seriesRemaining := maxRecurrenceExpansionWork
 	safety, maxEmptyPeriods, maxPeriodCandidates := checkRecurrenceSelectorSafety(ctx, ropt, &seriesRemaining, remainingWork)
@@ -100,7 +97,7 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule requires excessive internal selector work", nil)
 	}
 	// Preflight estimate only; actual iterator steps debit seriesRemaining and
-	// remainingWork below so under-estimates cannot blow the aggregate budget.
+	// remainingWork below so underestimates cannot exceed the aggregate budget.
 	estimatedWork := recurrenceWorkEstimate(ropt, rangeEnd, maxEmptyPeriods, maxPeriodCandidates)
 	if estimatedWork > seriesRemaining || remainingWork == nil || estimatedWork > *remainingWork {
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule requires excessive expansion work", nil)
@@ -116,9 +113,9 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		excluded[ex.UTC().Unix()] = struct{}{}
 	}
 
-	// duration MUST be computed before iteration: it is used to widen the
-	// lower bound (see below) so occurrences starting before rangeStart
-	// but spilling into the range are not lost. Clamp negative/zero durations
+	// Compute duration before iteration. The lower-bound calculation below uses
+	// it to include occurrences that start before rangeStart and overlap the
+	// range. Clamp negative or zero durations
 	// from corrupt End < Start data so the lower bound is never widened the
 	// wrong way.
 	duration := master.EndTime.Sub(master.StartTime)
@@ -189,11 +186,10 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 
 	out := make([]Event, 0, len(occTimes))
 	for _, occ := range occTimes {
-		// Keep only occurrences that genuinely overlap
-		// [rangeStart, rangeEnd) once rebuilt with their full duration; the
-		// widened lower bound above deliberately over-selects, and this
-		// filter restores the exact eventOverlaps semantics (consistent
-		// with the non-recurring path).
+		// Keep only occurrences that overlap [rangeStart, rangeEnd) after the
+		// code restores their full duration. The wider lower bound intentionally
+		// includes extra occurrences. This filter restores the exact
+		// eventOverlaps behavior from the non-recurring path.
 		if !eventOverlaps(Event{StartTime: occ, EndTime: recurrenceOccurrenceEnd(master, occ)}, rangeStart, rangeEnd) {
 			continue
 		}

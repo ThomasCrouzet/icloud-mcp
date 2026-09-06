@@ -13,15 +13,15 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ is the end-to-end
-// regression lock for the 2026-07-12 timezone incident: the user confirmed
-// an event 10:00-14:00 (Europe/Paris local time), and the calling agent MUST
-// now be able to pass that literal hour with no offset
-// ("2026-07-12T10:00:00") and have the server resolve it, via the
-// deployment's ICLOUD_MCP_DEFAULT_TZ (Deps.DefaultLocation), to the correct
-// UTC instant handed to icloud.Service.CreateEvent (08:00 UTC, CEST = UTC+2)
-// instead of the buggy literal-UTC interpretation (10:00 UTC, which iCloud
-// would have rendered as 12:00, 2h late).
+// TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ covers the
+// 2026-07-12 timezone incident from end to end. The user confirmed an event
+// from 10:00 to 14:00 in Europe/Paris local time. The calling agent must be
+// able to pass that hour without an offset, as "2026-07-12T10:00:00". The
+// server resolves it through ICLOUD_MCP_DEFAULT_TZ in Deps.DefaultLocation.
+//
+// icloud.Service.CreateEvent must receive 08:00 UTC because CEST is UTC+2. A
+// literal UTC interpretation would pass 10:00 UTC. iCloud would display that
+// value as 12:00, two hours late.
 func TestCreateEventHandler_LocalTimeUsesConfiguredDefaultTZ(t *testing.T) {
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {

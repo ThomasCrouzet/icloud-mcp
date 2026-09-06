@@ -324,7 +324,7 @@ func mailSendValidationResult(deps MailDeps, err error) *mcp.CallToolResult {
 
 func mailRedactor(deps MailDeps) *security.Redactor {
 	if deps.Redactor == nil {
-		// RegisterMail panics on nil; keep a hard fail if a handler is miswired.
+		// RegisterMail panics on nil. Fail immediately when handler wiring is invalid.
 		panic("mcptools: Mail handler missing redactor")
 	}
 	return deps.Redactor

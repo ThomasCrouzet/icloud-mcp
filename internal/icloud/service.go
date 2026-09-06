@@ -144,7 +144,7 @@ func DefaultSearchOptions() SearchOptions {
 	return SearchOptions{ExpandRecurrence: true}
 }
 
-// SearchResult is returned by Service.SearchEvents.
+// SearchResult contains the output from Service.SearchEvents.
 type SearchResult struct {
 	Events []Event
 	// TruncatedByExpansion is true when at least one recurring series hit
@@ -180,7 +180,7 @@ type DeleteOptions struct {
 	DryRun bool
 }
 
-// DeleteResult is returned by DeleteEvent.
+// DeleteResult contains the output from DeleteEvent.
 type DeleteResult struct {
 	Title       string `json:"deletedTitle,omitempty"`
 	DryRun      bool   `json:"dryRun,omitempty"`
