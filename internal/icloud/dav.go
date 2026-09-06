@@ -202,9 +202,9 @@ func davOrigin(u *url.URL) string {
 }
 
 // resolveDAVHref resolves a server-provided href against the exact URL of the
-// response that carried it. It validates the absolute authority before
-// returning an escaped path, preventing an absolute href from being reduced
-// to a trusted-looking path before its origin is checked.
+// response that carried it. It validates the absolute authority before it
+// returns an escaped path. This order prevents an untrusted absolute href from
+// becoming a trusted-looking path before the origin check.
 func (c *Client) resolveDAVHref(base *url.URL, href, scopePath string) (*url.URL, error) {
 	if base == nil || href == "" || len(href) > 4096 {
 		return nil, NewError(CodeProtocolError, 0, "Calendar DAV response contains an invalid href", nil)

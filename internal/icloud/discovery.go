@@ -11,10 +11,9 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// maxPropfindBodySize bounds how much of a PROPFIND response is read,
-// defense in depth against a buggy or hostile server that would return a
-// pathologically large response body (an unbounded io.ReadAll would load
-// everything into memory before even attempting the XML parsing).
+// maxPropfindBodySize limits each PROPFIND response. This defense protects
+// against an abnormally large response from a faulty or hostile server.
+// Without the limit, io.ReadAll would load the full body before XML parsing.
 const maxPropfindBodySize = 8 << 20 // 8 MiB
 
 // propfindPrincipalBody requests current-user-principal on the main iCloud
@@ -157,10 +156,10 @@ func (c *Client) propfind(ctx context.Context, target, depth, body string, scope
 	return &propfindResult{multistatus: &ms, url: result.url}, nil
 }
 
-// validateDiscoveryURL enforces scheme https, allowHost, and (for production
-// iCloud hostnames only) port empty-or-443. httptest fixtures bind random
-// ports on non-iCloud hosts, so port is enforced only when the host is a
-// real caldav.icloud.com / pXX-caldav.icloud.com name.
+// validateDiscoveryURL requires https and allowHost. For production iCloud
+// hosts, it also requires an empty port or port 443. httptest fixtures use
+// random ports on other hosts. Thus, the function enforces the port only for
+// caldav.icloud.com and pXX-caldav.icloud.com.
 func (c *Client) validateDiscoveryURL(u *url.URL, kind string) error {
 	if u == nil || u.Scheme != "https" || u.Host == "" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || c.allowHost == nil || !c.allowHost(u.Hostname()) {
 		host := ""

@@ -23,10 +23,11 @@ const (
 	MaxResults     = 400 // hard limit from the spec
 )
 
-// ValidateCalendarPath checks that a calendar path is a path-absolute CalDAV
-// path: non-empty, starts with a single '/', no scheme-relative form (//host),
-// no directory traversal (including percent-encoded), no userinfo/query/
-// fragment markers, no control characters, bounded length.
+// ValidateCalendarPath checks a path-absolute CalDAV path. The path must be
+// nonempty, bounded, and start with one '/'. It must not contain a
+// scheme-relative form, directory traversal, URL metadata, or control
+// characters. The traversal check includes percent-encoded forms. URL metadata
+// includes userinfo, query, and fragment markers.
 //
 // Scheme-relative inputs like "//evil.example/x" would otherwise pass a naive
 // "starts with /" check and rewrite the host under url.ResolveReference.
@@ -110,12 +111,11 @@ func ValidateIfMatchETag(etag string) error {
 	return nil
 }
 
-// ValidateTextField checks the UTF-8 byte length of a free-text field
-// (title/location/notes/query) and rejects NUL characters. Newlines are
-// tolerated (notes may span multiple lines); go-ical properly escapes \n,
-// ;, , and \ during TEXT encoding (SetText), so no iCalendar property
-// injection is possible through these fields and no manual re-escaping is
-// needed here.
+// ValidateTextField checks the UTF-8 byte length of a free-text field. These
+// fields include title, location, notes, and query. It rejects NUL characters
+// but permits newlines because notes can span lines. During TEXT encoding,
+// go-ical escapes \n, semicolons, commas, and backslashes. Thus, these fields
+// cannot inject an iCalendar property and need no manual escaping here.
 func ValidateTextField(name, value string, max int) error {
 	if len(value) > max {
 		return fmt.Errorf("%s too long (max %d UTF-8 bytes, got %d)", name, max, len(value))
@@ -135,25 +135,22 @@ const naiveDateTimeLayout = "2006-01-02T15:04:05"
 // start/end parameter. Two forms are accepted:
 //
 //   - RFC3339 WITH an explicit offset ("2026-07-01T14:00:00+02:00", or
-//     "...Z" for UTC): parsed literally. The offset is a deliberate,
-//     self-declared choice by the caller, so it is always honored as-is,
-//     including "Z" (never silently reinterpreted as "local time typed by
-//     the user").
+//     "...Z" for UTC): parsed literally. The caller deliberately selects this
+//     offset. The parser always preserves it, including "Z". It never treats
+//     this value as a local time from the user.
 //   - A local wall-clock time with NO offset ("2026-07-01T14:00:00"):
 //     interpreted in defaultLoc (nil defaults to UTC).
 //
-// The no-offset form exists because converting a stated local hour to the
-// correct UTC offset is precisely the step an LLM agent gets wrong: on
-// 2026-07-12, asked to create a "Deep clean" event from 10:00 to 14:00
-// (Europe/Paris), the calling agent sent start=2026-07-12T10:00:00Z /
-// end=2026-07-12T14:00:00Z, i.e. literal UTC. iCloud rendered that 2h later
-// than intended (CEST = UTC+2) once displayed in the user's Europe/Paris
-// calendar. Accepting a bare local time and resolving the DST-aware offset
-// server-side (via defaultLoc, see ICLOUD_MCP_DEFAULT_TZ in internal/config)
-// removes that arithmetic from the agent's job entirely; the tool description
-// steers callers toward this form for "the time the user said" and reserves
-// the explicit-offset form for a deliberately different timezone (e.g. a call
-// with someone abroad).
+// The no-offset form prevents errors when an LLM converts a stated local hour.
+// An incident on 2026-07-12 involved a "Deep clean" event from 10:00 to 14:00
+// in Europe/Paris. The calling agent sent start=2026-07-12T10:00:00Z and
+// end=2026-07-12T14:00:00Z, which specify literal UTC. iCloud displayed the
+// event two hours late because CEST is UTC+2. A bare local time lets the server
+// resolve the DST-aware offset through defaultLoc.
+//
+// See ICLOUD_MCP_DEFAULT_TZ in internal/config. The tool description recommends
+// this form for the time that the user stated. It reserves an explicit offset
+// for a different timezone, such as a call with someone abroad.
 func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
@@ -176,8 +173,8 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 //   - YYYY-MM-DD (all-day series: UTC midnight on that calendar date)
 //   - the same forms as ParseDateTime for timed series
 //
-// Prefer YYYY-MM-DD for all-day masters: a bare local midnight in a non-UTC
-// DEFAULT_TZ would otherwise shift to the previous UTC day and miss the
+// Prefer YYYY-MM-DD for all-day masters. In a non-UTC DEFAULT_TZ, a bare local
+// midnight can shift to the previous UTC day. That shift can miss the
 // RECURRENCE-ID match.
 func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time, error) {
 	value = strings.TrimSpace(value)
@@ -204,11 +201,10 @@ func ValidateRange(start, end time.Time) error {
 	return nil
 }
 
-// ValidateRRULE checks that an RRULE string (without the "RRULE:" prefix) is
-// parseable and not pathologically unbounded for write paths. COUNT/UNTIL
-// is required when FREQ is SECONDLY or MINUTELY (or when neither COUNT nor
-// UNTIL is set and FREQ is HOURLY) so a create cannot plant an infinite
-// high-frequency series.
+// ValidateRRULE checks an RRULE without the "RRULE:" prefix. Write paths accept
+// only parseable rules with bounded frequency. SECONDLY and MINUTELY require
+// COUNT or UNTIL. HOURLY also requires one when both values are absent. These
+// limits prevent the creation of an infinite high-frequency series.
 func ValidateRRULE(rule string) error {
 	rule = strings.TrimSpace(rule)
 	if rule == "" {

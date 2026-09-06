@@ -86,9 +86,9 @@ func (g *GuardedService) waitWrite(ctx context.Context) error {
 	return waitLimiter(ctx, g.writeLimit, "write")
 }
 
-// waitLimiter reserves one token. If the delay exceeds maxRateWait, the
-// reservation is cancelled and a typed rate_limited error is returned so
-// callers can surface a stable code without sitting on the tool timeout.
+// waitLimiter reserves one token. It cancels the reservation when the delay
+// exceeds maxRateWait. It then returns a typed rate_limited error. Callers can
+// report a stable code without waiting for the tool timeout.
 func waitLimiter(ctx context.Context, lim *rate.Limiter, kind string) error {
 	if err := ctx.Err(); err != nil {
 		return calendarContextError(err)
@@ -135,12 +135,12 @@ func calendarContextError(err error) *Error {
 	return NewError(CodeTimeout, 0, message, err)
 }
 
-// retry retries fn up to maxRetries times with exponential backoff
-// (baseDelay * 2^attempt), bounded by ctx.Done(). It only retries TRANSIENT,
-// NON-CLASSIFIED errors (e.g. a connection blip): a typed *icloud.Error means
-// the HTTP-layer retry/classify doer already exhausted its own budget for the
-// retryable statuses (429/5xx), or the error is terminal (auth, not found,
-// 412), so retrying at this layer would be either redundant or pointless.
+// retry retries fn up to maxRetries times. It uses exponential backoff
+// (baseDelay * 2^attempt) and stops when ctx.Done() closes. It retries only
+// transient, unclassified errors, such as a connection failure. A typed
+// *icloud.Error means that the HTTP retry classifier exhausted its budget for
+// 429 or 5xx responses. The error can also be terminal, such as authentication,
+// not found, or 412. Another retry at this layer would have no effect.
 func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt <= g.maxRetries; attempt++ {
@@ -159,7 +159,7 @@ func (g *GuardedService) retry(ctx context.Context, op string, fn func() error) 
 		}
 		delay := g.baseDelay * time.Duration(math.Pow(2, float64(attempt)))
 		// Never log lastErr: Client wraps may include calendar paths or UIDs.
-		// Typed *Error already returned above; remaining retries are transport noise.
+		// A typed *Error returned above makes the remaining transport retries unnecessary.
 		slog.Warn("retrying", "operation", op, "attempt", attempt+1, "delay", delay, "error_code", "unavailable")
 		timer := time.NewTimer(delay)
 		select {

@@ -1,20 +1,22 @@
 # Security implementation
 
-This document describes the implementation behind the public threat model in
+This document describes how the server implements the public threat model in
 [SECURITY.md](../SECURITY.md).
 
 ## One process and domain boundaries
 
 Calendar, Contacts, and Mail can hold credentials in one address space. A memory
-disclosure or arbitrary-code defect can cross those in-process boundaries. The
-implementation limits accidental credential/transport crossover, not a complete
-process compromise.
+disclosure or arbitrary-code defect can cross these in-process boundaries. The
+server limits accidental crossover between credentials and transports. It
+cannot limit a complete process compromise.
 
-Each domain owns an immutable credential copy, destination policy, transport or
-dialer, limiter, semaphore where applicable, retry policy, protocol service, and
-package boundary. Calendar and Contacts never share an authenticated HTTP
-client. IMAP and SMTP accept only fixed-destination dial functions. Feature flags
-prevent disabled optional clients from being constructed.
+Each domain owns an immutable credential copy and destination policy. It also
+owns a transport or dialer, limiter, retry policy, protocol service, and package
+boundary. It owns a semaphore when applicable.
+
+Calendar and Contacts never share an authenticated HTTP client. IMAP and SMTP
+accept only fixed-destination dial functions. Feature flags prevent the server
+from building disabled optional clients.
 
 ## Network allowlists
 
@@ -25,43 +27,48 @@ prevent disabled optional clients from being constructed.
 | IMAP | `imap.mail.me.com` | 993 only | Implicit TLS |
 | SMTP | `smtp.mail.me.com` | 587 only | TCP upgraded by mandatory STARTTLS |
 
-Host matching is case-sensitive equality against the fixed lowercase production
-literals (for example `caldav.icloud.com` and `p12-caldav.icloud.com`). Hosts
-are not lowercased before comparison, so mixed-case variants are rejected.
-Production destinations are not configurable. Literal disallowed hosts, schemes,
-ports, or socket addresses are rejected before the production dialer performs
-DNS resolution.
+Host matching uses case-sensitive equality with fixed lowercase production
+literals. Examples are `caldav.icloud.com` and `p12-caldav.icloud.com`. The
+client does not change host case before comparison. Thus, it rejects mixed-case
+variants. Production destinations cannot change.
 
-DAV uses `AllowlistTransport` with `Proxy: nil`, verified system roots, and TLS
-1.2 minimum. `InsecureSkipVerify` is never set. The Calendar HTTP client
-revalidates HTTPS, host, and port on redirected requests. Calendar discovery
-also validates principal and home-set authorities before retaining a shard.
+The client rejects disallowed hosts, schemes, ports, or socket addresses before
+the production dialer resolves DNS.
 
-Contacts disables automatic redirects and follows only read-side 301, 302, 307,
-and 308 for at most three hops. It resolves relative `Location` values against
-the response URL, retains the original method/replayable body, and revalidates
-every read hop. It rejects read-side 303 and all other redirect statuses. A
-redirect after PUT or DELETE is never replayed and returns `outcome_unknown`.
-Every principal, home set, address book, REPORT href, GET target, and mutation
-target is independently validated against the Contacts policy and collection
-boundary.
+DAV uses `AllowlistTransport` with `Proxy: nil` and verified system roots. It
+uses TLS 1.2 or later. `InsecureSkipVerify` is never set. The Calendar HTTP
+client validates HTTPS, host, and port for each redirected request. Calendar
+discovery validates principal and home-set authorities before it keeps a shard.
 
-The IMAP dialer requires exactly `tcp` and `imap.mail.me.com:993`, then completes
-a verified TLS handshake with fixed `ServerName=imap.mail.me.com` before the
-protocol adapter receives the connection. SMTP requires exactly `tcp` and
-`smtp.mail.me.com:587`; authentication is unavailable until the SMTP adapter has
-completed mandatory verified STARTTLS with fixed
-`ServerName=smtp.mail.me.com`.
+Contacts disables automatic redirects. For reads, it follows only 301, 302,
+307, and 308 for at most three hops. It resolves relative `Location` values
+against the response URL. It keeps the original method and replayable body. It
+validates each read hop again.
 
-Tests inject fake HTTP doers or dialers. Injection does not make production
-hosts configurable.
+Contacts rejects read-side 303 and all other redirect statuses. It never follows
+a redirect after PUT or DELETE. Such a redirect returns `outcome_unknown`.
+
+The client independently validates each principal, home set, address book,
+REPORT href, GET target, and mutation target. It applies the Contacts policy and
+collection boundary.
+
+The IMAP dialer requires exactly `tcp` and `imap.mail.me.com:993`. It completes a
+verified TLS handshake before the protocol adapter receives the connection. The
+fixed value is `ServerName=imap.mail.me.com`.
+
+SMTP requires exactly `tcp` and `smtp.mail.me.com:587`. Authentication remains
+unavailable until the SMTP adapter completes mandatory verified STARTTLS. The
+fixed value is `ServerName=smtp.mail.me.com`.
+
+Tests inject fake HTTP clients or dialers. This injection does not make
+production hosts configurable.
 
 ## Credentials and redaction
 
-Calendar and Contacts use separate credential objects populated from
-`ICLOUD_EMAIL` and `ICLOUD_PASSWORD`. Mail uses the full
-`ICLOUD_MAIL_ADDRESS` and `ICLOUD_MAIL_PASSWORD`, or a distinct copy of
-`ICLOUD_PASSWORD` when the dedicated Mail password is unset.
+Calendar and Contacts use separate credential objects. `ICLOUD_EMAIL` and
+`ICLOUD_PASSWORD` supply their values. Mail uses `ICLOUD_MAIL_ADDRESS` and
+`ICLOUD_MAIL_PASSWORD`. If the dedicated Mail password is unset, Mail uses a
+separate copy of `ICLOUD_PASSWORD`.
 
 For every enabled credential pair, `RedactionVariants` registers:
 
@@ -81,25 +88,29 @@ Insertion points are:
 4. `RecoverRedactMiddleware` before panic text can reach JSON-RPC stdout.
 
 Configuration and credential-load errors occur before the production redactor
-exists, so their messages never include identity, secret, invalid Mail address,
-recipient value, or file path. Raw DAV XML, IMAP tagged text, SMTP replies, and
-MIME parser errors are mapped to local bounded messages.
+exists. Their messages never include an identity, secret, invalid Mail address,
+recipient value, or file path. The server maps raw protocol errors to bounded
+local messages. This includes DAV XML, IMAP tagged text, SMTP replies, and MIME
+parser errors.
 
 ## `file://` operator boundary
 
 `ICLOUD_EMAIL`, `ICLOUD_PASSWORD`, `ICLOUD_MAIL_ADDRESS`, and
-`ICLOUD_MAIL_PASSWORD` support `file://`. Mail values are read only when Mail is
-enabled. The process accepts only a regular file of at most 4 KiB whose mode is
-not group or world accessible (0600 or stricter), reads it once at boot, trims
-surrounding whitespace, and retains only the value. FIFOs, devices, directories,
-oversized files, and group/world-readable files are rejected.
+`ICLOUD_MAIL_PASSWORD` support `file://`. The server reads Mail values only when
+Mail is enabled. It accepts only a regular file of 4 KiB or less. The file mode
+must prevent group and world access, which is 0600 or stricter.
 
-The operator who controls the environment is trusted to select the file. There
-is no chroot, base-directory allowlist, or symlink guarantee. An empty path and a
-path component exactly equal to `..` are rejected as footgun guards. Read errors
-report only `not_found`, `permission_denied`, `not_regular`, `too_large`,
-`insecure_permissions`, or `unreadable`, never the path. There is no disk access
-after boot.
+The server reads the file once at boot. It removes surrounding whitespace and
+keeps only the value. It rejects FIFOs, devices, directories, oversized files,
+and files that groups or other users can read.
+
+The server trusts the operator who controls the environment to select the file.
+There is no chroot, base-directory allowlist, or symlink guarantee. The server
+rejects an empty path and a path component equal to `..`.
+
+Read errors report only `not_found`, `permission_denied`, `not_regular`,
+`too_large`, `insecure_permissions`, or `unreadable`. They never report the
+path. The server does not access the disk after boot.
 
 ## Read-only and capability gates
 
@@ -112,169 +123,191 @@ error:
   `send_message` are absent.
 
 Contacts read requires its enable flag. Mail read requires its enable flag. Mail
-mutation additionally requires the Mail write flag. Mail send independently
-requires the send flag and a valid SMTP recipient policy. Mail read does not
-grant mutation or send, and Mail mutation does not grant send.
+mutation also requires the Mail write flag. Mail send independently requires
+the send flag and a valid SMTP recipient policy. Mail read does not enable
+mutation or send. Mail mutation does not enable send.
 
-Global read-only suppresses configured writes but does not waive configuration
-validation. In particular, requested Mail send still requires a recipient
-allowlist at boot.
+Global read-only removes the configured write and send tools. It keeps
+configuration validation.
+Requested Mail send still requires a recipient allowlist at boot.
 
 ## SMTP recipient authorization
 
-`ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is either literal `*` or a comma-separated
-set of unique exact plain addr-specs. Matching trims surrounding configuration
-spaces and uses ASCII case-insensitive full-address equality. Display names,
-groups, empty entries, partial wildcards, domain-only rules, and suffix rules are
-invalid. Prefer an exact address list in production. Literal `*` is an explicit
-allow-all after SMTP AUTH and emits a boot warning on stderr.
+`ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is the literal `*` or a comma-separated set
+of unique, exact, plain addr-specs. Matching removes surrounding configuration
+spaces. It uses ASCII case-insensitive equality for the complete address.
 
-`send_message` parses and de-duplicates the complete To/Cc/Bcc set, applies the
-allowlist, validates subject/body limits, and builds the bounded message before
-opening a socket. `to`, `cc`, and `bcc` are each optional, but at least one
-recipient is required across them. From is always the configured Mail address.
-Bcc is excluded from headers. This policy limits authorized recipients, but
-literal `*` removes that limit.
+Display names, groups, empty entries, partial wildcards, domain-only rules, and
+suffix rules are invalid. Use an exact address list in production. The literal
+`*` explicitly permits all recipients after SMTP AUTH. It writes a boot warning
+to stderr.
 
-SMTP sends every RCPT command and starts DATA only if all recipients received a
-definitive acceptance. Any RCPT rejection prevents partial submission. SMTP is
-never automatically retried. A non-definitive failure after DATA may have been
-transmitted returns `outcome_unknown`; callers must inspect Sent and recipients
-before considering another send.
+`send_message` parses and removes duplicates from the complete To, Cc, and Bcc
+set. It applies the allowlist and validates subject and body limits. It builds
+the bounded message before it opens a socket.
+
+`to`, `cc`, and `bcc` are each optional. Together, they must contain at least
+one recipient. From is always the configured Mail address. Headers exclude Bcc.
+This policy limits authorized recipients. The literal `*` removes that limit.
+
+SMTP sends each RCPT command. It starts DATA only after definitive acceptance of
+all recipients. Any RCPT rejection prevents partial submission. The client never
+retries SMTP automatically.
+
+An ambiguous failure after DATA can mean that the server received the message.
+This failure returns `outcome_unknown`. Callers must inspect Sent and recipients
+before another send.
 
 ## Untrusted remote content and output caps
 
 Calendar text, contact fields, mailbox metadata, headers, message bodies, and
 attachment names are untrusted remote data. Prompt-injection labels in tool
-descriptions/results are advisory and are not a security boundary.
+descriptions and results are informational. They are not a security boundary.
 
 The implementation therefore restricts data shape and size:
 
-- The stdio transport accepts at most 1 MiB per JSON-RPC frame. A generated
-  protocol/schema error record that could reflect caller input is emitted only
-  through 64 KiB; a larger record is replaced with a bounded local error. Every
-  serialized MCP result, including Calendar results, is capped at 256 KiB.
-- Calendar search has range, result, recurrence, field, PROPFIND, and REPORT
-  limits. REPORT XML is bounded to depth 32, 262,144 tokens, 4,096 responses,
-  16,384 propstats, and 32,768 properties. Parsed iCalendar is bounded to 1,024
-  components, 10,000 properties total, 1,024 properties per component, 512
-  overrides, 64 parameters per property, 64 alarms, and 2,000 EXDATE values.
-  A single-calendar search materializes at most 2,500 events. Multi-calendar
-  search still queries every selected calendar and fails closed above 10,000
-  filtered events before the public 400-event sort-cap. Recurrence expansion
-  returns at most 2,000 occurrences and performs at most 100,000 iterator
-  advances per series and 250,000 across one search, with preflight work
-  rejection.
-  `find_free_slots` exposes no busy-event content.
-- Contact search returns summaries without notes, raw vCards, PHOTO bytes, or
-  raw extension properties. Full get returns modeled fields and bounded notes.
-  One vCard is capped at 1 MiB; a search scans at most 2,000 cards and 32 MiB;
-  Contacts results are capped at 256 KiB. DAV XML is bounded to depth 32,
-  100,000 tokens, 8,192 propstats, and 16,384 properties; one vCard is limited
-  to 10,000 properties.
-- Mail search returns envelope metadata without snippets or bodies. Message get
-  returns curated headers, at most one bounded decoded plain-text part, and
-  attachment metadata. It excludes raw headers, raw MIME, HTML, and attachment
-  payloads.
-- IMAP input is guarded at 4 MiB per session, 1 MiB per protocol line, protocol
-  depth 24, and 512 protocol lists before recursive decoding. Modeled MIME is
-  capped at 200 parts/depth 20, selected-part headers at 64 KiB, body wire bytes
-  at 512 KiB, decoded text at 200 KiB, and serialized Mail results at 256 KiB.
-- SMTP accepts at most 50 recipients, a 998-byte subject, 100 KiB plain-text
-  body, and 256 KiB encoded message. Aggregate inbound SMTP responses are capped
-  at 1 MiB per session.
+- The stdio transport accepts at most 1 MiB in each JSON-RPC frame.
+- A generated protocol or schema error can reflect caller input. The server
+  writes such an error only through 64 KiB.
+- The server replaces a larger error with a bounded local error. Each serialized
+  MCP result, including Calendar results, has a 256 KiB limit.
+- Calendar search limits ranges, results, recurrence work, fields, PROPFIND, and
+  REPORT.
+- REPORT XML has these limits: depth 32, 262,144 tokens, 4,096 responses, 16,384
+  propstats, and 32,768 properties.
+- Parsed iCalendar has 1,024 components and 10,000 total properties at most.
+- Each component has at most 1,024 properties. Other limits are 512 overrides,
+  64 parameters per property, 64 alarms, and 2,000 EXDATE values.
+- A single-calendar search materializes at most 2,500 events.
+- Multi-calendar search still queries each selected calendar. It fails closed
+  above 10,000 filtered events, before the public sorted limit of 400 events.
+- Recurrence expansion returns at most 2,000 occurrences. Its iterator advances
+  at most 100,000 times for each series and 250,000 times for each search.
+- A preflight check rejects work above these limits. `find_free_slots` exposes no
+  busy-event content.
+- Contact search summaries exclude notes, raw vCards, PHOTO bytes, and raw
+  extension properties. Full get returns modeled fields and bounded notes.
+- One vCard has a 1 MiB limit. A search scans at most 2,000 cards and 32 MiB.
+- Contacts results have a 256 KiB limit. DAV XML has depth 32 and 100,000-token
+  limits.
+- DAV XML also has limits of 8,192 propstats and 16,384 properties. One vCard
+  has at most 10,000 properties.
+- Mail search returns envelope metadata without snippets or bodies.
+- Message get returns selected headers and at most one bounded, decoded
+  plain-text part. It also returns attachment metadata.
+- Message get excludes raw headers, raw MIME, HTML, and attachment payloads.
+- IMAP input has a 4 MiB limit for each session and 1 MiB for each protocol line.
+- Before recursive decoding, IMAP limits protocol depth to 24 and protocol lists
+  to 512.
+- Modeled MIME has limits of 200 parts and depth 20. Selected-part headers have
+  a 64 KiB limit.
+- Body wire bytes have a 512 KiB limit. Decoded text has a 200 KiB limit.
+  Serialized Mail results have a 256 KiB limit.
+- SMTP accepts at most 50 recipients. Subject has a 998-byte limit, plain-text
+  body 100 KiB, and encoded message 256 KiB.
+- Inbound SMTP responses have a total 1 MiB limit for each session.
 
-Truncation happens only at complete result-object or valid UTF-8 boundaries.
-When a message body exceeds its selected cap or cannot be decoded safely, useful
-metadata is returned with `bodyOmitted` and a warning. If bounded metadata itself
-cannot fit, the tool returns `payload_too_large`.
+Truncation occurs only at complete result-object or valid UTF-8 boundaries. When
+a message body exceeds its limit, the result keeps useful metadata. It sets
+`bodyOmitted` and adds a warning. Unsafe decoding has the same result. If the
+bounded metadata cannot fit, the tool returns `payload_too_large`.
 
 ## Consistency and mutation safety
 
 ### Calendar and Contacts ETags
 
-- Calendar/Contacts create sends `If-None-Match: *`; HTTP 412 maps to
+- Calendar and Contacts create operations send `If-None-Match: *`. HTTP 412 maps to
   `conflict`.
-- Update/delete first GETs the complete resource and validates a strong ETag.
-- A supplied caller ETag takes precedence; otherwise the GET ETag is used.
+- Update and delete operations first get the complete resource and validate a
+  strong ETag.
+- A supplied caller ETag has priority. Otherwise, the operation uses the GET
+  ETag.
 - Missing, wildcard, weak, malformed, or unusable ETags fail closed.
-- Every real PUT/DELETE sends a specific `If-Match`; HTTP 412 maps to
+- Each real PUT or DELETE sends a specific `If-Match`. HTTP 412 maps to
   `concurrent_modification`.
-- Contacts re-GETs after successful create/update for normalized metadata. A
-  failed follow-up GET returns known success with `resultIncomplete`, not
-  `outcome_unknown`.
+- Contacts sends another GET after successful create or update. This GET obtains
+  normalized metadata.
+- If this GET fails, the known success contains `resultIncomplete`. It does not
+  contain `outcome_unknown`.
 
 ### Mail UIDVALIDITY and MODSEQ
 
-A Mail message is identified by `(mailbox, UIDVALIDITY, UID)`. Search cursors
-must pair `before_uid` with UIDVALIDITY. Get and every mutation select the named
-mailbox and reject a UIDVALIDITY mismatch before acting.
+A Mail message uses the identity `(mailbox, UIDVALIDITY, UID)`. Search cursors
+must pair `before_uid` with UIDVALIDITY. Get and each mutation select the named
+mailbox. They reject a UIDVALIDITY mismatch before an action.
 
-Reads request MODSEQ when CONDSTORE is advertised. Safe conditional STORE
-requires detecting the tagged MODIFIED response. The current go-imap beta.8
-adapter reports that it cannot provide this guarantee, so
-`set_message_flags` rejects before STORE with `protocol_error` on CONDSTORE
-servers. It does not report `concurrent_modification` on this unavailable path.
-When CONDSTORE is absent, it uses only delta `+FLAGS.SILENT` or
-`-FLAGS.SILENT` for Seen, Flagged, and Answered and returns
+Reads request MODSEQ when the IMAP server advertises CONDSTORE. Safe conditional
+STORE requires detection of the tagged MODIFIED response. The current go-imap
+beta.8 adapter cannot give this guarantee. Thus, `set_message_flags` rejects the
+request before STORE with `protocol_error`.
+
+This unavailable path does not report `concurrent_modification`. Without
+CONDSTORE, the adapter uses only delta `+FLAGS.SILENT` or `-FLAGS.SILENT`. These
+commands apply to Seen, Flagged, and Answered. The result contains
 `conditionalUpdate: false`.
 
-Move uses native UID MOVE when available. Otherwise it requires UIDPLUS and uses
-sequential UID COPY, add Deleted, and UID EXPUNGE for the one UID. Plain EXPUNGE
-and mailbox-wide EXPUNGE are not exposed. Failures after a completed step return
-`partial_failure` or `outcome_unknown` with reconciliation guidance. Trash
-requires exactly one selectable SPECIAL-USE Trash mailbox and exposes no
-permanent delete.
+Move uses native UID MOVE when available. Otherwise, it requires UIDPLUS. It
+sends UID COPY, adds Deleted, and sends UID EXPUNGE for the one UID. The server
+does not expose plain or mailbox-wide EXPUNGE.
+
+A failure after a completed step returns `partial_failure` or
+`outcome_unknown`. The result includes reconciliation guidance. Trash requires
+exactly one selectable SPECIAL-USE Trash mailbox. It does not expose permanent
+delete.
 
 ## Retries, rates, and deadlines
 
-All tool handlers have a 25 second deadline. DAV HTTP timeout is 30 seconds.
-Calendar boot discovery is 20 seconds; Contacts lazy discovery is at most 10
-seconds within the tool deadline.
+All tool handlers have a 25 second deadline. The DAV HTTP timeout is 30 seconds.
+Calendar boot discovery has a 20 second deadline. Contacts lazy discovery uses
+at most 10 seconds of the tool deadline.
 
 Calendar:
 
-- HTTP status 429, 502, 503, and 504 is retried up to 6 total attempts with a
-  rewindable read request body and bounded `Retry-After`/backoff.
-- `GuardedService` additionally retries only non-classified transient reads, at
-  most twice.
-- No PUT or DELETE is replayed, including full-series delete. A transport error
-  or gateway 502/503/504 after mutation dispatch returns `outcome_unknown`; a
-  mutation-side 429 is a definitive `rate_limited` result.
+- Calendar reads retry HTTP 429, 502, 503, and 504 for at most six total
+  attempts. The read request has a rewindable body.
+- The retry uses bounded `Retry-After` or backoff.
+- `GuardedService` also retries only non-classified transient reads, at most two
+  times.
+- Calendar never repeats PUT, DELETE, or full-series delete.
+- A transport error after mutation dispatch returns `outcome_unknown`. Gateway
+  502, 503, and 504 have the same result.
+- A mutation-side 429 is a definitive `rate_limited` result.
 - Read/write rates are 60/20 per minute with bursts 10/3 and concurrency 4/2.
   Local waits over two seconds fail fast.
 
 Contacts:
 
-- Safe reads retry 429, 502, 503, and 504 for at most 3 total attempts, with a
-  maximum 2 second delay.
+- Safe reads retry 429, 502, 503, and 504 for at most three total attempts. The
+  maximum delay is two seconds.
 - PUT/DELETE and transport-ambiguous writes are never replayed.
 - Read/write rates are 60/20 per minute with bursts 10/3 and at most 4 concurrent
   DAV requests.
 
 Mail:
 
-- A transient read may create one replacement IMAP session before returning a
-  result. Each attempt consumes the Mail read rate budget.
+- A transient read can create one replacement IMAP session before it returns a
+  result. Each attempt uses the Mail read rate budget.
 - IMAP mutation and SMTP send have no automatic retry.
 - Rates are 60 reads, 20 mutations, and 20 sends per minute, with bursts 10/3/3.
   Concurrency is 2 read sessions, 1 mutation, and 1 send.
 
 ## Audit
 
-All mutation handlers emit one-line records to redacted stderr. Default format is
-JSON NDJSON (`-audit-format=json`). Operators may select plain text with
-`-audit-format=text`.
+All mutation handlers write one-line records to redacted stderr. The default
+format is JSON NDJSON (`-audit-format=json`). Operators can select plain text
+with `-audit-format=text`.
 
-Every production Calendar, Contacts, IMAP, and SMTP mutation uses the unified
-shape: tool, `domain`, `resourceType`, process-local opaque HMAC
-`resourceToken`, and status. Tokens are stable only for one process and cannot
-be correlated across restarts. Calendar hashes its path/UID tuple before the
-record is emitted; no raw Calendar path or UID is logged. Raw contact UIDs,
-mailbox names, UIDVALIDITY/UID tuples, Message-IDs, and submission recipients
-are also absent. Calendar title, location, notes, and `deletedTitle` are never
-included. Allowed statuses are `success`, `error`, `denied`, `dry_run`, and
-`outcome_unknown`.
+Each production Calendar, Contacts, IMAP, and SMTP mutation uses the same fields.
+They are tool, `domain`, `resourceType`, process-local opaque HMAC
+`resourceToken`, and status. Tokens are stable only within one process. A restart
+prevents correlation.
+
+Calendar hashes its `path/UID` tuple before it writes the record. Logs contain
+no raw Calendar path or UID. They also exclude raw contact UIDs, mailbox names,
+`mailbox/UIDVALIDITY/UID` tuples, Message-IDs, and recipients.
+
+Logs never include Calendar title, location, notes, or `deletedTitle`. Allowed
+statuses are `success`, `error`, `denied`, `dry_run`, and `outcome_unknown`.
 
 ## Structured errors
 
@@ -286,9 +319,11 @@ Unified Contacts and Mail error codes are:
 `internal_error`.
 
 Calendar maps its established internal classifications to the same public
-categories where applicable. Errors contain bounded local text, optional retry
-metadata (`retryable`, `retry_after_seconds`), and operation-specific
-reconciliation for ambiguous outcomes. They do not include raw HTTP/XML, IMAP,
-SMTP, MIME, identity, password, path-to-secret, or recipient-policy values.
+categories when applicable. Errors contain bounded local text. They can contain
+retry metadata: `retryable` and `retry_after_seconds`. Ambiguous outcomes
+include operation-specific reconciliation.
+
+Errors exclude raw HTTP, XML, IMAP, SMTP, and MIME data. They also exclude
+identity, password, secret file path, and recipient policy values.
 
 Agent-facing examples and retry policy: [error-codes.md](error-codes.md).

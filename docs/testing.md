@@ -2,13 +2,18 @@
 
 ## Commands
 
+`make lint` uses golangci-lint v2.13.2 and supports Go 1.27.1.
+The linter requires Go 1.26 or newer to build. With an older host toolchain,
+Go can download a compatible version when automatic toolchain selection is enabled.
+The CI lint step uses Go 1.27.1. Other CI checks and release builds use Go 1.25.13.
+
 Run the complete local gates:
 
 ```bash
 make test                 # go test ./... -race -cover
 make lint                 # go vet plus pinned golangci-lint
 make build                # host-toolchain development binary
-make release VERSION=v0.4.0 # packaged linux/arm64 in pinned Go 1.25.12 container
+make release VERSION=v0.4.0 # packaged linux/arm64 in pinned Go 1.25.13 container
 ```
 
 Useful focused commands for the unified domains:
@@ -30,7 +35,7 @@ go test ./internal/mcptools -run TestRegister -race -v
 go test ./internal/icloud -run TestExpandOccurrences -race -v
 ```
 
-Native fuzz targets are mandatory in all five parser/security packages:
+All five parser and security packages must have native fuzz targets:
 
 | Package | Targets |
 |---------|---------|
@@ -40,7 +45,7 @@ Native fuzz targets are mandatory in all five parser/security packages:
 | `./internal/mail` | `FuzzParseRecipientPolicy`, `FuzzDecodePlainBody` |
 | `./internal/mail/imapadapter` | `FuzzIMAPInboundGuard`, `FuzzCompactUIDSetExpansion` |
 
-Run every target in all five packages with the same discovery loop used by CI:
+Use the CI discovery loop to run each target in all five packages:
 
 ```bash
 for package in ./internal/icloud ./internal/security ./internal/contacts ./internal/mail ./internal/mail/imapadapter; do
@@ -56,7 +61,7 @@ done
 |-------|----------|----------|
 | Configuration | `internal/config`, `cmd/icloud-mcp` | strict booleans, all capability combinations, child-gate errors, file secrets, Mail fallback, recipient policy, optional client construction |
 | Calendar unit/fake DAV | `internal/icloud` | discovery, REPORT, iCalendar, recurrence work budgets, free slots, conditional PUT/DELETE, read-only retries, ambiguous mutation outcomes, limits |
-| Contacts fake CardDAV | `internal/contacts` | lazy discovery, redirects/hrefs, XML/vCard bounds, server-prefilter plus combined local search, phone all-card path, vCard 3.0/4.0, ETag CRUD, outcome classification |
+| Contacts fake CardDAV | `internal/contacts` | Lazy discovery, redirects/hrefs, and XML/vCard bounds.<br>Server prefilter, combined local search, phone all-card path, vCard 3.0/4.0, ETag CRUD, and outcome classification. |
 | IMAP adapter | `internal/mail/imapadapter` | fresh login sessions, username fallback, protocol guard, BODYSTRUCTURE, PEEK, MOVE/UIDPLUS commands |
 | Mail service/fake sessions | `internal/mail` | UIDVALIDITY, UID-window search, MIME output, flag/move/trash safety, SMTP recipient and failure matrices |
 | MCP contract | `internal/mcptools` | schemas, handlers, exact registration counts, capability manifest, audit/error/redaction paths |
@@ -64,12 +69,15 @@ done
 | MCP end-to-end | in-process MCP client | `tools/list`, global read-only, domain combinations, capabilities, panic redaction |
 | Integration | root `integration_test.go`, build tag `integration` | real iCloud Calendar reads, opt-in Contacts reads/CRUD, explicitly gated Mail reads/mutation/self-send with exact fixture cleanup, local validation/free slots |
 
-Handlers are concurrent, so all domain and MCP packages should be tested with
-`-race`. Exact-cap and cap-plus-one cases are important for DAV bodies, vCards,
-IMAP session data, MIME sections, SMTP messages, and serialized results.
-They also cover the 1 MiB stdio frame, 64 KiB reflected-error threshold, 256 KiB
-Calendar/MCP result budget, 1 MiB SMTP inbound budget, XML/IMAP/MIME parser
-depth and item caps, and per-series/aggregate recurrence work budgets.
+Handlers run concurrently. Thus, test all domain and MCP packages with `-race`.
+Test values at each exact limit and one unit above it. This rule applies to DAV
+bodies, vCards, IMAP session data, MIME sections, SMTP messages, and serialized
+results.
+
+These tests also cover the 1 MiB stdio frame and 64 KiB reflected-error limit.
+They cover the 256 KiB Calendar and MCP result limit. They also cover the 1 MiB
+SMTP inbound limit. Parser tests cover XML, IMAP, and MIME depth and item limits.
+Recurrence tests cover per-series and total work limits.
 
 ## Capability matrix tests
 
@@ -79,9 +87,10 @@ The five booleans are:
 `ICLOUD_MCP_ENABLE_MAIL`, `ICLOUD_MCP_ENABLE_MAIL_WRITE`, and
 `ICLOUD_MCP_ENABLE_MAIL_SEND`.
 
-Configuration and registration tests cover their combinations, including child
-flags without Mail, missing SMTP recipient policy, global read-only suppression,
-and exact tool inventories. Important expected counts are:
+Configuration and registration tests cover these combinations. They include child
+flags without Mail and a missing SMTP recipient policy. They also include global
+read-only suppression and exact tool inventories. The important expected counts
+are:
 
 | Scenario | Count |
 |----------|-------|
@@ -91,9 +100,9 @@ and exact tool inventories. Important expected counts are:
 | Calendar plus Mail read | 13 |
 | All domains and all mutation/send capabilities | 23 |
 
-`icloud_capabilities.tools` and `toolCount` must match the actual server
-inventory. Disabled tools must be absent, not installed as handlers that return
-`feature_disabled`.
+`icloud_capabilities.tools` and `toolCount` must match the server inventory.
+Disabled tools must be absent. Do not install handlers that return
+`feature_disabled` for them.
 
 ## Mutation safety properties
 
@@ -105,36 +114,39 @@ Calendar and Contacts:
 - `dry_run` records no PUT/DELETE.
 - Contacts vCard 3.0 update preserves opaque fields; vCard 4.0 and groups remain
   read-only.
-- A known successful PUT followed by failed normalization GET is successful with
-  `resultIncomplete`, not ambiguous.
-- Calendar retries reads only. No PUT, DELETE, or full-series delete is replayed;
-  ambiguous dispatched mutations return `outcome_unknown`.
+- A known successful PUT can have a failed normalization GET. This result stays
+  successful with `resultIncomplete` and is not ambiguous.
+- Calendar retries only reads. It never repeats PUT, DELETE, or full-series
+  delete. An ambiguous dispatched mutation returns `outcome_unknown`.
 
 Mail:
 
 - Search/get reads use read-only SELECT (EXAMINE) and PEEK.
-- Every message reference includes UIDVALIDITY, and mismatch occurs before
-  mutation.
+- Each message reference includes UIDVALIDITY. A mismatch occurs before mutation.
 - A CONDSTORE server cannot receive unconditional STORE when MODIFIED detection
-  is unavailable. The beta.8 path returns `protocol_error` before STORE and does
-  not claim `concurrent_modification`.
+  is unavailable.
+- The beta.8 path returns `protocol_error` before STORE. It does not report
+  `concurrent_modification`.
 - Non-CONDSTORE flag writes are delta-only and cannot set Deleted or keywords.
 - Move uses native UID MOVE or a UIDPLUS-only one-message fallback; plain
   EXPUNGE is impossible.
 - Trash requires exactly one selectable SPECIAL-USE Trash target.
-- All SMTP recipients pass the local policy before dial, all RCPT commands pass
-  before DATA, Bcc is absent from message headers, each of `to`/`cc`/`bcc` is
-  optional, and the aggregate recipient set is non-empty.
-- No SMTP retry occurs, and a non-definitive post-DATA failure maps to
+- All SMTP recipients pass the local policy before connection. All RCPT commands
+  pass before DATA. Message headers exclude Bcc.
+- Each of `to`, `cc`, and `bcc` is optional. Together, they contain at least one
+  recipient.
+- SMTP does not retry. An ambiguous failure after DATA maps to
   `outcome_unknown`.
 
 ## CI gates
 
-`.github/workflows/ci.yml` runs formatting, vet, pinned golangci-lint, race tests
-with a 78% aggregate coverage threshold, `govulncheck`, module
-verification/tidy checks, fuzz smoke for every target in all five packages,
-multi-architecture builds, a 20 MiB binary budget, gitleaks, and security source
-guards. Package coverage floors are:
+`.github/workflows/ci.yml` runs formatting, vet, and pinned golangci-lint. It
+runs race tests with a 78% total coverage threshold. It also runs
+`govulncheck`, module verification, and tidy checks.
+
+CI runs a fuzz smoke test for each target in all five packages. It builds for
+multiple architectures and applies a 20 MiB binary limit. It also runs gitleaks
+and security source guards. Package coverage floors are:
 
 | Package | Floor |
 |---------|-------|
@@ -149,24 +161,28 @@ guards. Package coverage floors are:
 | `cmd/icloud-mcp` | 55% |
 
 Tag releases publish only after the CI and gitleaks jobs succeed on the same
-ref (`release` job in `.github/workflows/ci.yml`). GitHub archives use
-`make release-all` with Go 1.25.12 pinned (`check-latest: false`). Local
-`make release` remains the digest-pinned container path for linux/arm64.
-CI also smoke-builds `windows/amd64` (not packaged in GitHub Release archives).
+ref. See the `release` job in `.github/workflows/ci.yml`. GitHub archives use
+`make release-all` with Go 1.25.13 pinned. The setting is
+`check-latest: false`.
+
+Local `make release` remains the digest-pinned container path for linux/arm64.
+CI also smoke-builds `windows/amd64`. GitHub Release archives do not contain
+that build.
 
 Live iCloud credentials and the `integration` build tag are never used in CI.
 
 ## Real iCloud integration
 
-The checked-in build-tagged suite always exercises Calendar reads and local
-Calendar calculations when credentials are valid. Contacts and Mail cases have
-additional product-domain opt-ins. Contacts CRUD also has a test-only write
-opt-in. The Mail mutation/send test has additional product write/send gates,
-global read-only must be explicitly false, and a test-only self-recipient gate
-must match an exact non-wildcard recipient policy.
+With valid credentials, the checked-in build-tagged suite always tests Calendar
+reads and local Calendar calculations. Contacts and Mail tests have additional
+product-domain gates. Contacts CRUD also has a test-only write gate.
 
-These live tests are opt-in, credentialed, and never run in CI. A green unit
-suite alone is not evidence of a live iCloud run.
+The Mail mutation and send test has additional product write and send gates.
+Global read-only must be explicitly false. A test-only self-recipient gate must
+match an exact recipient policy. This policy cannot contain a wildcard.
+
+These live tests are optional, use credentials, and never run in CI. Passing unit
+tests do not prove that a live iCloud run occurred.
 
 ### Calendar integration command
 
@@ -180,8 +196,8 @@ export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'
 go test -tags=integration -count=1 -v -timeout=120s .
 ```
 
-`file://` values are also supported (regular file, at most 4 KiB, mode 0600 or
-stricter):
+You can also use `file://` values. Use a regular file of 4 KiB or less, with mode
+0600 or stricter:
 
 ```bash
 export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
@@ -190,8 +206,8 @@ export ICLOUD_PASSWORD='file:///run/secrets/icloud-password'
 go test -tags=integration -count=1 -v -timeout=120s .
 ```
 
-Without valid credentials the integration test skips or fails at Calendar
-discovery. Never weaken TLS or an allowlist to make a live test pass.
+Without valid credentials, the integration test skips or fails during Calendar
+discovery. Never weaken TLS or an allowlist to pass a live test.
 
 ### Optional-domain read integration
 
@@ -215,18 +231,21 @@ export ICLOUD_MAIL_PASSWORD='dedicated-mail-app-password'
 go test -tags=integration -count=1 -v -timeout=120s .
 ```
 
-Contacts integration discovers/lists books, performs a bounded search, and gets
-one existing contact when available. Mail integration lists selectable
-mailboxes, searches up to four candidates, gets one message twice, and verifies
-that Seen is unchanged. The Contacts enable flag is the live integration gate;
-without it the Contacts tests skip.
+Contacts integration discovers and lists books. It runs a bounded search and
+gets one existing contact when available. Mail integration lists selectable
+mailboxes and searches at most four candidates. It gets one message twice and
+verifies that Seen does not change.
+
+The Contacts enable flag is the live integration gate. Without it, the Contacts
+tests skip.
 
 ### Explicit write opt-ins
 
 `ICLOUD_MCP_INTEGRATION_WRITES` and
-`ICLOUD_MCP_INTEGRATION_SELF_RECIPIENT` are test-harness variables, not part of
-the binary's 12-variable product contract. The harness accepts the write opt-in
-only when its trimmed value equals `true`, case-insensitively.
+`ICLOUD_MCP_INTEGRATION_SELF_RECIPIENT` are test harness variables. They are not
+part of the binary's 12-variable product contract. The harness removes
+surrounding spaces from the write gate. It accepts the gate only when its value
+equals `true`, without case sensitivity.
 
 Contacts CRUD requires all of:
 
@@ -238,12 +257,16 @@ go test -tags=integration -run=TestIntegration_ContactsCreateUpdateDelete \
   -count=1 -v -timeout=5m .
 ```
 
-The test selects a discovered vCard 3.0 writable book, creates one uniquely
-identified contact with independent opaque random `FN`, structured `N`, `EMAIL`,
-`TEL`, and `ORG` values. It checks `query` matching for `FN`, `N`, `EMAIL`, and
-`ORG`, the exact email filter, a digits-only phone filter, and a UID read before
-update. It defers deletion of only the generated UID. Logs contain fixed labels,
-booleans, and counts, never fixture values or live contact data.
+The test selects a discovered writable book that supports vCard 3.0. It creates
+one contact with a unique identity. The contact has independent opaque random
+`FN`, structured `N`, `EMAIL`, `TEL`, and `ORG` values.
+
+The test checks `query` matching for `FN`, `N`, `EMAIL`, and `ORG`. It checks the
+exact email filter and a digits-only phone filter. It also reads the UID before
+update. Deferred cleanup deletes only the generated UID.
+
+Logs contain fixed labels, Boolean values, and counts. They never contain
+fixture values or live contact data.
 
 The Mail mutation/send gate test requires all of:
 
@@ -261,33 +284,45 @@ go test -tags=integration -run=TestIntegration_MailMutationAndSend \
   -count=1 -v -timeout=10m .
 ```
 
-All five boolean values shown above must be explicitly set to the shown values.
-The self-recipient must exactly equal the normalized configured Mail address and
-must be allowed by an exact product SMTP policy; literal `*` is rejected. Before
-SMTP, the test also requires a complete mailbox list and exactly one selectable
-SPECIAL-USE Trash mailbox so cleanup has a safe target.
+Set all five Boolean values above explicitly to the shown values. The
+self-recipient must equal the normalized configured Mail address. An exact
+product SMTP policy must permit this address. The test rejects the literal `*`.
 
-The test builds the full Mail service with the fixed security IMAP/SMTP dialers
-and a separately parsed recipient policy. It submits one opaque plain-text
-self-message, asserts the SMTP accepted and recipient outcome model, polls every
-selectable mailbox with independent opaque subject/body queries, and verifies
-UIDVALIDITY plus Seen preservation. It exercises flag add/remove when safe. On a
-CONDSTORE server, the deliberate beta.8 `protocol_error` path is accepted only
-after a read proves that no flag changed.
+Before SMTP, the test also requires a complete mailbox list. It requires exactly
+one selectable SPECIAL-USE Trash mailbox. This mailbox gives cleanup a safe
+target.
 
-Move prefers a distinct selectable SPECIAL-USE Archive mailbox, then another
-non-Trash destination, re-finds the fixture by opaque query, and moves it to
-Trash. A missing optional destination or safe move capability skips only that
-subtest after submission. Deferred cleanup searches every selectable mailbox
-for remaining fixture copies and moves each one to Trash; it never uses permanent
-delete or plain EXPUNGE. Logs contain fixed labels, booleans, and counts, not
+The test builds the full Mail service with the fixed security IMAP and SMTP
+dialers. It parses the recipient policy separately. Then, it submits one opaque
+plain-text self-message. It verifies the SMTP accepted and recipient outcome
+model.
+
+The test polls each selectable mailbox with independent opaque subject and body
+queries. It verifies UIDVALIDITY and makes sure that Seen does not change. It
+tests flag addition and removal when safe.
+
+On a CONDSTORE server, the test permits the deliberate beta.8 `protocol_error`
+path. It first reads the flags to prove that none changed.
+
+Move first selects a distinct selectable SPECIAL-USE Archive mailbox. If none is
+available, it selects another destination that is not Trash. It finds the
+fixture again with an opaque query and moves it to Trash.
+
+A missing optional destination or safe move capability skips only that subtest
+after submission. Deferred cleanup searches each selectable mailbox for fixture
+copies. It moves each copy to Trash. It never uses permanent delete or plain
+EXPUNGE.
+
+Logs contain fixed labels, Boolean values, and counts. They do not contain
 addresses, subjects, message IDs, bodies, or mailbox names.
 
-SMTP `accepted` confirms server acceptance, not final delivery. Polling and
-cleanup are bounded, so a copy materialized only after the cleanup window may
-remain. Successful cleanup intentionally leaves the disposable fixture in Trash
-because the product exposes no permanent-delete operation.
+SMTP `accepted` confirms server acceptance. It does not confirm final delivery.
+Polling and cleanup have limits. Thus, a copy that appears after the cleanup
+window can remain.
 
-Revoke the app-specific password after testing when it was created solely for
-the run. Never commit credentials, raw DAV/vCard/MIME captures, mailbox content,
-recipient lists, or live resource identifiers.
+Successful cleanup intentionally leaves the disposable fixture in Trash. The
+product has no permanent-delete operation.
+
+Revoke the app-specific password after testing if you created it only for this
+run. Never commit credentials, raw DAV, vCard, or MIME captures. Never commit
+mailbox content, recipient lists, or live resource identifiers.

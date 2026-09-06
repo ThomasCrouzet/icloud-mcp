@@ -413,10 +413,10 @@ func incrementSequence(vevent *ical.Event) error {
 	return nil
 }
 
-// setEventDateProp sets a start/end property while preserving the existing
-// value form: VALUE=DATE stays DATE, TZID stays TZID with local wall clock,
-// UTC (Z) stays Z. Never strip TZID to Z on a timed update (that shifts
-// wall-clock intent across DST and leaves orphan VTIMEZONE components).
+// setEventDateProp sets a start or end property and preserves its value form.
+// VALUE=DATE stays DATE. TZID keeps its local wall clock, and UTC stays Z. A
+// timed update must not replace TZID with Z. That change shifts wall-clock
+// intent across DST and leaves orphan VTIMEZONE components.
 // Unknown TZIDs fail closed so wall times are never silently reinterpreted.
 func setEventDateProp(vevent *ical.Event, name string, t time.Time) error {
 	existing := vevent.Props.Get(name)
@@ -656,9 +656,9 @@ func validateRemoteCalendar(cal *ical.Calendar) error {
 	return nil
 }
 
-// validateCalendarObjectIdentity enforces the VEVENT object model relied on by
-// get and mutation paths: one master, zero or more overrides, and one UID for
-// the complete resource. Messages intentionally omit all remote values.
+// validateCalendarObjectIdentity enforces the VEVENT model for get and
+// mutation paths. A complete resource has one master, zero or more overrides,
+// and one UID. Messages intentionally omit all remote values.
 func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) error {
 	if cal == nil {
 		return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)

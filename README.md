@@ -4,22 +4,25 @@
 [![Release](https://img.shields.io/github/v/release/ThomasCrouzet/icloud-mcp)](https://github.com/ThomasCrouzet/icloud-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Unified **Apple/iCloud** MCP server for **Calendar, Contacts, and Mail**: one
-static Go binary, [Model Context Protocol](https://modelcontextprotocol.io)
-JSON-RPC on **stdio**.
+This unified **Apple/iCloud** MCP server supports **Calendar, Contacts, and
+Mail**. It is one static Go binary. It uses
+[Model Context Protocol](https://modelcontextprotocol.io) JSON-RPC on **stdio**.
 
-**Remote protocols only** (CalDAV, CardDAV, IMAP, SMTP with app-specific
-passwords). Not macOS EventKit, AppleScript, browser automation, or a private
-Apple API. Runs headless on Linux and macOS; pure Go also builds for Windows
-(CI smoke-builds `windows/amd64`; GitHub Release archives ship linux/amd64,
-linux/arm64, and darwin/arm64). Suitable for agents and orchestration, not only
-a desktop chat app.
+The server uses only remote protocols: CalDAV, CardDAV, IMAP, and SMTP with
+app-specific passwords. It does not use macOS EventKit, AppleScript, browser
+automation, or a private Apple API. It runs headless on Linux and macOS. Pure
+Go also builds for Windows.
 
-**Host-agnostic.** Any MCP client that can spawn a child with an environment and
-wire stdin/stdout works: personal agents, Hermes, OpenClaw, IDE bridges,
-runners, or other stdio hosts. No preferred model vendor, chat product, or
-reseller. Configuration is the process environment only; the binary does not
-parse host-specific config files or `.env`.
+CI runs a `windows/amd64` smoke build. GitHub Release archives contain
+linux/amd64, linux/arm64, and darwin/arm64 builds. Agents, orchestrators, and
+desktop chat applications can use the server.
+
+**Host-agnostic.** Any MCP client can use the server if it starts child processes
+with an environment and connects stdin and stdout. Compatible clients include
+personal agents, Hermes, OpenClaw, IDE bridges, runners, and other stdio hosts.
+The server does not prefer a model vendor, chat product, or reseller. Configure
+the server only through its process environment. The binary does not parse
+host-specific config files or `.env`.
 
 | Domain | Protocol | Default |
 |--------|----------|---------|
@@ -29,9 +32,9 @@ parse host-specific config files or `.env`.
 | Mail mutation | IMAP | Off until Mail + `ICLOUD_MCP_ENABLE_MAIL_WRITE` |
 | Mail send | SMTP STARTTLS | Off until Mail + `ICLOUD_MCP_ENABLE_MAIL_SEND` + recipient policy |
 
-Reminders, Notes, Photos, Drive, Messages, and similar apps are **out of scope**
-until Apple documents a suitable remote third-party connector. Details:
-[Supported scope](#supported-scope).
+Reminders, Notes, Photos, Drive, Messages, and similar apps are **out of scope**.
+They remain out of scope until Apple documents a suitable remote third-party
+connector. See [Supported scope](#supported-scope).
 
 ## Quick start
 
@@ -42,9 +45,10 @@ go install github.com/ThomasCrouzet/icloud-mcp/cmd/icloud-mcp@latest
 # or: make release-all VERSION=v0.4.0
 ```
 
-1. Create an [app-specific password](https://appleid.apple.com) (never the main
-   Apple Account password).
-2. Export a minimal environment (recommended first deploy: Calendar **read-only**):
+1. Create an [app-specific password](https://appleid.apple.com). Never use the
+   main Apple Account password.
+2. Export a minimal environment. For the first deployment, use Calendar
+   **read-only** mode:
 
 ```bash
 export ICLOUD_EMAIL='you@icloud.com'
@@ -53,13 +57,14 @@ export ICLOUD_MCP_READ_ONLY=true
 export ICLOUD_MCP_DEFAULT_TZ=Europe/Paris   # owner IANA zone; default UTC
 ```
 
-3. Register **command** = absolute path to `icloud-mcp` and this **env** in your
-   MCP host (YAML, JSON, TOML, UI, or orchestrator; format is host-specific).
-4. Stdio = JSON-RPC; **stderr** = logs and mutation audit. Reload the host after
-   env changes.
+3. Register the absolute `icloud-mcp` path as the **command** in your MCP host.
+   Register the environment as **env**. The host can use YAML, JSON, TOML, a UI,
+   or an orchestrator. The exact format depends on the host.
+4. Stdio carries JSON-RPC. **stderr** carries logs and the mutation audit.
+   Reload the host after environment changes.
 
-With that config the process exposes **7 tools** (Calendar reads + local
-helpers + `icloud_capabilities`). No Contacts or Mail client is constructed.
+This configuration exposes **7 tools**: Calendar reads, local helpers, and
+`icloud_capabilities`. The process does not construct a Contacts or Mail client.
 
 Optional domains (still host-agnostic `export` form):
 
@@ -81,8 +86,9 @@ export ICLOUD_MCP_ENABLE_MAIL_SEND=true
 export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com,bob@example.net'
 ```
 
-Boot-only `file://` secrets (regular files only, at most 4 KiB, mode 0600 or
-stricter; never re-read after start):
+You can load secrets from `file://` only at boot. Each file must be a regular
+file of at most 4 KiB with mode 0600 or stricter. The server does not read the
+file again after startup:
 
 ```bash
 export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
@@ -95,8 +101,8 @@ See [.env.example](.env.example) for the full 12-variable contract.
 
 ## MCP tools
 
-Maximum **23** tools. Disabled tools are absent from `tools/list`; disabled
-domain clients are not constructed.
+The server exposes a maximum of **23** tools. Disabled tools are absent from
+`tools/list`. The process does not construct clients for disabled domains.
 
 | Count | When |
 |------:|------|
@@ -118,22 +124,27 @@ mutation, and Mail send. It does not enable a disabled read domain.
 | Mail mutation | `set_message_flags`, `move_message`, `trash_message` |
 | Mail send | `send_message` |
 
-**Highlights:** occurrence-aware Calendar update/delete with strong `If-Match`;
-Contacts opaque book IDs and vCard 3.0 writes; Mail identity
-`(mailbox, UIDVALIDITY, UID)`, PEEK reads, SMTP exact-recipient policy.
-`set_message_flags` fails closed with `protocol_error` when CONDSTORE is
-advertised and tagged MODIFIED cannot be observed (go-imap beta.8). Full
-behavior notes: [docs/caldav-compatibility.md](docs/caldav-compatibility.md),
+**Highlights:** Calendar update and delete operations understand occurrences
+and use strong `If-Match`. Contacts uses opaque book IDs and writes vCard 3.0.
+Mail uses `(mailbox, UIDVALIDITY, UID)` identities, PEEK reads, and an exact
+recipient policy for SMTP. `set_message_flags` fails closed with
+`protocol_error` when CONDSTORE is advertised. This occurs because go-imap
+beta.8 cannot observe tagged MODIFIED. See the full behavior notes:
+[docs/caldav-compatibility.md](docs/caldav-compatibility.md),
 [docs/carddav-compatibility.md](docs/carddav-compatibility.md),
 [docs/mail-compatibility.md](docs/mail-compatibility.md).
 
-**Idempotency:** `create_event` / `create_contact` use server-side UID keys
-(`client_uid` or alias `idempotency_key`): a repeat create conflicts if the UID
-already exists (never silent overwrite). `update_event` / `update_contact`
-optional `idempotency_key` is **process-local only** (in-memory cache, **15
-minute TTL**, cleared on process restart). Same key + same params returns the
-cached success; same key + different params is `conflict`. Prefer combining
-update keys with a strong `etag`. See [docs/error-codes.md](docs/error-codes.md).
+**Idempotency:** `create_event` and `create_contact` use server-side UID keys.
+Use `client_uid` or its `idempotency_key` alias. A repeated create conflicts if
+the UID exists. It never silently overwrites the object. The optional
+`idempotency_key` for `update_event` and `update_contact` is
+**process-local only**. Its in-memory cache has a **15 minute TTL** and clears
+when the process restarts.
+
+The same key and parameters return the cached success. The same key with
+different parameters returns `conflict`. Combine an update key with a strong
+`etag` when possible. See
+[docs/error-codes.md](docs/error-codes.md).
 
 ## Configuration
 
@@ -142,40 +153,48 @@ Exactly **12** product environment variables:
 | Variable | Default | Contract |
 |----------|---------|----------|
 | `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported (regular file, <=4 KiB, mode 0600+). |
-| `ICLOUD_PASSWORD` | none | Required app-specific password; Mail fallback. `file://` as above. |
+| `ICLOUD_PASSWORD` | none | Required app-specific password. Mail uses it as a fallback. `file://` as above. |
 | `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
-| `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level; accepted forms are documented below. |
+| `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
-| `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools; writes only if not read-only. |
-| `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads; requires Mail address/password. |
+| `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools. Writes require read-only mode to be off. |
+| `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads. Requires a Mail address and password. |
 | `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
 | `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Three IMAP mutation tools. |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` (independent of Mail write). |
-| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send requested: exact addresses, or literal `*` (boot warning; prefer exact). |
+| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send is on. Use exact addresses or literal `*`. Literal `*` causes a boot warning. Use exact addresses when possible. |
 
-Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values fail at
-boot. Config is validated **before** any network access: Mail write/send without
-Mail, Mail without address/password, or send without recipient policy are boot
-errors (including under read-only for the send policy). Global read-only can
-coexist with write/send flags but suppresses their registration.
+Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
+boot failure. The server validates the configuration **before** network access.
+Mail write or send without Mail causes a boot error. Mail without an address or
+password also causes a boot error. Send without a recipient policy causes a
+boot error, including in read-only mode.
 
-Log levels are trimmed and case-insensitive: `debug`/`-4`, `info`,
-`warn`/`warning`/`2`, and `error`/`4`. Unset or unrecognized values use `info`.
+Global read-only can coexist with write and send flags, but it prevents their
+registration.
 
-Flags: `-version`; optional `-health 127.0.0.1:port` (loopback-only `/healthz`
-and `/status` JSON with domains and rate limits); optional
-`-audit-format=json|text` (default `json` mutation audit on stderr).
+The server trims log levels and ignores case. It accepts `debug` or `-4`,
+`info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized
+values use `info`.
+
+Use `-version` to print the version. The optional
+`-health 127.0.0.1:port` flag serves `/healthz` and `/status` on loopback. Both
+endpoints return JSON with domains and rate limits. The optional
+`-audit-format=json|text` flag selects the mutation audit format on stderr.
+The default format is `json`.
 
 ### Dates
 
-- Calendar **input** `start`/`end`: RFC3339 with offset, or wall clock without
-  offset in `ICLOUD_MCP_DEFAULT_TZ`. Prefer no-offset for the user's local time.
-  Recurring or explicit-timezone creates write TZID + VTIMEZONE; non-recurring
-  timed defaults to UTC `Z` on the wire. All-day uses `VALUE=DATE`.
-- Calendar **output**: timed events always use RFC3339 with an explicit numeric
-  offset in `ICLOUD_MCP_DEFAULT_TZ` (never bare `Z`). All-day dates are
-  `YYYY-MM-DD`. See `calendar_capabilities.outputFormat`.
+- Calendar **input** `start` and `end` accept RFC3339 with an offset. They also
+  accept wall-clock values without an offset in `ICLOUD_MCP_DEFAULT_TZ`. Use
+  values without an offset for the user's local time. Recurring creates and
+  creates with an explicit timezone write TZID and VTIMEZONE. Non-recurring
+  timed creates default to UTC `Z` on the wire. All-day creates use
+  `VALUE=DATE`.
+- Calendar **output** uses RFC3339 for timed events. It always includes an
+  explicit numeric offset in `ICLOUD_MCP_DEFAULT_TZ`, never bare `Z`. All-day
+  dates use `YYYY-MM-DD`. See `calendar_capabilities.outputFormat`.
 - Contacts birthdays: write `YYYY-MM-DD` only.
 - Mail search: `since` inclusive, `before` exclusive (`YYYY-MM-DD`).
 
@@ -185,25 +204,29 @@ Host wiring examples: [docs/agent-hosts.md](docs/agent-hosts.md). Product roadma
 
 ## Security (summary)
 
-Untrusted remote text can influence an LLM on the host; labels are not a
-boundary. A compromised model can call every **registered** tool. Same model for
-every host and vendor.
+Untrusted remote text can influence an LLM on the host. Labels do not form a
+security boundary. A compromised model can call every **registered** tool. This
+risk applies to every host and vendor.
 
-- **Egress fixed:** Calendar `caldav.icloud.com` / `p[0-9]{1,3}-caldav.icloud.com:443`;
-  Contacts matching contacts hosts; IMAP `imap.mail.me.com:993`; SMTP
-  `smtp.mail.me.com:587` with mandatory STARTTLS. No configurable destinations,
-  no proxy env for DAV, TLS 1.2+ verified.
-- **Isolation:** separate credentials, transports/dialers, limiters, semaphores,
-  and protocol stacks per domain; no union authenticated HTTP client.
-- **Secrets:** redacted (including Basic and SASL PLAIN forms); boot-only
-  `file://` reads require mode 0600 or stricter; no `os/exec`, telemetry, or
-  disk write after boot.
-- **Audit:** mutations log `domain`, `resourceType`, process-local HMAC
-  `resourceToken` only (never raw paths, UIDs, mailboxes, recipients).
-- **Residual risk:** one process holds every enabled domain's credentials;
-  feature flags do not remove compiled code. Prefer read-only, least domains,
-  dedicated Mail password, or separate processes when stronger isolation is
-  required.
+- **Egress fixed:** Calendar uses `caldav.icloud.com` and matching
+  `p[0-9]{1,3}-caldav.icloud.com:443` hosts. Contacts uses matching Contacts
+  hosts. IMAP uses `imap.mail.me.com:993`. SMTP uses
+  `smtp.mail.me.com:587` with mandatory STARTTLS. Destinations are not
+  configurable. The server ignores DAV proxy environment variables and verifies
+  TLS 1.2 or later.
+- **Isolation:** each domain has separate credentials, transports, dialers,
+  limiters, semaphores, and protocol stacks. No authenticated HTTP client
+  connects to multiple domains.
+- **Secrets:** the server removes secrets, including Basic and SASL PLAIN forms.
+  Boot-only `file://` reads require mode 0600 or stricter. The server does not
+  use `os/exec` or telemetry. It does not write to disk after boot.
+- **Audit:** mutation logs include `domain`, `resourceType`, and the process-local
+  HMAC `resourceToken`. They never contain raw paths, UIDs, mailboxes, or
+  recipients.
+- **Residual risk:** one process holds credentials for all enabled domains.
+  Feature flags do not remove compiled code. For stronger isolation, use
+  read-only mode and enable fewer domains. You can also use a dedicated Mail
+  password or separate processes.
 
 Full policy: [SECURITY.md](SECURITY.md), [docs/security.md](docs/security.md).
 Architecture: [docs/architecture.md](docs/architecture.md).
@@ -213,14 +236,15 @@ Architecture: [docs/architecture.md](docs/architecture.md).
 | | |
 |--|--|
 | Tool deadline | 25s (DAV HTTP 30s) |
-| Stdio / MCP result | 1 MiB frame; 256 KiB result; reflected protocol errors capped |
-| Calendar | 366-day search; 400 returned / 2,500 per calendar / 10,000 multi-calendar materialization; 2,000 expansions / 100k steps per series / 250k steps per search; 60 read / 20 write per minute; concurrency 4 / 2 |
-| Contacts | 100 books; 100 summaries; 2000 cards scanned; 60/20 per minute; concurrency 4 |
-| Mail | 60 read / 20 mutation / 20 send per minute; semaphores 2 / 1 / 1; no mutation/send retry |
-| Writes | No automatic replay of Calendar PUT/DELETE, Contacts writes, IMAP mutations, or SMTP; ambiguous outcomes use `outcome_unknown` |
+| Stdio / MCP result | 1 MiB frame. 256 KiB result. Reflected protocol errors have a limit. |
+| Calendar | Search range: 366 days. Results: 400 total, 2,500 per calendar, and 10,000 materialized across calendars. Recurrence: 2,000 expansions, 100k steps per series, and 250k steps per search. Rate: 60 reads and 20 writes per minute. Concurrency: 4 reads and 2 writes. |
+| Contacts | 100 books. 100 summaries. 2000 cards scanned. Rate: 60 reads and 20 writes per minute. Concurrency: 4. |
+| Mail | Rate: 60 reads, 20 mutations, and 20 sends per minute. Semaphores: 2 reads, 1 mutation, and 1 send. No mutation or send retry. |
+| Writes | No automatic replay of Calendar PUT/DELETE, Contacts writes, IMAP mutations, or SMTP. Ambiguous outcomes use `outcome_unknown`. |
 
-Lifecycle: eager Calendar discovery at boot; lazy Contacts discovery; fresh
-IMAP/SMTP session per call. Rates, XML/iCal/vCard/MIME budgets, and retry rules:
+The server discovers Calendar at boot and Contacts when first used. Each call
+uses a fresh IMAP or SMTP session. See these documents for rates, parser
+budgets, and retry rules:
 [docs/testing.md](docs/testing.md), [docs/architecture.md](docs/architecture.md).
 
 ## Supported scope
@@ -232,21 +256,23 @@ IMAP/SMTP session per call. Rates, XML/iCal/vCard/MIME budgets, and retry rules:
 | Mail read / mutation / send | IMAP + SMTP | Optional, independently gated |
 | Modern Reminders, Notes, Photos, Drive, Find My, Keychain, Messages, Home | No suitable official remote connector for this model | Excluded |
 
-Modern Reminders are not treated as generic CalDAV VTODO. Apple's third-party
-documentation for this class of access covers Mail, Calendar, and Contacts.
+The server does not treat modern Reminders as generic CalDAV VTODO. Apple's
+third-party documentation for this type of access covers Mail, Calendar, and
+Contacts.
 
-**Multi-account:** one process holds one iCloud identity. Spawn separate
-`icloud-mcp` processes (distinct env, optional distinct `-health` ports) and let
-the MCP host multiplex them. See [docs/agent-hosts.md](docs/agent-hosts.md).
+**Multi-account:** one process holds one iCloud identity. Start a separate
+`icloud-mcp` process for each identity. Give each process a separate environment
+and, if needed, a separate `-health` port. The MCP host can multiplex these
+processes. See [docs/agent-hosts.md](docs/agent-hosts.md).
 
 ## Dependencies
 
-Go 1.25.12 or newer, one module, exactly **10** direct dependencies. Adding
-another requires a written justification here.
+Use Go 1.25.13 or newer. The project has one module and exactly **10** direct
+dependencies. If you add a direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
 |------------|---------------|---------------|
-| `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives; discovery and conditional ops stay hand-rolled |
+| `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
 | `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
 | `github.com/mark3labs/mcp-go` | `v0.57.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
@@ -263,25 +289,30 @@ another requires a written justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.12 image
+make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.13 image
 make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
 
-Release targets reject an unset or `dev` version. Archives contain the binary,
-`LICENSE`, and `THIRD_PARTY_NOTICES.md`; `dist/` also receives a SHA-256
-checksum file. GitHub tag releases run `make release-all` only after CI and
-gitleaks succeed on that tag, with Go pinned to 1.25.12 (`check-latest`
-disabled). Local `make release` remains the digest-pinned container path for
-linux/arm64. Cosign keyless signatures are attached to release blobs. `-version`
-prefers the release ldflags value and falls back to Go module build information,
-so `go install ...@version` reports that module version.
+Release targets reject an unset version or a `dev` version. Archives contain
+the binary, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also
+contains a SHA-256 checksum file. GitHub tag releases run `make release-all`
+only after CI and gitleaks succeed for that tag. They use Go 1.25.13 with
+`check-latest` disabled.
 
-CI: race tests, coverage floors (78% aggregate + package floors including
-`cmd/icloud-mcp` and `internal/health`), fuzz smoke, govulncheck, multi-arch
-build (plus windows/amd64 smoke), egress/security AST guards, gitleaks, 20 MiB
-binary budget, public-text policy on tree and new commits. Live iCloud tests use
-the `integration` build tag, are opt-in, and never run in CI. See
+Local `make release` uses the digest-pinned container path for linux/arm64.
+Release blobs include cosign keyless signatures. `-version` first uses the
+release ldflags value. If this value is absent, it uses Go module build
+information. Thus, `go install ...@version` reports the module version.
+
+CI runs race tests, fuzz smoke, govulncheck, gitleaks, and
+multi-architecture builds. It also checks coverage, egress and security AST
+guards, binary size, and public text. Aggregate coverage must be at least 78%.
+Package floors include `cmd/icloud-mcp` and `internal/health`. The build check
+includes windows/amd64 smoke. The binary budget is 20 MiB.
+
+The public-text policy checks the tree and new commits. Live iCloud tests use
+the `integration` build tag. These tests are optional and never run in CI. See
 [docs/testing.md](docs/testing.md).
 
 ## Attribution

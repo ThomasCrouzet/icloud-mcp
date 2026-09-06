@@ -149,11 +149,10 @@ func TestRedactingWriter_Base64AndURLEncodedForms(t *testing.T) {
 	}
 }
 
-// TestRedactor_RedactsEmail: main.go now registers cfg.Email in the runtime
-// Redactor alongside cfg.Password (neither the password nor the email may
-// ever appear in any output). The generic multi-secret mechanism of Redactor
-// already supported this (see "multiple secrets" above); this test isolates
-// the email case specifically to document that intent.
+// TestRedactor_RedactsEmail verifies that main.go registers cfg.Email and
+// cfg.Password in the runtime Redactor. Output must contain neither value.
+// Redactor already supports multiple secrets. This test isolates the email
+// case and documents that intent.
 func TestRedactor_RedactsEmail(t *testing.T) {
 	email := "user@example.com"
 	r := NewRedactor(email)

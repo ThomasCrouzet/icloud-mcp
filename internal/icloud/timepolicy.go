@@ -12,9 +12,9 @@ import (
 
 // FormatEventTime formats t for MCP JSON responses. All-day dates use
 // YYYY-MM-DD (UTC calendar date). Timed events use RFC3339 with an explicit
-// numeric offset in loc (ICLOUD_MCP_DEFAULT_TZ). When loc is nil, UTC is used
-// and the offset is still written as +00:00 rather than bare Z so agents never
-// see mixed Z vs offset forms.
+// numeric offset in loc (ICLOUD_MCP_DEFAULT_TZ). A nil loc selects UTC. The
+// output still uses +00:00 instead of Z. Thus, agents do not receive mixed Z
+// and offset forms.
 func FormatEventTime(t time.Time, allDay bool, loc *time.Location) string {
 	if t.IsZero() {
 		return ""

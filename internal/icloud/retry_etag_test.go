@@ -97,12 +97,12 @@ func TestClient_DeleteEvent_FailsClosedWithoutETag(t *testing.T) {
 	}
 }
 
-// TestClient_UpdateEvent_Concurrent412PreconditionFailed. Two updates on
-// the SAME UID launched concurrently: both GET the current ETag, both modify,
-// both PUT with If-Match. The mock serializes PUTs under its mutex: the first
-// PUT matches the current ETag and succeeds (bumping it); the second PUT
-// carries the now-stale ETag and MUST receive 412 Precondition Failed. The
-// losing UpdateEvent returns a typed concurrent_modification error.
+// TestClient_UpdateEvent_Concurrent412PreconditionFailed starts two updates
+// for the same UID. Both requests get the current ETag, modify the event, and
+// use If-Match on PUT. The mock serializes the PUT requests with its mutex. The
+// first PUT matches and updates the ETag. The second PUT uses the old ETag and
+// must receive 412 Precondition Failed. Its UpdateEvent returns a typed
+// concurrent_modification error.
 func TestClient_UpdateEvent_Concurrent412PreconditionFailed(t *testing.T) {
 	m := newMockCalDAV(t)
 	objPath := testHomeCalendar + "uid-simple-1.ics"

@@ -111,10 +111,9 @@ func TestParseDateTime_ExplicitOffset(t *testing.T) {
 	}
 }
 
-// TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally locks in that an
-// explicit offset is NEVER reinterpreted through defaultLoc, regardless of
-// what defaultLoc is: it is a deliberate, self-declared choice by the
-// caller (see ParseDateTime's doc comment).
+// TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally verifies that
+// defaultLoc never changes an explicit offset. The caller deliberately selects
+// that offset. See the ParseDateTime documentation.
 func TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally(t *testing.T) {
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -130,15 +129,12 @@ func TestParseDateTime_ExplicitOffsetAlwaysHonoredLiterally(t *testing.T) {
 	}
 }
 
-// TestParseDateTime_NaiveLocalUsesDefaultLocation is the regression lock for
-// the 2026-07-12 timezone incident: the user confirmed 10:00-14:00
-// (Europe/Paris, CEST = UTC+2), but the calling agent sent the offset-bearing
-// form "2026-07-12T10:00:00Z", which iCloud rendered as 12:00, 2h late. The
-// fix is the no-offset local-time form: given the SAME literal hour the
-// agent should now send ("2026-07-12T10:00:00", no "Z"), the server must
-// itself resolve it against defaultLoc (Europe/Paris) to the correct UTC
-// instant (08:00 UTC), instead of requiring the agent to do that
-// DST-arithmetic itself.
+// TestParseDateTime_NaiveLocalUsesDefaultLocation covers the 2026-07-12
+// timezone incident. The user confirmed 10:00 to 14:00 in Europe/Paris, where
+// CEST is UTC+2. The calling agent sent "2026-07-12T10:00:00Z", and iCloud
+// displayed 12:00. The agent must now send the same hour without an offset:
+// "2026-07-12T10:00:00". The server resolves it through defaultLoc to 08:00
+// UTC. The agent does not need to calculate the DST offset.
 func TestParseDateTime_NaiveLocalUsesDefaultLocation(t *testing.T) {
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -174,10 +170,10 @@ func TestParseDateTime_NaiveLocalUsesDefaultLocation(t *testing.T) {
 	}
 }
 
-// TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil covers the
-// defensive nil-safety of ParseDateTime: a caller that fails to wire the
-// configured location must not panic or silently misbehave, it must fall
-// back to the previous strict-UTC behavior.
+// TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil verifies nil
+// handling in ParseDateTime. If a caller omits the configured location, the
+// function must not panic or change behavior silently. It must use the
+// previous strict UTC behavior.
 func TestParseDateTime_NaiveLocalDefaultsToUTCWhenLocationNil(t *testing.T) {
 	got, err := ParseDateTime("start", "2026-07-12T10:00:00", nil)
 	if err != nil {

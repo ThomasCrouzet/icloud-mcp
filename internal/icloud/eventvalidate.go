@@ -58,7 +58,7 @@ type EventInput struct {
 	IdempotencyKey string
 }
 
-// ValidationResult is returned by ValidateEventInput.
+// ValidationResult contains the output from ValidateEventInput.
 type ValidationResult struct {
 	OK         bool             `json:"ok"`
 	Errors     []string         `json:"errors,omitempty"`

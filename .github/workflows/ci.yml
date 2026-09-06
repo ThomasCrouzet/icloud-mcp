@@ -23,13 +23,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Public-text policy walks the PR/push commit range.
+          # The public-text check reads the commits in the pull request or push.
           fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.13'
           check-latest: false
 
       - name: gofmt
@@ -64,7 +64,7 @@ jobs:
           fi
 
           # New commits on this ref must stay English ASCII without automated trailers.
-          # Historical debt on older main commits is not rewritten.
+          # Do not rewrite older commits on main.
           range=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
@@ -97,7 +97,8 @@ jobs:
 
       - name: golangci-lint
         env:
-          GOLANGCI_LINT_VERSION: v2.1.6
+          GOLANGCI_LINT_VERSION: v2.13.2
+          GOTOOLCHAIN: go1.27.1
         run: |
           go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
           "$(go env GOPATH)/bin/golangci-lint" version
@@ -167,7 +168,7 @@ jobs:
 
       - name: govulncheck (go.mod vulnerabilities)
         run: |
-          # Pin a version so CI does not drift on @latest overnight.
+          # Use a fixed version to prevent unexpected CI changes from @latest.
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
 
@@ -196,9 +197,9 @@ jobs:
       - name: fuzz smoke
         run: |
           set -e
-          # Every protocol parser package must keep at least one native target.
-          # Retry once: short -fuzztime smokes can fail closed on Go coordinator
-          # shutdown ("context deadline exceeded") with no crash corpus.
+          # Keep at least one native fuzz target in each protocol parser package.
+          # Retry once. A short -fuzztime check can fail when the Go coordinator stops.
+          # This can return "context deadline exceeded" without a crash corpus.
           run_one_fuzz() {
             package="$1"
             target="$2"
@@ -229,9 +230,9 @@ jobs:
 
       - name: security guardrails
         run: |
-          # Runtime tests cover arbitrary host, scheme, port, redirect, IMAP,
-          # SMTP, and DAV domain isolation. AST tripwires independently enforce
-          # network literals and production side-effect policies.
+          # Runtime tests check arbitrary hosts, schemes, ports, and redirects.
+          # They also check isolation between IMAP, SMTP, and DAV domains.
+          # Separate AST checks enforce network literal and production side-effect policies.
           go test ./internal/security/
 
           checker="${RUNNER_TEMP}/network_literal_guard.go"
@@ -900,7 +901,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.13'
           check-latest: false
 
       - name: Build multi-arch archives
@@ -909,8 +910,7 @@ jobs:
         run: make release-all VERSION=${GITHUB_REF_NAME}
 
       - name: Cosign keyless signatures
-        # Sign before publishing so a Fulcio/Rekor failure never leaves an
-        # unsigned GitHub Release public.
+        # Sign before publication. If Fulcio or Rekor fails, do not publish an unsigned GitHub Release.
         run: |
           set -euo pipefail
           VERSION=2.4.1
@@ -960,9 +960,9 @@ jobs:
 
       - name: gitleaks
         run: |
-          # Official gitleaks binary: no license required (private or public
-          # repo), unlike gitleaks-action@v2. Scan both Git history and the
-          # checked-out worktree, honoring inline "gitleaks:allow" annotations.
+          # The official gitleaks binary needs no license for private or public repositories.
+          # This differs from gitleaks-action@v2.
+          # Scan Git history and the current worktree. Keep inline "gitleaks:allow" annotations.
           VERSION=8.30.1
           EXPECTED_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
           archive="${RUNNER_TEMP}/gitleaks.tar.gz"
@@ -970,9 +970,9 @@ jobs:
           printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
 
-          # These exact fingerprints are old test sentinels committed before
-          # their lines gained gitleaks:allow annotations. Keep the exception
-          # commit-, path-, rule-, and line-specific so every new finding fails.
+          # These fingerprints identify old test values committed before their lines had gitleaks:allow annotations.
+          # Limit each exception to its commit, path, rule, and line.
+          # Every new finding must fail the check.
           ignore="${RUNNER_TEMP}/.gitleaksignore"
           cat >"$ignore" <<'EOF'
           253a3b79789474cb957af5ca820bb5f5dbc46c0c:internal/security/redact_test.go:generic-api-key:22

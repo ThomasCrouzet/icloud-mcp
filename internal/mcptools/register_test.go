@@ -225,11 +225,10 @@ func TestRegister_DeleteEventHasDestructiveAnnotation(t *testing.T) {
 }
 
 func TestRegister_UpdateEventIsNotIdempotentHint(t *testing.T) {
-	// update_event bumps SEQUENCE and rewrites DTSTAMP on every successful
-	// call, and a conditional PUT means a blind retry can hit a 412
-	// concurrent_modification instead of repeating the same effect. The
-	// IdempotentHint annotation must stay false so hosts that auto-retry
-	// idempotent tools do not retry this one.
+	// update_event increments SEQUENCE and rewrites DTSTAMP after each success.
+	// A conditional PUT means that an automatic retry can receive a 412
+	// concurrent_modification error. Keep IdempotentHint false so hosts do not
+	// automatically retry this tool.
 	s := newTestServer(false)
 	c, err := client.NewInProcessClient(s)
 	if err != nil {

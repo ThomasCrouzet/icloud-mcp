@@ -8,14 +8,12 @@ import (
 
 // MockService implements Service for the MCP tools tests (no network).
 //
-// The configuration fields (Calendars, Events, *Err, CreatedUID,
-// DeletedTitle) are expected to be set by the test BEFORE any concurrent
-// call and are only read afterwards; no protection is needed for them. The
-// counters and Last* fields, however, are mutated on EVERY call:
-// GuardedService may invoke these methods from concurrent goroutines
-// (retry/rate-limit), so those writes must be protected by mu (defense
-// against a future race, even if no current test exercises them in
-// parallel).
+// Tests must set the configuration fields before any concurrent call. These
+// fields are Calendars, Events, *Err, CreatedUID, and DeletedTitle. Calls only
+// read them, so they need no protection. In contrast, each call changes the
+// counters and Last* fields. GuardedService can invoke these methods from
+// concurrent goroutines during retries or rate limiting. Thus, mu must protect
+// those writes, even if current tests do not call them in parallel.
 type MockService struct {
 	Calendars []Calendar
 	Events    []Event

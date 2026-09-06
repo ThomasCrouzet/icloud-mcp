@@ -91,11 +91,10 @@ func TestAllowlistTransport_RejectsDisallowedHost(t *testing.T) {
 	}
 }
 
-// stubRoundTripper is a minimal http.RoundTripper performing NO network
-// access, useful to test the AllowlistTransport.RoundTrip logic in
-// isolation, including with a URL without an explicit port (a real
-// httptest.Server always exposes a port, which prevents driving a real
-// network call to an "https://host/" URL without a port).
+// stubRoundTripper is a minimal http.RoundTripper that performs no network
+// access. It isolates the AllowlistTransport.RoundTrip logic. It also permits
+// tests with an "https://host/" URL that has no explicit port. A real
+// httptest.Server always exposes a port and cannot test that case.
 type stubRoundTripper struct {
 	called bool
 	resp   *http.Response
@@ -116,11 +115,9 @@ func newStubResponse() *http.Response {
 
 func TestAllowlistTransport_AllowsWhitelistedHost(t *testing.T) {
 	stub := &stubRoundTripper{resp: newStubResponse()}
-	// Permissive allowlist for the test: everything is authorized. The inner
-	// RoundTripper is a stub (no real network access), which became necessary
-	// once the transport started rejecting any non-standard explicit port in
-	// the URL, incompatible with a real httptest.Server (always bound to an
-	// ephemeral port).
+	// The test allowlist authorizes every host. The inner RoundTripper performs
+	// no network access. A real httptest.Server uses an ephemeral port, but the
+	// transport rejects nonstandard explicit ports.
 	transport := NewAllowlistTransport(stub, func(string) bool { return true })
 
 	req, err := http.NewRequest(http.MethodGet, "https://caldav.icloud.com/", nil)

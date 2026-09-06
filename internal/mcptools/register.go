@@ -142,10 +142,10 @@ func mailMutationToolNames() []string {
 	return []string{"set_message_flags", "move_message", "trash_message"}
 }
 
-// defaultLocationName returns the display name used in tool descriptions
-// and error messages: loc.String() if set, "UTC" otherwise (mirrors the nil
-// handling in icloud.ParseDateTime so the schema never lies about the
-// actual parsing behavior).
+// defaultLocationName returns the display name for tool descriptions and error
+// messages. It returns loc.String() when loc is set and "UTC" otherwise. This
+// matches the nil handling in icloud.ParseDateTime and keeps the schema
+// consistent with parsing behavior.
 func defaultLocationName(loc *time.Location) string {
 	if loc == nil {
 		return "UTC"

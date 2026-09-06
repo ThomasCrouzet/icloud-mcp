@@ -1,94 +1,119 @@
 # CalDAV / iCloud compatibility
 
-Calendar-specific observations against real iCloud CalDAV that constrain the
+These Calendar-specific observations from real iCloud CalDAV constrain the
 client. Contacts and Mail use separate protocol clients and destination
-policies; see [CardDAV compatibility](carddav-compatibility.md) and
+policies. See [CardDAV compatibility](carddav-compatibility.md) and
 [Mail compatibility](mail-compatibility.md).
 
 ## Discovery
 
 - Entry: `https://caldav.icloud.com`.
-- Response redirects to a shard `pXX-caldav.icloud.com` (often with explicit `:443`).
-- `go-webdav` `FindCalendarHomeSet` returns a path without the shard host; this
-  server uses hand-rolled PROPFIND (`discovery.go`).
-- `net/http` converts 301 to GET; discovery preserves method semantics via
-  allowlisted redirects and direct PROPFIND.
-- Failed discovery is not cached forever (retry after transient errors).
+- The response redirects to a `pXX-caldav.icloud.com` shard. It often includes
+  the explicit port `:443`.
+- `go-webdav` `FindCalendarHomeSet` returns a path without the shard host. The
+  server uses custom PROPFIND code in `discovery.go`.
+- `net/http` converts 301 to GET. Discovery keeps the method through allowlisted
+  redirects and direct PROPFIND requests.
+- The server does not cache a failed discovery. A later call can retry after a
+  transient error.
 
 ## calendar-query REPORT
 
 - Partial `calendar-data` with nested `<comp>` returns empty VEVENTs on iCloud.
-- Only bare `<C:calendar-data/>` works reliably.
-- `prop-filter` by UID returns 412; UID lookup uses GET on `<uid>.ics` then a
-  bounded time-range REPORT fallback (+/-50 years around now). Events whose
-  filename is not `<uid>.ics` and that lie entirely outside that window are
-  reported as not found on the fallback path (error text states the window).
-- Request `D:getetag` with calendar-data so If-Match works on the REPORT path.
-- Imported-UID lookup always re-GETs before mutate so VERSION/PRODID/VTIMEZONE
-  survive the round-trip (REPORT payloads are incomplete for go-ical encode).
+- Only a bare `<C:calendar-data/>` request works reliably.
+- A UID `prop-filter` returns 412. UID lookup first sends GET for `<uid>.ics`.
+- If the resource is missing, lookup sends a bounded time-range REPORT. The
+  range is 50 years before and after the current time.
+- The fallback does not find an event outside this range if its filename is not
+  `<uid>.ics`. The error text states this range.
+- Request `D:getetag` with calendar-data. This ETag enables If-Match on the
+  REPORT path.
+- Imported-UID lookup always sends another GET before a mutation. This step
+  preserves VERSION, PRODID, and VTIMEZONE.
+- REPORT payloads are incomplete for encoding with go-ical.
 
 ## Writes
 
-- PUT `text/calendar` objects named `<uid>.ics` for server-created events.
-- Imported events may use a different filename; always resolve by UID before mutate.
-- Create always sends `If-None-Match: *` so a concurrent same-UID create cannot
-  silently overwrite; 412 maps to `conflict`.
-- If-Match for optimistic concurrency on update/delete; 412 = concurrent modification.
-  Mutations fail closed when no ETag is available.
-- Update always GET full object first (preserves VERSION/PRODID/VTIMEZONE).
-- Update preserves existing DTSTART/DTEND form (DATE / TZID / Z); never force UTC Z
-  on a TZID series.
-- Automatic retry is read-only. PUT and DELETE are never replayed, including a
-  full-series delete. A transport failure or gateway 502/503/504 after dispatch
-  returns `outcome_unknown` with reconciliation guidance; write-side 429 is a
-  definitive `rate_limited` response. Any redirect or automatically followed
-  response observed after mutation dispatch is also `outcome_unknown` and is
-  never replayed.
+- Use PUT to store server-created events as `text/calendar` objects named
+  `<uid>.ics`.
+- Imported events can use a different filename. Always resolve the UID before a
+  mutation.
+- Create always sends `If-None-Match: *`. Thus, a concurrent create with the
+  same UID cannot overwrite an event silently.
+- HTTP 412 from create maps to `conflict`.
+- Update and delete use If-Match for optimistic concurrency. HTTP 412 maps to
+  `concurrent_modification`.
+- A mutation fails closed when no ETag is available.
+- Update always gets the full object first. This step preserves VERSION,
+  PRODID, and VTIMEZONE.
+- Update preserves the existing DTSTART and DTEND form: DATE, TZID, or Z.
+- Never force UTC Z on a TZID series.
+- Automatic retries apply only to reads. The client never repeats PUT, DELETE,
+  or a full-series delete.
+- A transport failure after dispatch returns `outcome_unknown` with
+  reconciliation guidance. Gateway 502, 503, and 504 have the same result.
+- A write-side 429 is a definitive `rate_limited` response.
+- A redirect after mutation dispatch also returns `outcome_unknown`. An
+  automatically followed response observed after dispatch has the same result.
+- The client never follows or repeats that mutation.
 
 ## Recurrence
 
-- Expand RRULE with TZID preserved (never force `.UTC()` on Dtstart).
-- Handle EXDATE and RECURRENCE-ID overrides; include occurrences overlapping
-  range start. Missing DTEND: derive from DURATION, preserving nominal calendar
-  days/weeks across DST, else use the next civil day for all-day events.
-- Cap returned expansion at 2,000 occurrences and iterator work at 100,000
-  advances per series. A preflight estimate rejects pathological rules that
-  would exceed the work budget before the requested range is reached.
-- Scope `series` vs `occurrence` on update/delete; occurrence never deletes the
-  series resource. Occurrence EXDATE/RECURRENCE-ID match the master DATE/TZID/Z form.
-- Timed recurring creates write TZID + generated VTIMEZONE (explicit `timezone`
-  or `ICLOUD_MCP_DEFAULT_TZ` fallback) so wall-clock RRULEs survive DST.
-- `this-and-future` is **not** implemented (not proven safe end-to-end).
-- RDATE and ranged `RECURRENCE-ID` (`THISANDFUTURE`) are rejected with
-  `protocol_error`; they are never silently omitted from availability results.
-- Date-selector reachability is preflighted over a bounded Gregorian cycle
-  before entering the recurrence iterator. The non-RFC `BYEASTER` extension,
-  ordinal `BYDAY` outside monthly/yearly rules, and calendar selectors combined
-  with hourly/minutely/secondly frequency are rejected fail-closed because the
-  dependency cannot interrupt an empty internal selector scan.
+- Recurrence expansion preserves the RRULE TZID. It never calls `.UTC()` on
+  Dtstart.
+- Expansion handles EXDATE and RECURRENCE-ID overrides. It includes occurrences
+  that overlap the range start.
+- When DTEND is missing, DURATION sets the duration. Calendar days and weeks
+  follow local time across DST.
+- Without DURATION, an all-day event ends on the next civil day.
+- Expansion returns at most 2,000 occurrences. The iterator advances at most
+  100,000 times for each series.
+- A preflight estimate rejects a rule that would exceed the work budget before
+  the requested range.
+- Update and delete accept `series` or `occurrence` scope. Occurrence scope never
+  deletes the series resource.
+- Occurrence EXDATE and RECURRENCE-ID values match the master DATE, TZID, or Z
+  form.
+- A timed recurring create writes TZID and a generated VTIMEZONE. It uses the
+  explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback.
+- This method keeps wall-clock RRULEs correct across DST.
+- The client does not implement `this-and-future`. Its end-to-end safety is not
+  proven.
+- The client rejects RDATE and ranged `RECURRENCE-ID` (`THISANDFUTURE`) with
+  `protocol_error`. Availability results never omit them silently.
+- A preflight check tests date-selector reachability over a bounded Gregorian
+  cycle. The check runs before the recurrence iterator.
+- The client rejects the non-RFC `BYEASTER` extension.
+- It also rejects ordinal `BYDAY` outside monthly or yearly rules.
+- It rejects calendar selectors with hourly, minutely, or secondly frequency.
+- These cases fail closed because the dependency cannot stop an empty internal
+  selector scan.
 
 ## Parser and result limits
 
-- Inbound stdio JSON-RPC frames are capped at 1 MiB and every serialized
-  Calendar/MCP result is capped at 256 KiB.
-- Calendar REPORT XML is capped at depth 32, 262,144 tokens, 4,096 response
+- Inbound stdio JSON-RPC frames have a 1 MiB limit. Each serialized Calendar or
+  MCP result has a 256 KiB limit.
+- Calendar REPORT XML has these limits: depth 32, 262,144 tokens, 4,096 response
   elements, 16,384 propstats, and 32,768 properties.
-- Parsed iCalendar is capped at 1,024 components, 10,000 properties total, 1,024
-  properties per component, 512 overrides, 64 parameters per property, 64
-  alarms, and 2,000 EXDATE values. One remote property value is capped at 1 MiB.
-- PROPFIND and single-object GET bodies are capped at 8 MiB; REPORT is capped at
-  32 MiB.
-- A single-calendar search materializes at most 2,500 events. Multi-calendar
-  `search_events` still queries every selected calendar, then fails closed at
-  10,000 filtered events before the public 400-event sort-cap. Recurrence work
-  is capped at 100,000 iterator advances per series and 250,000 across one
-  search, including selector reachability proof work reserved before iteration.
-- Calendar network concurrency is capped independently at four reads and two
-  writes.
+- Parsed iCalendar has 1,024 components and 10,000 total properties at most.
+- Each component has at most 1,024 properties. Other limits are 512 overrides,
+  64 parameters per property, 64 alarms, and 2,000 EXDATE values.
+- One remote property value has a 1 MiB limit.
+- PROPFIND and single-object GET bodies have an 8 MiB limit. REPORT has a 32 MiB
+  limit.
+- A single-calendar search materializes at most 2,500 events.
+- Multi-calendar `search_events` still queries each selected calendar. It fails
+  closed when more than 10,000 filtered events materialize.
+- This failure occurs before the public sorted result limit of 400 events.
+- Recurrence work has a limit of 100,000 iterator advances for each series. One
+  search has a total limit of 250,000 advances.
+- The search reserves selector reachability proof work before iteration.
+- Calendar permits four concurrent reads and two concurrent writes.
 
 ## Limits (Apple)
 
-- ~50,000 events per calendar (403 when exceeded).
-- One Calendar Apple Account per process instance. The optional Contacts domain
-  uses the same configured identity through a separate client; Mail can use a
-  distinct mailbox address and app-specific password.
+- Approximately 50,000 events per calendar. Apple returns 403 when the limit is
+  exceeded.
+- One process supports one Calendar Apple Account. The optional Contacts domain
+  uses the same configured identity through a separate client.
+- Mail can use a different mailbox address and app-specific password.

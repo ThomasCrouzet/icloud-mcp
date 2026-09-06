@@ -1,6 +1,6 @@
-// Package mcptools defines the MCP tools exposed by the server and their
-// handlers. All input validation and audit logging live here (protocol
-// layer); network access lives in internal/icloud.
+// Package mcptools defines the MCP tools and their handlers. This protocol
+// layer validates input and writes audit logs. The Calendar, Contacts, and Mail
+// domain packages provide network access.
 package mcptools
 
 import (
@@ -25,16 +25,13 @@ const (
 	maxErrorDetails      = 16
 )
 
-// datetimeParamDescription builds the mcp.Description text for a start/end
-// tool parameter, naming the actually configured default timezone so the
-// schema never nudges the calling agent toward the wrong thing.
+// datetimeParamDescription builds the description of a start or end parameter.
+// It includes the configured default timezone.
 //
-// Deliberately does NOT lead with a "...Z" example: an earlier version of
-// this description did, and the calling agent was observed echoing a stated
-// local hour straight back with a "Z" suffix (i.e. literal UTC) instead of
-// converting it, shifting real events by the local UTC offset once iCloud
-// rendered them. Leading with the no-offset local-time example steers
-// towards the form that removes that conversion step entirely.
+// Start with a local-time example that has no "Z" suffix. Earlier text showed
+// a leading "Z" example. One caller reused a local hour with "Z", which changed
+// the intended local time to UTC. The current example removes that conversion
+// step.
 func datetimeParamDescription(label string, defaultLoc *time.Location) string {
 	tz := defaultLocationName(defaultLoc)
 	return fmt.Sprintf(
@@ -55,11 +52,10 @@ type toolErrorPayload struct {
 	Details        map[string]string `json:"details,omitempty"`
 }
 
-// errResult builds an error CallToolResult, always routing the message
-// through the Redactor. EVERY error returned by a tool goes through this
-// helper. When err wraps a classified *icloud.Error, the payload is JSON
-// with a stable "code" field so agents can match without parsing English text.
-// Raw HTTP/XML bodies are never included.
+// errResult builds an error CallToolResult and sends its message through the
+// Redactor. All tool errors use this helper. A classified *icloud.Error adds a
+// stable JSON code, so agents do not need to parse English text. The result
+// never includes raw HTTP or XML bodies.
 func errResult(red *security.Redactor, context string, err error) *mcp.CallToolResult {
 	msg := boundedUTF8(redact(red, fmt.Sprintf("%s: %v", context, err)), maxErrorMessageBytes)
 	payload := toolErrorPayload{Message: msg}
@@ -116,11 +112,10 @@ func calendarMutationErrorStatus(err error) string {
 	return "error"
 }
 
-// writeJSON serializes payload as indented JSON and builds a success
-// CallToolResult. The body is always run through the Redactor so secrets
-// never leave on the MCP success channel either (defense in depth if a
-// password string appears in calendar text or a buggy upstream echo).
-// A serialization failure is itself routed through errResult.
+// writeJSON formats payload as indented JSON and returns a success
+// CallToolResult. It sends the body through the Redactor to protect the MCP
+// success channel, including secrets in Calendar text or echoed server data.
+// It sends serialization failures through errResult.
 func writeJSON(red *security.Redactor, payload any) *mcp.CallToolResult {
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

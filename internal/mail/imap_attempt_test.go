@@ -9,9 +9,10 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mail/imapadapter"
 )
 
-// TestImapAttemptPreservesAuthenticationErrorOnFailedSession pins the live
-// Minji failure mode: NewSession closes the dialed conn on auth rejection, and
-// a second Close must not panic-rewrite the error into protocol_error.
+// TestImapAttemptPreservesAuthenticationErrorOnFailedSession reproduces the
+// live Minji failure mode. NewSession closes the dialed connection after an
+// authentication rejection. A second Close must not panic and replace the
+// authentication error with protocol_error.
 func TestImapAttemptPreservesAuthenticationErrorOnFailedSession(t *testing.T) {
 	client, err := newService(Config{
 		Address:  "user@example.com",

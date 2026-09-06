@@ -56,11 +56,11 @@ type Server struct {
 	srv *http.Server
 }
 
-// Start launches the HTTP healthcheck in the background on addr (e.g.
-// "127.0.0.1:8797"). Non-loopback binds (0.0.0.0, ::, LAN addresses) are
-// rejected before Listen. If the bind fails, the error is returned by this
-// call; errors occurring afterwards (ListenAndServe) are silent from the
-// caller's perspective (the MCP server must not die because of a healthcheck).
+// Start launches the HTTP healthcheck in the background on addr, such as
+// "127.0.0.1:8797". It rejects non-loopback binds before Listen. These include
+// 0.0.0.0, ::, and LAN addresses. Start returns a bind error to the caller.
+// The background goroutine does not report later ListenAndServe errors. A
+// healthcheck error must not stop the MCP server.
 //
 // version is the binary version (main.version, overridden at build time).
 // domains reports enablement only (no network probe). statusFn, if non-nil,

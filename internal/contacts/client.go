@@ -14,7 +14,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Client implements Service using only hand-rolled bounded CardDAV requests.
+// Client implements Service using only custom bounded CardDAV requests.
 type Client struct {
 	http      HTTPDoer
 	baseURL   string

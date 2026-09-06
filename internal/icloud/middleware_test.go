@@ -298,10 +298,10 @@ func TestGuardedService_RateLimitStatus_ReportsConfiguredBudgets(t *testing.T) {
 	}
 }
 
-// TestGuardedService_RetrySkipsClassifiedErrors: a typed *icloud.Error
-// (already retried at the HTTP layer, or terminal like auth/not-found) must
-// NOT be retried again by GuardedService: it should be returned immediately,
-// without consuming the retry budget.
+// TestGuardedService_RetrySkipsClassifiedErrors verifies typed *icloud.Error
+// handling. The HTTP layer has already retried these errors, or they are
+// terminal, such as authentication, not found, or 412. GuardedService must
+// return the error immediately without using its retry budget.
 func TestGuardedService_RetrySkipsClassifiedErrors(t *testing.T) {
 	classified := NewError(CodeServerUnavailable, 503, "shard down", nil)
 	// A service that always returns a typed *icloud.Error (already retried by

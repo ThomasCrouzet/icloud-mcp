@@ -334,8 +334,9 @@ func TestSearchUsesTypedCriteriaAndReturnsNewestUIDFirst(t *testing.T) {
 
 func TestListMailboxesCapsObjects(t *testing.T) {
 	t.Parallel()
-	// Service-level soft truncate when the adapter returns exactly MaxMailboxes+
-	// (fakeIMAP bypasses adapter hard fail). Real adapter fails closed on overflow.
+	// The service truncates softly when the adapter returns MaxMailboxes+1 rows.
+	// fakeIMAP bypasses the adapter limit. The real adapter fails closed on
+	// overflow.
 	imap := &fakeIMAP{}
 	for i := 0; i < MaxMailboxes+1; i++ {
 		imap.mailboxes = append(imap.mailboxes, imapadapter.Mailbox{Name: "mailbox-" + itoa(i)})

@@ -10,33 +10,22 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// RecoverRedactMiddleware intercepts panics from a tool handler and produces
-// a REDACTED error CallToolResult, instead of letting the panic bubble up as
-// (nil, err) to the JSON-RPC protocol channel.
+// RecoverRedactMiddleware catches panics from tool handlers and returns a
+// redacted error CallToolResult.
 //
-// That channel (stdout) is NOT covered by the RedactingWriter, which only
-// wraps stderr (slog logs + audit). Without this middleware, a panic
-// carrying the password (e.g. an HTTP error that echoes the credentials in
-// its message, see redaction_test.go) would leak the secret verbatim in the
-// JSON-RPC response returned to the MCP caller: server.WithRecovery() does
-// convert the panic into a Go error, but that error is then serialized as is
-// (err.Error()) into the JSON-RPC message; NO redaction happens on that
-// path.
+// RedactingWriter protects stderr only. A panic can contain a secret and reach
+// stdout through server.WithRecovery. This middleware redacts the panic before
+// JSON-RPC serializes it. See redaction_test.go for the hostile error case.
 //
-// server.WithRecovery() stays in place as an extra safety net (defense in
-// depth), but THIS middleware must intercept the panic FIRST to produce a
-// redacted response: it must therefore be registered AFTER the other
-// middlewares on the server.NewMCPServer side (see cmd/icloud-mcp/main.go),
-// so that it sits closest to the handler in the call stack. The recover()
-// closest to the panic wins during unwind, so the outer middlewares
-// (including WithRecovery) never see anything propagate.
+// Register this middleware after the other server middlewares. Its recover
+// call must be closest to the handler. Keep server.WithRecovery as a second
+// safety layer. See cmd/icloud-mcp/main.go for the registration order.
 func RecoverRedactMiddleware(red *security.Redactor) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					// Never surface panic text when the redactor is missing:
-					// stdout is outside the stderr RedactingWriter.
+					// Do not send panic text to stdout when the redactor is missing.
 					if red == nil {
 						result = mcp.NewToolResultError(`{"code":"internal_error","message":"internal error"}`)
 					} else {
