@@ -267,7 +267,7 @@ processes. See [docs/agent-hosts.md](docs/agent-hosts.md).
 
 ## Dependencies
 
-Use Go 1.25.12 or newer. The project has one module and exactly **10** direct
+Use Go 1.25.13 or newer. The project has one module and exactly **10** direct
 dependencies. If you add a direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
@@ -289,7 +289,7 @@ dependencies. If you add a direct dependency, add its justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.12 image
+make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.13 image
 make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
@@ -297,7 +297,7 @@ make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 Release targets reject an unset version or a `dev` version. Archives contain
 the binary, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also
 contains a SHA-256 checksum file. GitHub tag releases run `make release-all`
-only after CI and gitleaks succeed for that tag. They use Go 1.25.12 with
+only after CI and gitleaks succeed for that tag. They use Go 1.25.13 with
 `check-latest` disabled.
 
 Local `make release` uses the digest-pinned container path for linux/arm64.

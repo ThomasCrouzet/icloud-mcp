@@ -8,8 +8,8 @@ make lint    # go vet + golangci-lint (pinned in Makefile / CI)
 make build   # local binary under bin/
 ```
 
-You must use Go 1.25.12 or newer. `make release VERSION=vX.Y.Z` uses a
-digest-pinned Go 1.25.12 image. It builds and packages static linux/arm64.
+You must use Go 1.25.13 or newer. `make release VERSION=vX.Y.Z` uses a
+digest-pinned Go 1.25.13 image. It builds and packages static linux/arm64.
 `make release-all VERSION=vX.Y.Z` uses the host toolchain. It cross-compiles
 and packages linux/amd64, linux/arm64, and darwin/arm64. GitHub tag releases
 use this target after CI and gitleaks succeed.

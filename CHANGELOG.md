@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.1] - 2026-09-06
 
+### Security
+- Require Go 1.25.13 for standard library security fixes.
+- Update the fixed release builder image to Go 1.25.13.
+
 ### Changed
 - Update golangci-lint to v2.13.2 for Go 1.27 support.
 - Use shorter English text in documentation and comments.
