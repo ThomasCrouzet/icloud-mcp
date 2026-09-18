@@ -6,10 +6,10 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 GO          ?= go
 
 # Use a fixed digest for the release builder image to make builds reproducible.
-# The module minimum is Go 1.25.13; this digest tracks golang:1.25.13.
-# To update the digest, use: docker pull golang:1.25.13 &&
-# docker image inspect golang:1.25.13 --format '{{index .RepoDigests 0}}'.
-GOLANG_IMAGE ?= golang:1.25.13@sha256:cbff9d1a9041b316010f2da6b701b6c0d597718cb90928c85eb597334a0d23d4
+# The module minimum is Go 1.26.0; this digest tracks golang:1.26.8.
+# To update the digest, use: docker pull golang:1.26.8 &&
+# docker image inspect golang:1.26.8 --format '{{index .RepoDigests 0}}'.
+GOLANG_IMAGE ?= golang:1.26.8@sha256:3c3e25a4da13fd0478eed2df1eb35a0e667094a7124d3993a6a1d30f71c17e79
 
 # Release archives: linux/amd64, linux/arm64, darwin/arm64.
 # All binaries are static (CGO_ENABLED=0), with build paths and debug data removed.
@@ -45,7 +45,7 @@ check-release-clean:
 			echo "release requires a clean Git worktree" >&2; exit 1; \
 		}
 
-release: check-release-version check-release-clean ## Static linux/arm64 archive with a fixed Go 1.25.13 container.
+release: check-release-version check-release-clean ## Static linux/arm64 archive with a fixed Go 1.26.8 container.
 	rm -rf $(DIST_DIR)
 	@mkdir -p $(DIST_DIR)
 	docker run --rm -v $(PWD):/src -w /src \

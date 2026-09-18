@@ -267,7 +267,7 @@ processes. See [docs/agent-hosts.md](docs/agent-hosts.md).
 
 ## Dependencies
 
-Use Go 1.25.13 or newer. The project has one module and exactly **10** direct
+Use Go 1.26.0 or newer. The project has one module and exactly **10** direct
 dependencies. If you add a direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
@@ -276,11 +276,11 @@ dependencies. If you add a direct dependency, add its justification here.
 | `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
 | `github.com/mark3labs/mcp-go` | `v0.57.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
-| `golang.org/x/time` | `v0.15.0` | Per-domain rate limiters |
-| `github.com/emersion/go-vcard` | `v0.0.0-20260618161152-d854b7e0e2d3` | vCard 3.0/4.0 read, 3.0 write |
+| `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
+| `github.com/emersion/go-vcard` | `v0.1.0` | vCard 3.0/4.0 read, 3.0 write |
 | `github.com/emersion/go-imap/v2` | `v2.0.0-beta.8` | IMAP behind `internal/mail/imapadapter` |
 | `github.com/emersion/go-message` | `v0.18.2` | MIME / plain-text bounds |
-| `github.com/emersion/go-smtp` | `v0.24.0` | SMTP + STARTTLS |
+| `github.com/emersion/go-smtp` | `v0.25.0` | SMTP + STARTTLS |
 | `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
 
 ## Build and test
@@ -289,7 +289,7 @@ dependencies. If you add a direct dependency, add its justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.25.13 image
+make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.26.8 image
 make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
@@ -297,7 +297,7 @@ make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 Release targets reject an unset version or a `dev` version. Archives contain
 the binary, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also
 contains a SHA-256 checksum file. GitHub tag releases run `make release-all`
-only after CI and gitleaks succeed for that tag. They use Go 1.25.13 with
+only after CI and gitleaks succeed for that tag. They use Go 1.26.8 with
 `check-latest` disabled.
 
 Local `make release` uses the digest-pinned container path for linux/arm64.

@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Update CI and the release builder image to Go 1.26.8. The module go directive moves to 1.26.0.
 ## [0.4.1] - 2026-09-06
 
 ### Security
