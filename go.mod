@@ -10,7 +10,7 @@ require (
 	github.com/emersion/go-smtp v0.25.0
 	github.com/emersion/go-vcard v0.1.0
 	github.com/emersion/go-webdav v0.7.0
-	github.com/mark3labs/mcp-go v0.57.0
+	github.com/mark3labs/mcp-go v1.1.0
 	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/time v0.16.0
 )
