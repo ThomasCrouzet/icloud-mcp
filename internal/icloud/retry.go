@@ -39,7 +39,7 @@ type retryClassifier struct {
 }
 
 // NewRetryClassifier builds a retryClassifier with six tries, a 500ms base,
-// and a 10s cap. It uses the wall clock and cryptographic jitter. Production
+// and a 10s cap. It uses the wall clock and random jitter. Production
 // code in cmd/icloud-mcp uses it to wrap the authentication and allowlist doer.
 // Tests use the unexported fields when they need deterministic timing.
 func NewRetryClassifier(inner httpDoer) httpDoer {
@@ -126,8 +126,8 @@ func rewindRequestBody(req *http.Request) error {
 	return nil
 }
 
-// isRetryStatus reports whether a status is an idempotent "try again later"
-// signal that the server guarantees it did not process.
+// isRetryStatus identifies retryable read responses. These statuses do not
+// establish that a mutation was not processed.
 func isRetryStatus(status int) bool {
 	switch status {
 	case http.StatusTooManyRequests,
@@ -153,7 +153,7 @@ func retryDelay(resp *http.Response, attempt int, base, max time.Duration, now f
 	d := base << attempt // base * 2^attempt
 	d = capDelay(d, max)
 	jitter := time.Duration(rand() * float64(d) * 0.25)
-	return d + jitter
+	return capDelay(d+jitter, max)
 }
 
 // headerRetryAfter parses Retry-After as delta-seconds or HTTP-date. ok is true

@@ -32,6 +32,16 @@ func TestRetryDelayRejectsDeltaSecondsOverflow(t *testing.T) {
 	}
 }
 
+func TestRetryDelayCapsJitteredBackoff(t *testing.T) {
+	response := &http.Response{Header: make(http.Header)}
+	for _, attempt := range []int{4, 5} {
+		got := retryDelay(response, attempt, time.Second, 10*time.Second, time.Now, func() float64 { return 0.99 })
+		if got > 10*time.Second || got <= 0 {
+			t.Fatalf("attempt %d: jittered delay %v exceeds the positive 10s budget", attempt, got)
+		}
+	}
+}
+
 func TestICalDurationArithmeticIsChecked(t *testing.T) {
 	valid, err := parseICalDuration("P1DT2H3M4S")
 	if err != nil || valid != 26*time.Hour+3*time.Minute+4*time.Second {
