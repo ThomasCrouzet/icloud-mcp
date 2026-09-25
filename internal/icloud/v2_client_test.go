@@ -325,23 +325,6 @@ func TestClient_CreateEvent_RejectsBadURL(t *testing.T) {
 	}
 }
 
-func TestBuildEventCalendar_AllDayAndRRULE(t *testing.T) {
-	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	cal := buildEventCalendar("u@x", &NewEvent{
-		Title: "Holiday", AllDay: true,
-		StartTime: start, EndTime: start.Add(24 * time.Hour),
-		Recurrence: "FREQ=YEARLY;COUNT=3",
-		Status:     "CONFIRMED",
-	})
-	master, err := findMasterVEvent(cal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p := master.Props.Get("RRULE"); p == nil {
-		t.Error("missing RRULE")
-	}
-}
-
 func TestPublicCodeMapping(t *testing.T) {
 	if PublicCode(CodeAuthenticationRefused) != CodeAuthentication {
 		t.Error("auth mapping")

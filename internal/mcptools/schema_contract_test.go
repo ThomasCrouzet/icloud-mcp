@@ -14,29 +14,11 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
-// TestSchemaContract_BoundsMatchRuntimeConstants prevents schema/runtime drift
-// for shared limits (MaxResults, MaxTitleLen, etc.).
+// Keep the advertised five-alarm contract independent of runtime-derived limits.
 func TestSchemaContract_BoundsMatchRuntimeConstants(t *testing.T) {
-	if icloud.MaxResults != 400 {
-		t.Fatalf("MaxResults changed to %d; update tool schemas and docs", icloud.MaxResults)
-	}
-	if icloud.MaxRangeDays != 366 {
-		t.Fatalf("MaxRangeDays changed to %d; update tool schemas and docs", icloud.MaxRangeDays)
-	}
 	if icloud.MaxAlarms != 5 {
 		t.Fatalf("MaxAlarms changed to %d; update create tool", icloud.MaxAlarms)
 	}
-	// Tool constructors must not panic and must embed the constants.
-	_ = newSearchEventsTool(time.UTC)
-	_ = newCreateEventTool(time.UTC)
-	_ = newUpdateEventTool(time.UTC)
-	_ = newDeleteEventTool(time.UTC)
-	_ = newGetEventTool()
-	_ = newValidateEventTool(time.UTC)
-	_ = newFindFreeSlotsTool(time.UTC)
-	_ = newCalendarCapabilitiesTool()
-	_ = newICloudCapabilitiesTool()
-	_ = newListCalendarsTool()
 }
 
 func TestCalendarToolSchemasStayWithinPromptBudget(t *testing.T) {

@@ -117,15 +117,6 @@ func TestParseDaysOfWeek(t *testing.T) {
 	}
 }
 
-func TestErrResult_ValidationCode(t *testing.T) {
-	red := testDeps(&icloud.MockService{}).Redactor
-	res := errResult(red, "validation", icloud.NewValidationError("bad"))
-	text := resultText(t, res)
-	if !strings.Contains(text, "validation") {
-		t.Errorf("%s", text)
-	}
-}
-
 func TestCreateEventHandler_EnrichedOptionalFields(t *testing.T) {
 	svc := &icloud.MockService{CreatedUID: "new-1"}
 	h := createEventHandler(testDeps(svc))

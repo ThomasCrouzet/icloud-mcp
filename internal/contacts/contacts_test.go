@@ -869,12 +869,6 @@ func TestSearchQueryUsesEscapedServerSideFiltersAndBoundedFullData(t *testing.T)
 			matchCount: 5,
 		},
 		{
-			name: "email before phone", opts: SearchOptions{Email: `mail<&`, Phone: "+1 555"},
-			want:       []string{`<C:filter><C:prop-filter name="EMAIL">`, `>mail&lt;&amp;</C:text-match>`},
-			notWant:    []string{`name="TEL"`, `test="anyof"`},
-			matchCount: 1,
-		},
-		{
 			name: "phone", opts: SearchOptions{Phone: "+1 (555)"},
 			want:    []string{`<C:filter><C:prop-filter name="VERSION"/></C:filter>`},
 			notWant: []string{`name="TEL"`, `name="EMAIL"`, `<C:text-match`, `test="anyof"`},

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log/slog"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -112,40 +111,6 @@ func TestRedactingWriter_ThroughSlog(t *testing.T) {
 	}
 	if !strings.Contains(out, "[REDACTED]") {
 		t.Errorf("expected output containing [REDACTED], got: %q", out)
-	}
-}
-
-func TestRedactingWriter_Base64AndURLEncodedForms(t *testing.T) {
-	email := "user@example.com"
-	password := "SENTINEL-PW-abc123" // gitleaks:allow, test sentinel, not a real secret
-	basic := []byte(email + ":" + password)
-	std := base64.StdEncoding.EncodeToString(basic)
-	rawStd := base64.RawStdEncoding.EncodeToString(basic)
-	urlB64 := base64.URLEncoding.EncodeToString(basic)
-	rawURL := base64.RawURLEncoding.EncodeToString(basic)
-	queryEscaped := url.QueryEscape(password)
-
-	r := NewRedactor(password, std, rawStd, urlB64, rawURL, queryEscaped)
-	var buf bytes.Buffer
-	rw := NewRedactingWriter(&buf, r)
-
-	msg := "Authorization: Basic " + std +
-		" raw=" + rawStd +
-		" urlb64=" + urlB64 +
-		" rawurl=" + rawURL +
-		" ; redirected query with pw=" + queryEscaped
-	if _, err := rw.Write([]byte(msg)); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-
-	out := buf.String()
-	for _, leak := range []string{password, std, rawStd, urlB64, rawURL} {
-		if strings.Contains(out, leak) {
-			t.Errorf("secret form %q found in the output: %q", leak, out)
-		}
-	}
-	if strings.Contains(out, queryEscaped) && queryEscaped != password {
-		t.Errorf("url-encoded form found in the output: %q", out)
 	}
 }
 

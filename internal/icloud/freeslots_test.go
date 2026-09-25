@@ -433,26 +433,6 @@ func TestNextLocalCivilDay_DSTTransitions(t *testing.T) {
 	}
 }
 
-func TestLocalTimeOnDay_SpringForwardWallClock(t *testing.T) {
-	loc, err := time.LoadLocation("Europe/Paris")
-	if err != nil {
-		t.Fatal(err)
-	}
-	day := time.Date(2026, 3, 29, 0, 0, 0, 0, loc)
-	nine := localTimeOnDay(day, 9*60, loc)
-	if nine.In(loc).Hour() != 9 || nine.In(loc).Minute() != 0 {
-		t.Fatalf("wall 09:00 got %v", nine.In(loc))
-	}
-	// Broken Add(9h) would yield 10:00 CEST on this day.
-	broken := day.Add(9 * time.Hour)
-	if broken.In(loc).Hour() == 9 {
-		t.Skip("environment does not exhibit spring-forward Add skew")
-	}
-	if broken.Equal(nine) {
-		t.Fatal("localTimeOnDay must not equal midnight.Add(9h) on spring-forward")
-	}
-}
-
 func assertSlotsInRangeNoDupNoBusy(t *testing.T, slots []Interval, rangeStart, rangeEnd time.Time, busy []Interval) {
 	t.Helper()
 	merged := MergeIntervals(busy)

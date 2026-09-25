@@ -218,24 +218,8 @@ func TestFetchBodyPartUsesPeekAndBoundedPartials(t *testing.T) {
 	}
 }
 
-func TestProtocolGuardLimitsDepthAndIgnoresLiterals(t *testing.T) {
+func TestProtocolGuardLimitsDepthListsAndLiteralSize(t *testing.T) {
 	guard := &guardedConn{}
-	for _, b := range []byte("* 1 FETCH (BODY[1] {30}\r\n") {
-		if err := guard.scanProtocolByte(b); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, b := range []byte("((((literal parentheses))))xx") {
-		if guard.literalRemaining == 0 {
-			t.Fatal("literal ended too early")
-		}
-		guard.literalRemaining--
-		_ = b
-	}
-	if guard.depth != 1 {
-		t.Fatalf("literal changed protocol depth: %d", guard.depth)
-	}
-	guard = &guardedConn{}
 	var err error
 	for i := 0; i < maxProtocolDepth+1; i++ {
 		err = guard.scanProtocolByte('(')
@@ -401,16 +385,6 @@ func TestValidatedCopyDataRequiresScalarUIDMapping(t *testing.T) {
 	var protocolErr *Error
 	if !errors.As(err, &protocolErr) || !protocolErr.Ambiguous {
 		t.Fatalf("zero COPYUID UIDVALIDITY lost command ambiguity: %v", err)
-	}
-}
-
-func TestExplicitAuthenticationRejectionClassification(t *testing.T) {
-	t.Parallel()
-	if !explicitAuthRejection(&imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed}) {
-		t.Fatal("explicit authentication rejection was not detected")
-	}
-	if explicitAuthRejection(&imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeNoPerm}) {
-		t.Fatal("authorization rejection would trigger username fallback")
 	}
 }
 

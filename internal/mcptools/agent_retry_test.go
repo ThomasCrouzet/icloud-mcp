@@ -136,31 +136,6 @@ func parseToolError(t *testing.T, res *mcp.CallToolResult) toolErrorPayload {
 	return payload
 }
 
-func TestIdempotencyStore_SameKeySameParams(t *testing.T) {
-	store := newIdempotencyStore()
-	hash, err := hashIdempotencyParams(map[string]string{"a": "1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, _, ready := store.begin("k1", hash)
-	if !ready {
-		t.Fatal("expected ready")
-	}
-	store.complete("k1", hash, `{"success":true}`)
-	payload, conflict, hit, ready := store.begin("k1", hash)
-	if !hit || conflict || ready || payload != `{"success":true}` {
-		t.Fatalf("begin hit = %q conflict=%v hit=%v ready=%v", payload, conflict, hit, ready)
-	}
-	other, err := hashIdempotencyParams(map[string]string{"a": "2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, conflict, hit, _ = store.begin("k1", other)
-	if !hit || !conflict {
-		t.Fatalf("expected conflict on different params")
-	}
-}
-
 func TestErrResult_PropagatesRetryAfter(t *testing.T) {
 	red := security.NewRedactor()
 	res := errResult(red, "op", &icloud.Error{

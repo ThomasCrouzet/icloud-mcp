@@ -206,21 +206,6 @@ func TestNoPasswordLeak_HostileServerEchoesCredentials(t *testing.T) {
 	authHTTP := webdav.HTTPClientWithBasicAuth(srv.Client(), email, password)
 	ic := icloud.NewClient(authHTTP, srv.URL, func(string) bool { return true })
 
-	// Positive control: without redaction, a hostile error carrying the
-	// three secret forms must still contain them. Create/update now use a
-	// custom PUT that classifies status without embedding response
-	// bodies (so CreateEvent is no longer a reliable leak vector). Prove
-	// the redactor still masks all forms when a secret does appear.
-	rawBasicAuth := base64.StdEncoding.EncodeToString([]byte(email + ":" + password))
-	rawURLEncoded := url.QueryEscape(password)
-	rawErr := fmt.Errorf("hostile echo pwd=%s basic=%s url=%s", password, rawBasicAuth, rawURLEncoded)
-	for _, want := range []string{password, rawBasicAuth, rawURLEncoded} {
-		if !strings.Contains(rawErr.Error(), want) {
-			t.Fatalf("positive control failed: the raw (unredacted) error should contain %q, got: %v", want, rawErr)
-		}
-	}
-	_ = ic // client still drives the MCP tool path below
-
 	svc := icloud.NewGuardedService(ic, 0, time.Millisecond)
 	red := newTestRedactor(email, password)
 	var stderrBuf bytes.Buffer

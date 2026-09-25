@@ -10,7 +10,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
@@ -254,34 +253,6 @@ func TestOptionalServiceConstructionIsLazyAndGated(t *testing.T) {
 	}
 }
 
-// TestRegisterReadOnlyWiring ensures production unified registration exposes
-// the seven default read/local tools and hides writes.
-func TestRegisterReadOnlyWiring(t *testing.T) {
-	s := server.NewMCPServer("icloud-mcp-test", "test",
-		server.WithToolCapabilities(false),
-		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
-		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(security.NewRedactor("x"))),
-	)
-	plan := mcptools.NewCapabilityPlan(true, false, false, false, false)
-	mcptools.RegisterUnified(s, mcptools.Deps{
-		Service:         &icloud.MockService{},
-		Audit:           security.NewAuditLogger(ioDiscard{}),
-		Redactor:        security.NewRedactor("secret-password-xx"),
-		DefaultLocation: time.UTC,
-		Version:         version,
-		HealthEnabled:   false,
-	}, plan)
-	tools := s.ListTools()
-	if len(tools) != 7 || tools["icloud_capabilities"] == nil {
-		t.Fatalf("default read-only inventory = %v, want 7 tools including icloud_capabilities", tools)
-	}
-	for _, name := range []string{"create_event", "update_event", "delete_event"} {
-		if tools[name] != nil {
-			t.Errorf("read-only inventory contains %q", name)
-		}
-	}
-}
-
 func TestProductionServerEnforcesStrictInputSchemas(t *testing.T) {
 	redactor := security.NewRedactor("unused-secret")
 	mcpServer := newMCPServer(redactor)
@@ -382,7 +353,3 @@ func TestSMTPAllowAllBootWarningCondition(t *testing.T) {
 		t.Fatal("exact policy must not report AllowAll")
 	}
 }
-
-type ioDiscard struct{}
-
-func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

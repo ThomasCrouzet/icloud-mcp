@@ -50,6 +50,23 @@ SHA-256 checksums. `make install` always builds for the current host.
 - Keep the stdio, result, and protocol parser limits. Keep the recurrence work
   limit. Each parser package must have native fuzz coverage.
 
+## Testing policy
+
+- Never write unit tests after you write code.
+- Highly prefer E2E tests as the sole testing mechanism.
+- Verify complex features through observable E2E results.
+- At the end of each E2E run, save a verifiable and repeatable artifact outside the repository.
+- Record the command, source revision, environment, fixtures, and results with the artifact.
+- Include the working diff identity when the source has uncommitted changes.
+- Examine assertions, fixtures, mocks, and skips before removing a test.
+- Do not treat disabled E2E tests or simulated boundaries as equivalent coverage.
+- If isolation is necessary, first document all identified failure modes. Then write the tests and implementation.
+- Keep isolated tests only for concrete failures that E2E tests cannot detect.
+- Do not add tests for coverage percentages, type contracts, dependency behavior, or mocked call sequences alone.
+- Keep the existing package floors and 78% aggregate coverage gate.
+
+See [docs/testing.md](docs/testing.md) for commands, protocol limits, and live-integration gates.
+
 ## Writing
 
 Use the principles of

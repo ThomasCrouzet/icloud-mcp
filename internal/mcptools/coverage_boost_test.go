@@ -30,26 +30,6 @@ func TestJoinErrors(t *testing.T) {
 	}
 }
 
-func TestResolveCalendarPaths_Multi(t *testing.T) {
-	svc := &icloud.MockService{Calendars: []icloud.Calendar{{Path: "/cal/a/"}, {Path: "/cal/b/"}}}
-	deps := testDeps(svc)
-	paths, err := resolveCalendarPaths(context.Background(), deps, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Arguments: map[string]any{
-			"calendars": "/cal/a/,/cal/b/",
-		}},
-	})
-	if err != nil || len(paths) != 2 {
-		t.Fatalf("%v %v", paths, err)
-	}
-	// all calendars when omitted
-	paths, err = resolveCalendarPaths(context.Background(), deps, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Arguments: map[string]any{}},
-	})
-	if err != nil || len(paths) != 2 {
-		t.Fatalf("%v %v", paths, err)
-	}
-}
-
 func TestFindFreeSlots_WithWorkingHoursAndDays(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) // Wednesday
 	svc := &icloud.MockService{
@@ -125,24 +105,6 @@ func TestUpdateEventHandler_WithEtagAndStatus(t *testing.T) {
 	}
 	if svc.LastUpdate == nil || svc.LastUpdate.IfMatchETag != `"abc"` {
 		t.Fatalf("%+v", svc.LastUpdate)
-	}
-}
-
-func TestDeleteEventHandler_Success(t *testing.T) {
-	svc := &icloud.MockService{DeletedTitle: "Bye"}
-	h := deleteEventHandler(testDeps(svc))
-	res, err := h(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Arguments: map[string]any{
-			"uid": "u1", "calendar": "/cal/home/",
-		}},
-	})
-	if err != nil || res.IsError {
-		t.Fatalf("%v %+v", err, res)
-	}
-	var payload deleteEventResponse
-	decodeResult(t, res, &payload)
-	if payload.DeletedTitle != "Bye" {
-		t.Fatalf("%+v", payload)
 	}
 }
 

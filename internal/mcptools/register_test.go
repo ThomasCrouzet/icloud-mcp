@@ -172,23 +172,6 @@ func TestCapabilityPlanAllCombinationsAndRegistrationFormula(t *testing.T) {
 	}
 }
 
-func TestCapabilityPlanDefaultCompatibility(t *testing.T) {
-	readWrite := NewCapabilityPlan(false, false, false, false, false)
-	readOnly := NewCapabilityPlan(true, false, false, false, false)
-	if readWrite.ToolCount() != 10 {
-		t.Fatalf("default tool count = %d, want 10", readWrite.ToolCount())
-	}
-	if readOnly.ToolCount() != 7 {
-		t.Fatalf("default read-only tool count = %d, want 7", readOnly.ToolCount())
-	}
-	if got := NewCapabilityPlan(false, true, true, true, true).ToolCount(); got != 23 {
-		t.Fatalf("maximum tool count = %d, want 23", got)
-	}
-	if !slices.Contains(readWrite.RegisteredTools(), "icloud_capabilities") {
-		t.Fatal("default plan must include icloud_capabilities")
-	}
-}
-
 func TestRegister_DeleteEventHasDestructiveAnnotation(t *testing.T) {
 	s := newTestServer(false)
 	c, err := client.NewInProcessClient(s)

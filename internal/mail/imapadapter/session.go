@@ -103,11 +103,6 @@ func NewSession(ctx context.Context, conn net.Conn, address, password string) (*
 	return s, nil
 }
 
-func explicitAuthRejection(err error) bool {
-	var imapErr *imap.Error
-	return errors.As(err, &imapErr) && imapErr.Type == imap.StatusResponseTypeNo && imapErr.Code == imap.ResponseCodeAuthenticationFailed
-}
-
 func loginRejection(err error) bool {
 	var imapErr *imap.Error
 	return errors.As(err, &imapErr) && imapErr.Type == imap.StatusResponseTypeNo &&
