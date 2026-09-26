@@ -230,6 +230,15 @@ bounded metadata cannot fit, the tool returns `payload_too_large`.
 - If this GET fails, the known success contains `resultIncomplete`. It does not
   contain `outcome_unknown`.
 
+### Update idempotency
+
+Keyed `update_event` and `update_contact` calls keep bounded result text and its
+error flag in memory. The domain writer applies redaction and size limits
+before caching and again on each cache hit. Pending claims cannot expire or
+lose ownership when a duplicate caller cancels. Uncertain results stay until
+process exit. The [cache contract](architecture.md#update-idempotency) defines
+lifetimes, capacity, and conflict handling.
+
 ### Mail UIDVALIDITY and MODSEQ
 
 A Mail message uses the identity `(mailbox, UIDVALIDITY, UID)`. Search cursors

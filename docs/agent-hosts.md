@@ -6,20 +6,14 @@ read host-specific configuration files or `.env` files.
 
 ## Common setup
 
-1. Install the binary (`go install`, `make install`, or a release archive).
-2. Create an [app-specific password](https://appleid.apple.com).
-3. Export at least:
+1. Follow the [quick start](../README.md#quick-start) to install the binary and
+   configure credentials.
+2. Give the host the absolute path to `icloud-mcp` and the same environment.
+3. Use stdio for JSON-RPC.
+4. Read structured logs and mutation audits from stderr.
 
-```bash
-export ICLOUD_EMAIL='you@icloud.com'
-export ICLOUD_PASSWORD='app-specific-password'
-export ICLOUD_MCP_READ_ONLY=true
-export ICLOUD_MCP_DEFAULT_TZ='Europe/Paris'
-```
-
-4. Give the host the absolute path to `icloud-mcp` and the same environment.
-5. Use stdio for JSON-RPC. Read structured logs and mutation audits from stderr.
-   Mutation audits use JSON by default.
+Mutation audits use JSON by default. The [configuration
+reference](../README.md#configuration) describes all 12 product variables.
 
 For the first deployment, enable only Calendar and global read-only mode. This
 configuration provides seven tools.
@@ -48,7 +42,7 @@ Hermes also provides an optional catalog entry under `optional-mcps/` in the
 Hermes Agent repository. Catalog installation is separate from this manual
 configuration.
 
-## Claude Desktop / Claude Code / OpenAI-compatible MCP bridges
+## JSON host configuration
 
 Use the host's "custom MCP server" or "stdio MCP" entry. Use this JSON example:
 
@@ -79,7 +73,7 @@ Run `icloud-mcp` as a long-lived or per-session child process:
 
 - **command**: absolute path to `icloud-mcp`
 - **transport**: stdio JSON-RPC
-- **env**: the 12 product variables (see README)
+- **env**: the [12 product variables](../README.md#configuration)
 - **logs**: parse stderr NDJSON (`msg=audit` for mutations)
 
 Supervisors can use the optional loopback health endpoint:
@@ -102,10 +96,15 @@ server does not support multiple accounts in one process.
   `ICLOUD_MCP_DEFAULT_TZ` to the owner's IANA time zone.
 - Responses use RFC3339 with an explicit offset in that zone. See
   `calendar_capabilities.outputFormat`.
-- Pass `client_uid` or `idempotency_key` on create and update calls. These keys
-  make timeout recovery safer.
-- Create keys are server-side UIDs. Update keys remain in the process for 15
-  minutes and do not remain after a restart.
+- For `create_event` and `create_contact`, use `client_uid` or its
+  `idempotency_key` alias as the resource UID.
+- For `update_event` and `update_contact`, use `idempotency_key` with a strong
+  `etag`. The key identifies a saved result within that process and tool.
+- Known update results stay for 15 minutes after the request completes.
+  Uncertain results stay until process exit. See the
+  [update contract](architecture.md#update-idempotency).
 - Match structured `code` fields. See [error-codes.md](error-codes.md).
 - Obey `retry_after_seconds` for `rate_limited` and `unavailable` errors.
-- After `outcome_unknown`, reconcile the resource before you repeat a mutation.
+- After an ambiguous update, read with `get_event` or `get_contact` before
+  selecting a new key. A new key or restart does not prove that the write failed.
+- If the cache is full, keep the key. Wait for capacity.

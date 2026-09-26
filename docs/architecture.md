@@ -54,6 +54,10 @@ protocol executable, plugin, or runtime-downloaded code.
     `-health` endpoint starts next.
 15. Then, `ServeStdio` controls stdin and stdout.
 
+EOF cancels active handlers before the server waits for its workers. EOF and
+SIGTERM are normal shutdown conditions. Terminal input failures, including an
+oversized frame, remain errors even when cancellation interrupts the reader.
+
 After boot, a Contacts, IMAP, or SMTP failure affects only that tool call. It
 does not unregister tools or change another domain client. It also does not
 change a successful Contacts discovery cache.
@@ -192,10 +196,11 @@ mutable state:
   four-request semaphore.
 - Mail independent read/mutation/send buckets and 2/1/1 semaphores.
 - Process-local keyed audit token material.
+- Tool-namespaced idempotency entries shared by Calendar and Contacts updates.
 
 The server has no selected-mailbox state, Mail connection pool, or SMTP session.
-It has no contact write cache or local event, contact, or message store. It also
-has no remote-content cache across calls.
+Read operations have no result cache across calls. Keyed updates keep bounded
+result text in memory under the contract below.
 
 ## Consistency tokens
 
@@ -211,6 +216,49 @@ has no remote-content cache across calls.
 - Thus, a conditional flag mutation fails with `protocol_error` before STORE. It
   does not become an unconditional update.
 - This unavailable beta.8 path does not report `concurrent_modification`.
+
+## Update idempotency
+
+Only `update_event` and `update_contact` use this result cache when the caller
+supplies `idempotency_key`. Create tools use resource UIDs for conflict detection.
+They do not use this cache.
+
+Each entry identifies a tool, a key, and a SHA-256 hash of parsed update
+parameters. Parameters include the resource identity, changed fields, and `etag`.
+Calendar scope and `recurrence_id` also participate. Tool namespaces prevent a
+Calendar key from matching a Contacts key.
+
+The first valid request owns a pending claim. Concurrent calls with the same key
+and parameters wait for that owner. Different parameters return `conflict`, even
+while the owner is pending. Cancellation or timeout ends only the waiting call.
+It does not release the owner's claim or permit another write.
+
+| Entry state | Lifetime |
+|-------------|----------|
+| Pending claim | No expiry while the process runs |
+| Success or definitive domain error | 15 minutes after the request completes |
+| `outcome_unknown`, unclassified error, or `internal_error` | Until process exit |
+| Response serialization or result-size error after a successful write | Until process exit |
+| Interrupted handler or result that cannot be recorded | Bounded `outcome_unknown` result until process exit |
+
+The server saves result text and the MCP `IsError` flag. Cache hits return the
+saved result through the domain writer, which applies redaction and result
+limits again. A cache hit does not extend the expiry interval. Local validation
+failures before a claim do not create an entry.
+
+The cache has a shared limit of 1,024 entries and a 256 KiB payload limit per
+entry. Expired known results free capacity. Pending and uncertain entries are
+not removed to make space. A full cache returns `conflict` for a new claim before
+it calls the service. Existing entries can still return their saved results.
+
+All entries exist only in process memory. Another process cannot use them.
+Process exit removes every entry. After expiry or restart, the same key can
+start a new write. Neither condition proves that the previous write failed.
+Before choosing a new key after an ambiguous result, use `get_event` or
+`get_contact` to reconcile the resource.
+
+See [error recovery](error-codes.md#update-idempotency-and-recovery) for caller
+procedures, including full-cache conflicts.
 
 ## Output model
 
@@ -257,6 +305,24 @@ fields. They are tool, `domain`, `resourceType`, process-local opaque HMAC
 Calendar hashes its `path/UID` tuple before logging. Production audit records
 contain no raw Calendar path or UID. They also contain no raw contact UID,
 `mailbox/UIDVALIDITY/UID` tuple, or recipient.
+
+## Protocol verification
+
+Production startup and the fixture-only executable use shared MCP registration
+and bounded stdio startup code. The fixture executable is compiled from
+`cmd/icloud-mcp` tests with synthetic services. It checks initialization,
+capability registration, denied writes, frame limits, cancellation, domain
+failure isolation, and shutdown. These fixtures do not change production
+destination policies.
+
+The external `scripts/protocol_evidence.py` runner also selects `^TestProtocol`
+scenarios in `internal/mcptools`. Idempotency scenarios use stateful service
+fixtures. Recurrence scenarios use a local TLS DAV fixture and the Calendar
+client. These checks do not establish live iCloud compatibility.
+
+The runner saves transcripts, commands, environment metadata, source revision,
+working diff, fixture SHA-256 values, and results outside the repository.
+See [Testing](testing.md) for commands and artifact details.
 
 See [CalDAV compatibility](caldav-compatibility.md),
 [CardDAV compatibility](carddav-compatibility.md),

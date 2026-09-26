@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"os"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -265,14 +264,51 @@ func oversizedToolErrorFrame(id json.RawMessage) []byte {
 	return append(replacement, '\n')
 }
 
-func serveBoundedStdio(mcpServer *server.MCPServer, errLogger *log.Logger, redactor *security.Redactor) error {
+func serveBoundedStdio(mcpServer *server.MCPServer, stdin io.Reader, stdout io.Writer, errLogger *log.Logger, redactor *security.Redactor) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	return listenBoundedStdio(ctx, mcpServer, os.Stdin, os.Stdout, errLogger, redactor)
+	return listenBoundedStdio(ctx, mcpServer, stdin, stdout, errLogger, redactor)
 }
 
 func listenBoundedStdio(ctx context.Context, mcpServer *server.MCPServer, stdin io.Reader, stdout io.Writer, errLogger *log.Logger, redactor *security.Redactor) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	input := &cancelOnReadError{
+		Reader: newBoundedFrameReader(stdin), cancel: cancel, terminal: make(chan error, 1),
+	}
 	stdioServer := server.NewStdioServer(mcpServer)
 	stdioServer.SetErrorLogger(errLogger)
-	return stdioServer.Listen(ctx, newBoundedFrameReader(stdin), newBoundedErrorWriter(stdout, redactor))
+	err := stdioServer.Listen(ctx, input, newBoundedErrorWriter(stdout, redactor))
+	select {
+	case readErr := <-input.terminal:
+		// Preserve framing failures even when cancellation wins the read race.
+		if !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+	default:
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// Cancel handlers before Listen waits for its workers after an input failure.
+// EOF is a normal shutdown. Other terminal read errors remain failures.
+type cancelOnReadError struct {
+	io.Reader
+	cancel   context.CancelFunc
+	terminal chan error
+}
+
+func (r *cancelOnReadError) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err != nil {
+		select {
+		case r.terminal <- err:
+		default:
+		}
+		r.cancel()
+	}
+	return n, err
 }

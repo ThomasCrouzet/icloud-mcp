@@ -153,6 +153,10 @@ preconditions map to `conflict`, `validation`, and `payload_too_large`.
 Unknown or malformed preconditions map to `protocol_error`. Results never
 contain raw XML.
 
+MCP `update_contact` can return a cached result for `idempotency_key`. This path
+sends no new CardDAV mutation. See the
+[update idempotency contract](architecture.md#update-idempotency).
+
 ## Limits
 
 | Resource | Limit |

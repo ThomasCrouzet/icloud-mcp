@@ -10,9 +10,9 @@ The CI lint step uses Go 1.27.1. Other CI checks and release builds use Go 1.26.
 Run the complete local gates:
 
 ```bash
-make test                 # go test ./... -race -cover
-make lint                 # go vet plus pinned golangci-lint
-make build                # host-toolchain development binary
+GOMAXPROCS=2 GOFLAGS=-p=1 make test # go test ./... -race -cover
+GOMAXPROCS=2 GOFLAGS=-p=1 make lint # go vet plus pinned golangci-lint
+GOMAXPROCS=2 GOFLAGS=-p=1 make build # host-toolchain development binary
 make release VERSION=v0.4.0 # packaged linux/arm64 in pinned Go 1.26.8 container
 ```
 
@@ -66,7 +66,8 @@ done
 | Mail service/fake sessions | `internal/mail` | UIDVALIDITY, UID-window search, MIME output, flag/move/trash safety, SMTP recipient and failure matrices |
 | MCP contract | `internal/mcptools` | schemas, handlers, exact registration counts, capability manifest, audit/error/redaction paths |
 | Security | `internal/security` | all four destination policies, ports/TLS, dial-before-DNS rejection, encoded secret variants, audit tokens |
-| MCP end-to-end | in-process MCP client | `tools/list`, global read-only, domain combinations, capabilities, panic redaction |
+| MCP in-process | `internal/mcptools` | Protocol dispatch, stateful idempotency fixtures, real Calendar client with synthetic TLS DAV, capabilities, panic redaction |
+| Executable protocol | `scripts/protocol_evidence.py`, `cmd/icloud-mcp/protocol_fixture_test.go` | Shared startup, discovery, bounded stdio, registration, cancellation, domain failure isolation, shutdown |
 | Integration | root `integration_test.go`, build tag `integration` | real iCloud Calendar reads, opt-in Contacts reads/CRUD, explicitly gated Mail reads/mutation/self-send with exact fixture cleanup, local validation/free slots |
 
 Handlers run concurrently. Thus, test all domain and MCP packages with `-race`.
@@ -78,6 +79,72 @@ These tests also cover the 1 MiB stdio frame and 64 KiB reflected-error limit.
 They cover the 256 KiB Calendar and MCP result limit. They also cover the 1 MiB
 SMTP inbound limit. Parser tests cover XML, IMAP, and MIME depth and item limits.
 Recurrence tests cover per-series and total work limits.
+
+## Repeatable protocol evidence
+
+Use Python 3.9 or newer and the project Go toolchain.
+Select a new output directory outside the repository:
+
+```bash
+make protocol-evidence EVIDENCE_DIR=/absolute/external/path/icloud-protocol-run
+```
+
+The runner limits Go to two processors and one build job. It executes each
+scenario in sequence. It does not inherit product credentials or proxy settings.
+All identities, passwords, and remote content are synthetic.
+
+The runner compiles the `cmd/icloud-mcp` test executable with race detection and
+coverage. Its test-only entry point supplies synthetic domain transports.
+The executable uses the product configuration loader, discovery, lifecycle,
+registration, middleware, and bounded stdio code. It is not the release binary.
+Production endpoint policies remain fixed; fixture switches exist only in tests.
+
+Executable scenarios check:
+
+- Initialization from a split input frame and the exact capability manifest.
+- Default, read-only, full, and Mail-read-only tool inventories.
+- Direct calls to absent mutation tools, which must return protocol errors.
+- Contacts authentication and malformed XML failures through the real client.
+- IMAP authentication and malformed greeting failures through the real adapter.
+- Calendar reads and unchanged capabilities after repeated optional-domain failures.
+- Request cancellation, followed by a successful Calendar read.
+- Frames at 1 MiB and one byte above it. Oversized input must not reach dispatch.
+- Clean EOF and SIGTERM shutdown, including a Calendar request in progress.
+
+Calendar and Contacts fixture transports return in-memory DAV responses.
+The IMAP fixture uses an in-memory connection. These scenarios do not test live
+iCloud access or production TLS connections.
+
+The same run executes `TestProtocol` scenarios in `internal/mcptools`:
+
+- Stateful update fixtures verify success, conflict, canceled waiters, ambiguous
+  dispatch, concurrent callers, cache expiry, and capacity.
+- Calendar scenarios use the real client with a local TLS DAV server.
+  Synthetic iCalendar files combine overrides, EXDATE, DST, and all-day events.
+- Exact occurrences and free slots cover 23-hour and 25-hour days.
+  Limit fixtures cover truncation, iterator work, aggregate work, and materialization.
+  Incomplete busy data must never produce free slots.
+
+Each output directory contains:
+
+| Artifact | Contents |
+|----------|----------|
+| `manifest.json` | Commands, revision, environment, working diff hash, source and fixture hashes, results, artifact hashes |
+| `working.patch` | Tracked changes relative to the recorded revision |
+| `fixtures/` | Protocol test sources, runner source, and synthetic data used by the run |
+| `*.jsonl` | Executable input/output, stderr, exit status, and in-process request/result records |
+| `*.coverage.out` | Per-process executable coverage |
+| `executable-coverage.out` | Combined executable coverage |
+| `protocol-fixture` | The compiled fixture executable |
+
+Large input frames are recorded as a base message, padding length, and SHA-256.
+This representation reconstructs the exact bytes without repeated padding in logs.
+The runner saves failure metadata before it exits with a nonzero status.
+It refuses an existing output directory to preserve previous evidence.
+
+CI uploads this directory as `protocol-evidence` for 14 days, including failed
+runs. It combines executable and Go test coverage before it checks existing floors.
+The executable coverage adds lifecycle evidence; no coverage threshold is reduced.
 
 ## Capability matrix tests
 
@@ -118,6 +185,8 @@ Calendar and Contacts:
   successful with `resultIncomplete` and is not ambiguous.
 - Calendar retries only reads. It never repeats PUT, DELETE, or full-series
   delete. An ambiguous dispatched mutation returns `outcome_unknown`.
+- Keyed updates keep ambiguous outcomes until process exit. Duplicate callers
+  cannot release pending claims. See the [cache contract](architecture.md#update-idempotency).
 
 Mail:
 

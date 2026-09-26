@@ -1,0 +1,114 @@
+{
+  "timezone": "America/New_York",
+  "calendars": {
+    "/recurrence/calendars/combined/": ["spring-timed.ics", "spring-allday.ics", "spring-overlap.ics"]
+  },
+  "calls": [
+    {
+      "name": "exact_occurrences",
+      "tool": "search_events",
+      "arguments": {
+        "calendar": "/recurrence/calendars/combined/",
+        "start": "2026-03-06T08:00:00-05:00",
+        "end": "2026-03-11T00:00:00-04:00"
+      },
+      "result": {
+        "count": 8, "total": 8, "offset": 0, "limit": 100, "truncated": false,
+        "events": [
+          {"uid":"overlap","title":"Overnight","start":"2026-03-05T23:00:00-05:00","end":"2026-03-06T09:00:00-05:00","recurrenceId":"2026-03-05T23:00:00-05:00","timezone":"America/New_York","etag":"\"recurrence-fixture\""},
+          {"uid":"timed","title":"Daily","start":"2026-03-06T09:00:00-05:00","end":"2026-03-06T10:00:00-05:00","recurrenceId":"2026-03-06T09:00:00-05:00","timezone":"America/New_York","etag":"\"recurrence-fixture\""},
+          {"uid":"overlap","title":"Overnight","start":"2026-03-06T23:00:00-05:00","end":"2026-03-07T09:00:00-05:00","recurrenceId":"2026-03-06T23:00:00-05:00","timezone":"America/New_York","etag":"\"recurrence-fixture\""},
+          {"uid":"timed","title":"Moved into range","start":"2026-03-07T11:00:00-05:00","end":"2026-03-07T12:00:00-05:00","recurrenceId":"2026-03-05T09:00:00-05:00","isOverride":true,"timezone":"America/New_York","etag":"\"recurrence-fixture\""},
+          {"uid":"allday","title":"All day","start":"2026-03-08","end":"2026-03-09","allDay":true,"recurrenceId":"2026-03-08","etag":"\"recurrence-fixture\""},
+          {"uid":"timed","title":"Daily","start":"2026-03-08T09:00:00-04:00","end":"2026-03-08T10:00:00-04:00","recurrenceId":"2026-03-08T09:00:00-04:00","timezone":"America/New_York","etag":"\"recurrence-fixture\""},
+          {"uid":"allday","title":"Moved all day","start":"2026-03-10","end":"2026-03-11","allDay":true,"recurrenceId":"2026-03-09","isOverride":true,"etag":"\"recurrence-fixture\""},
+          {"uid":"timed","title":"Moved within range","start":"2026-03-10T10:00:00-04:00","end":"2026-03-10T11:00:00-04:00","recurrenceId":"2026-03-10T09:00:00-04:00","isOverride":true,"timezone":"America/New_York","etag":"\"recurrence-fixture\""}
+        ]
+      }
+    },
+    {
+      "name": "all_day_busy",
+      "tool": "find_free_slots",
+      "arguments": {
+        "calendar": "/recurrence/calendars/combined/",
+        "start": "2026-03-06T08:00:00-05:00",
+        "end": "2026-03-11T00:00:00-04:00",
+        "duration_minutes": 60,
+        "working_hours_start": "08:00",
+        "working_hours_end": "13:00"
+      },
+      "result": {
+        "count": 11,
+        "slots": [
+          {"start":"2026-03-06T10:00:00-05:00","end":"2026-03-06T11:00:00-05:00"},
+          {"start":"2026-03-06T11:00:00-05:00","end":"2026-03-06T12:00:00-05:00"},
+          {"start":"2026-03-06T12:00:00-05:00","end":"2026-03-06T13:00:00-05:00"},
+          {"start":"2026-03-07T09:00:00-05:00","end":"2026-03-07T10:00:00-05:00"},
+          {"start":"2026-03-07T10:00:00-05:00","end":"2026-03-07T11:00:00-05:00"},
+          {"start":"2026-03-07T12:00:00-05:00","end":"2026-03-07T13:00:00-05:00"},
+          {"start":"2026-03-09T08:00:00-04:00","end":"2026-03-09T09:00:00-04:00"},
+          {"start":"2026-03-09T09:00:00-04:00","end":"2026-03-09T10:00:00-04:00"},
+          {"start":"2026-03-09T10:00:00-04:00","end":"2026-03-09T11:00:00-04:00"},
+          {"start":"2026-03-09T11:00:00-04:00","end":"2026-03-09T12:00:00-04:00"},
+          {"start":"2026-03-09T12:00:00-04:00","end":"2026-03-09T13:00:00-04:00"}
+        ]
+      }
+    },
+    {
+      "name": "all_day_ignored",
+      "tool": "find_free_slots",
+      "arguments": {
+        "calendar": "/recurrence/calendars/combined/",
+        "start": "2026-03-06T08:00:00-05:00",
+        "end": "2026-03-11T00:00:00-04:00",
+        "duration_minutes": 60,
+        "working_hours_start": "08:00",
+        "working_hours_end": "13:00",
+        "include_all_day_busy": false
+      },
+      "result": {
+        "count": 19,
+        "slots": [
+          {"start":"2026-03-06T10:00:00-05:00","end":"2026-03-06T11:00:00-05:00"},
+          {"start":"2026-03-06T11:00:00-05:00","end":"2026-03-06T12:00:00-05:00"},
+          {"start":"2026-03-06T12:00:00-05:00","end":"2026-03-06T13:00:00-05:00"},
+          {"start":"2026-03-07T09:00:00-05:00","end":"2026-03-07T10:00:00-05:00"},
+          {"start":"2026-03-07T10:00:00-05:00","end":"2026-03-07T11:00:00-05:00"},
+          {"start":"2026-03-07T12:00:00-05:00","end":"2026-03-07T13:00:00-05:00"},
+          {"start":"2026-03-08T08:00:00-04:00","end":"2026-03-08T09:00:00-04:00"},
+          {"start":"2026-03-08T10:00:00-04:00","end":"2026-03-08T11:00:00-04:00"},
+          {"start":"2026-03-08T11:00:00-04:00","end":"2026-03-08T12:00:00-04:00"},
+          {"start":"2026-03-08T12:00:00-04:00","end":"2026-03-08T13:00:00-04:00"},
+          {"start":"2026-03-09T08:00:00-04:00","end":"2026-03-09T09:00:00-04:00"},
+          {"start":"2026-03-09T09:00:00-04:00","end":"2026-03-09T10:00:00-04:00"},
+          {"start":"2026-03-09T10:00:00-04:00","end":"2026-03-09T11:00:00-04:00"},
+          {"start":"2026-03-09T11:00:00-04:00","end":"2026-03-09T12:00:00-04:00"},
+          {"start":"2026-03-09T12:00:00-04:00","end":"2026-03-09T13:00:00-04:00"},
+          {"start":"2026-03-10T08:00:00-04:00","end":"2026-03-10T09:00:00-04:00"},
+          {"start":"2026-03-10T09:00:00-04:00","end":"2026-03-10T10:00:00-04:00"},
+          {"start":"2026-03-10T11:00:00-04:00","end":"2026-03-10T12:00:00-04:00"},
+          {"start":"2026-03-10T12:00:00-04:00","end":"2026-03-10T13:00:00-04:00"}
+        ]
+      }
+    },
+    {
+      "name": "23_hour_day_midnight_bounds",
+      "tool": "find_free_slots",
+      "arguments": {
+        "calendar": "/recurrence/calendars/combined/",
+        "start": "2026-03-07T22:00:00-05:00",
+        "end": "2026-03-09T02:00:00-04:00",
+        "duration_minutes": 60
+      },
+      "result": {
+        "count": 4,
+        "slots": [
+          {"start":"2026-03-07T22:00:00-05:00","end":"2026-03-07T23:00:00-05:00"},
+          {"start":"2026-03-07T23:00:00-05:00","end":"2026-03-08T00:00:00-05:00"},
+          {"start":"2026-03-09T00:00:00-04:00","end":"2026-03-09T01:00:00-04:00"},
+          {"start":"2026-03-09T01:00:00-04:00","end":"2026-03-09T02:00:00-04:00"}
+        ]
+      }
+    }
+  ]
+}

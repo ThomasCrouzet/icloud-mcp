@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestIdempotencyStoreBeginCompleteConflict(t *testing.T) {
@@ -20,27 +22,27 @@ func TestIdempotencyStoreBeginCompleteConflict(t *testing.T) {
 	}
 
 	payload, conflict, hit, ready := s.begin(key, h1)
-	if payload != "" || conflict || hit || !ready {
-		t.Fatalf("first begin = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	if payload != (idempotencyOutcome{}) || conflict || hit || !ready {
+		t.Fatalf("first begin = (%+v,%v,%v,%v)", payload, conflict, hit, ready)
 	}
-	s.complete(key, h1, `{"ok":true}`)
+	s.complete(key, h1, mcp.NewToolResultText(`{"ok":true}`), false)
 
 	payload, conflict, hit, ready = s.begin(key, h1)
-	if !hit || conflict || ready || payload != `{"ok":true}` {
-		t.Fatalf("same params = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	if !hit || conflict || ready || payload.payload != `{"ok":true}` || payload.isError {
+		t.Fatalf("same params = (%+v,%v,%v,%v)", payload, conflict, hit, ready)
 	}
 
 	payload, conflict, hit, ready = s.begin(key, h2)
-	if !conflict || !hit || ready || payload != "" {
-		t.Fatalf("different params = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	if !conflict || !hit || ready || payload != (idempotencyOutcome{}) {
+		t.Fatalf("different params = (%+v,%v,%v,%v)", payload, conflict, hit, ready)
 	}
 }
 
 func TestIdempotencyStoreIgnoresEmpty(t *testing.T) {
 	s := newIdempotencyStore()
-	s.complete("", "h", "p")
-	s.complete("k", "", "p")
-	s.complete("k", "h", "")
+	s.complete("", "h", mcp.NewToolResultText("p"), false)
+	s.complete("k", "", mcp.NewToolResultText("p"), false)
+	s.complete("k", "h", mcp.NewToolResultText(""), false)
 	if _, _, found := s.lookup("k", "h"); found {
 		t.Fatal("empty inputs must not store")
 	}
@@ -62,7 +64,7 @@ func TestIdempotencyStoreExpires(t *testing.T) {
 	if !ready {
 		t.Fatal("expected ready")
 	}
-	s.complete("exp", h, "cached")
+	s.complete("exp", h, mcp.NewToolResultText("cached"), false)
 	if _, _, found := s.lookup("exp", h); !found {
 		t.Fatal("expected live entry")
 	}
@@ -115,15 +117,15 @@ func TestIdempotencyStoreSingleFlight(t *testing.T) {
 				t.Errorf("waiter unexpected conflict=%v ready=%v", conflict, ready)
 				return
 			}
-			if !hit || payload != "payload" {
-				t.Errorf("waiter hit=%v payload=%q", hit, payload)
+			if !hit || payload.payload != "payload" || payload.isError {
+				t.Errorf("waiter hit=%v payload=%+v", hit, payload)
 				return
 			}
-			results <- payload
+			results <- payload.payload
 		}()
 	}
 	time.Sleep(20 * time.Millisecond)
-	s.complete("shared", h, "payload")
+	s.complete("shared", h, mcp.NewToolResultText("payload"), false)
 	wg.Wait()
 	close(results)
 	count := 0
@@ -162,8 +164,8 @@ func TestIdempotencyStoreWaitHonorsContext(t *testing.T) {
 	cancel()
 	started := time.Now()
 	payload, conflict, hit, ready := s.beginContext(ctx, "shared", h)
-	if payload != "" || conflict || hit || ready {
-		t.Fatalf("canceled begin = (%q,%v,%v,%v)", payload, conflict, hit, ready)
+	if payload != (idempotencyOutcome{}) || conflict || hit || ready {
+		t.Fatalf("canceled begin = (%+v,%v,%v,%v)", payload, conflict, hit, ready)
 	}
 	if time.Since(started) > time.Second {
 		t.Fatal("canceled idempotency wait did not return promptly")

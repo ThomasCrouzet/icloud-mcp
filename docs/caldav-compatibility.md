@@ -57,6 +57,10 @@ policies. See [CardDAV compatibility](carddav-compatibility.md) and
   automatically followed response observed after dispatch has the same result.
 - The client never follows or repeats that mutation.
 
+MCP `update_event` can return a cached result for `idempotency_key`. This path
+sends no new CalDAV mutation. See the
+[update idempotency contract](architecture.md#update-idempotency).
+
 ## Recurrence
 
 - Recurrence expansion preserves the RRULE TZID. It never calls `.UTC()` on

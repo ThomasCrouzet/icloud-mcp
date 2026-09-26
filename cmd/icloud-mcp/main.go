@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -91,6 +92,28 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
+	// Fixed production transports remain separate from the shared lifecycle.
+	calendarCredentials := security.CredentialPair{
+		Username: strings.Clone(cfg.Email),
+		Password: strings.Clone(cfg.Password),
+	}
+	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
+	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
+	doer := icloud.NewRetryClassifier(authHTTP)
+	ic := icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
+	contactsService, mailService, err := newOptionalServices(cfg)
+	if err == nil {
+		err = runServer(cfg, auditFormat, *healthAddr, ic, contactsService, mailService, os.Stdin, os.Stdout)
+	}
+	if err != nil {
+		log.Printf("server failed: %s", newBootRedactor(cfg).Redact(err.Error()))
+		os.Exit(1)
+	}
+}
+
+// runServer shares discovery, registration, redaction, and stdio with the
+// fixture executable. Only main constructs production transports.
+func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr string, ic *icloud.Client, contactsService contacts.Service, mailService maildomain.Service, stdin io.Reader, stdout io.Writer) error {
 	// 2. Redaction: ALL stderr goes through the RedactingWriter from here on.
 	// Calendar credentials are always covered. Mail credentials and SASL PLAIN
 	// variants are added only when the Mail domain is enabled.
@@ -119,41 +142,19 @@ func main() {
 		cfg.EffectiveMailSend(),
 	)
 
-	// 3. Domain-isolated clients. Calendar keeps its existing authenticated
-	// allowlisted HTTP/retry stack. Optional constructors perform no network I/O.
-	calendarCredentials := security.CredentialPair{
-		Username: strings.Clone(cfg.Email),
-		Password: strings.Clone(cfg.Password),
-	}
-	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
-	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
-	// The retry classifier handles 429, 502, 503, and 504 responses. It applies
-	// Retry-After, backoff, jitter, stable codes, and Apple-aware messages.
-	// Every CalDAV request passes through the allowlist, authentication, and
-	// retry layers. This includes custom discovery, REPORT, conditional PUT,
-	// and go-webdav requests. See internal/icloud/retry.go.
-	doer := icloud.NewRetryClassifier(authHTTP)
-	contactsService, mailService, err := newOptionalServices(cfg)
-	if err != nil {
-		slog.Error("optional domain initialization failed", "err", err)
-		os.Exit(1)
-	}
-
 	// 4. iCloud service + boot-time discovery (validates the credentials
 	// before starting the MCP server).
-	ic := icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
 	discoverCtx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
-	err = ic.Discover(discoverCtx)
+	err := ic.Discover(discoverCtx)
 	cancel()
 	if err != nil {
-		slog.Error("iCloud discovery failed (check ICLOUD_EMAIL and the app-specific password)", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("iCloud discovery failed (check ICLOUD_EMAIL and the app-specific password): %w", err)
 	}
 	svc := icloud.NewGuardedService(ic, 2, 500*time.Millisecond)
 
 	// 5. MCP server.
 	s := newMCPServer(red)
-	healthEnabled := *healthAddr != ""
+	healthEnabled := healthAddr != ""
 	mcptools.RegisterUnified(s, mcptools.Deps{
 		Service:         svc,
 		ContactsService: contactsService,
@@ -172,12 +173,11 @@ func main() {
 			"contacts": {Status: domainStatus(cfg.EnableContacts)},
 			"mail":     {Status: domainStatus(cfg.EnableMail)},
 		}
-		h, err := health.Start(*healthAddr, version, domains, func() any {
+		h, err := health.Start(healthAddr, version, domains, func() any {
 			return collectRateLimits(svc, contactsService, mailService)
 		})
 		if err != nil {
-			slog.Error("healthcheck startup failed", "err", err)
-			os.Exit(1)
+			return fmt.Errorf("healthcheck startup failed: %w", err)
 		}
 		defer func() { _ = h.Close() }()
 	}
@@ -199,10 +199,7 @@ func main() {
 	// The error logger MUST use the redacting writer, otherwise transport logs
 	// bypass stderr redaction.
 	errLogger := log.New(stderr, "", log.LstdFlags)
-	if err := serveBoundedStdio(s, errLogger, red); err != nil {
-		slog.Error("server stopped with an error", "err", err)
-		os.Exit(1)
-	}
+	return serveBoundedStdio(s, stdin, stdout, errLogger, red)
 }
 
 func newMCPServer(red *security.Redactor) *server.MCPServer {

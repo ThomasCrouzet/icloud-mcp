@@ -4,6 +4,7 @@ DIST_DIR    := dist
 BIN_DIR     := bin
 INSTALL_DIR ?= $(HOME)/.local/bin
 GO          ?= go
+EVIDENCE_DIR ?=
 
 # Use a fixed digest for the release builder image to make builds reproducible.
 # The module minimum is Go 1.26.0; this digest tracks golang:1.26.8.
@@ -23,7 +24,7 @@ BUILDFLAGS := -trimpath -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 RELEASE_FILES := LICENSE THIRD_PARTY_NOTICES.md
 
-.PHONY: build check-release-version check-release-clean release release-all install test lint vet cover clean help
+.PHONY: build check-release-version check-release-clean release release-all install test protocol-evidence lint vet cover clean help
 
 build: ## Build a local binary with the host toolchain. Include VERSION (default dev).
 	@mkdir -p $(BIN_DIR)
@@ -93,10 +94,14 @@ install: build ## Build a host-compatible binary and copy it to INSTALL_DIR.
 	cp $(BIN_DIR)/$(PROJECT) $(INSTALL_DIR)/$(PROJECT)
 	@echo "Installed: $(INSTALL_DIR)/$(PROJECT)"
 
-test: ## Run unit tests with race detection and coverage.
+test: ## Run Go tests with race detection and coverage.
 	$(GO) test ./... -race -cover
 
-cover: ## Run unit tests and create a coverage report for HTML display.
+protocol-evidence: ## Run synthetic protocol scenarios. Set EVIDENCE_DIR to a new external directory.
+	@test -n "$(EVIDENCE_DIR)" || { echo "Set EVIDENCE_DIR to a new directory outside the repository" >&2; exit 1; }
+	python3 scripts/protocol_evidence.py --output "$(EVIDENCE_DIR)"
+
+cover: ## Run Go tests and create a coverage report for HTML display.
 	@mkdir -p $(DIST_DIR)
 	$(GO) test ./... -race -coverprofile=$(DIST_DIR)/coverage.out
 	$(GO) tool cover -func=$(DIST_DIR)/coverage.out | tail -1

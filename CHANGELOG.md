@@ -6,8 +6,40 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add an external protocol evidence runner for fixture-only stdio and in-process
+  MCP scenarios. Record transcripts, run metadata, source revision, working diff,
+  fixture SHA-256 values, and results outside the repository.
+- Keep the CI `protocol-evidence` artifact for 14 days.
+- Add combined recurrence fixtures for DST, all-day events, overrides, free
+  slots, and result and work limits.
+- Add protocol scenarios for update idempotency and domain failure isolation.
+
 ### Changed
 - Update CI and the release builder image to Go 1.26.8. The module go directive moves to 1.26.0.
+- Use shared MCP registration and stdio startup code for production and the
+  fixture-only executable compiled from `cmd/icloud-mcp` tests.
+- For keyed updates, keep success and definitive domain errors for 15 minutes
+  after the request completes.
+- For keyed updates, keep unknown outcomes, unclassified errors, and internal
+  errors until process exit. Response serialization or size errors after a
+  successful write also stay until process exit.
+
+### Fixed
+- Cancel active handlers on stdin closure. Treat SIGTERM and EOF as normal
+  shutdown. Preserve terminal framing errors as failures.
+- Keep pending update claims when duplicate callers cancel or time out.
+- Keep the MCP error flag and apply domain redaction again on cache hits.
+- Return `conflict` for Contacts update key conflicts and full-cache claims.
+  A full cache prevents new claims before mutation dispatch.
+- Document resource reconciliation before a new update key or process restart.
+
+### Removed
+- Remove the obsolete roadmap. Keep current behavior and procedures in the
+  README, compatibility documents, and contributor guide.
+- Remove the completed improvement priorities. Keep their repeatable checks in
+  the testing guide and CI.
+
 ## [0.4.1] - 2026-09-06
 
 ### Security

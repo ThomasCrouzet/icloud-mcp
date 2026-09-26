@@ -19,7 +19,7 @@ SHA-256 checksums. `make install` always builds for the current host.
 
 ## Rules
 
-- **English only** in tracked files, commits, and tags.
+- Use **English ASCII** in tracked files, commits, and tags.
 - **No em dash** (U+2014). Use commas, colons, or different wording.
 - Do not add automated `Co-Authored-By` trailers to commits or tags.
 - Keep the **10 direct dependencies** in `go.mod`. If you add one, add a
@@ -38,6 +38,8 @@ SHA-256 checksums. `make install` always builds for the current host.
   [docs/caldav-compatibility.md](docs/caldav-compatibility.md).
 - Retry only Calendar reads. Never replay PUT, DELETE, or a full-series delete.
   Keep `outcome_unknown` for ambiguous mutations after dispatch.
+- Keep the [update idempotency contract](docs/architecture.md#update-idempotency).
+  A cached uncertain result must prevent another write with the same key.
 - Keep bounds on CardDAV href and redirect validation. Keep strong conditional
   writes. See [docs/carddav-compatibility.md](docs/carddav-compatibility.md).
 - Keep the IMAP UIDVALIDITY and MODSEQ checks. Keep the decode-time limits and
@@ -65,7 +67,13 @@ SHA-256 checksums. `make install` always builds for the current host.
 - Do not add tests for coverage percentages, type contracts, dependency behavior, or mocked call sequences alone.
 - Keep the existing package floors and 78% aggregate coverage gate.
 
-See [docs/testing.md](docs/testing.md) for commands, protocol limits, and live-integration gates.
+Use `make protocol-evidence EVIDENCE_DIR=/external/path` for fixture-only protocol
+evidence. Select an absolute output directory outside the repository. The runner
+records executable stdio scenarios and in-process idempotency and recurrence
+scenarios. These checks do not use live iCloud credentials.
+
+See [docs/testing.md](docs/testing.md) for commands, artifacts, protocol limits,
+and live-integration gates.
 
 ## Writing
 
@@ -89,8 +97,7 @@ These voluntary maintainer targets are not a paid SLA:
 - **Issue triage:** within 5 business days when capacity allows.
 - **PR review:** about 2 weeks for ordinary changes. We aim to review critical
   security fixes in a few days.
-- **Supported versions:** latest release plus one prior minor line
-  (for example v0.3.x and v0.2.x while both are current).
+- **Supported versions:** latest release plus one previous minor line.
 - **Breaking changes:** announced in CHANGELOG at least one release in advance
   when practical.
 - **Security fixes:** expedited and backported to the prior supported line when
@@ -110,5 +117,5 @@ These voluntary maintainer targets are not a paid SLA:
 - Do not commit secrets, `.env` files, or local agent notes.
 - Do not create or store audit or review reports in this repository.
   Keep them outside it, including reports that Git would ignore.
-- Label roadmap work with `phase-1`, `phase-2`, or `phase-3` when applicable
-  (see [ROADMAP.md](ROADMAP.md)).
+- Record protocol compatibility changes in the applicable document under `docs/`
+  and in [CHANGELOG.md](CHANGELOG.md).

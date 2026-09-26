@@ -134,17 +134,33 @@ beta.8 cannot observe tagged MODIFIED. See the full behavior notes:
 [docs/carddav-compatibility.md](docs/carddav-compatibility.md),
 [docs/mail-compatibility.md](docs/mail-compatibility.md).
 
-**Idempotency:** `create_event` and `create_contact` use server-side UID keys.
-Use `client_uid` or its `idempotency_key` alias. A repeated create conflicts if
-the UID exists. It never silently overwrites the object. The optional
-`idempotency_key` for `update_event` and `update_contact` is
-**process-local only**. Its in-memory cache has a **15 minute TTL** and clears
-when the process restarts.
+### Create UIDs and update idempotency
 
-The same key and parameters return the cached success. The same key with
-different parameters returns `conflict`. Combine an update key with a strong
-`etag` when possible. See
-[docs/error-codes.md](docs/error-codes.md).
+`create_event` and `create_contact` use `client_uid` or its `idempotency_key`
+alias as the resource UID. A create returns `conflict` if that UID exists.
+It never silently overwrites the object.
+
+Only `update_event` and `update_contact` use the **process-local result cache**
+through `idempotency_key`. Keys have separate tool namespaces. The two tools
+share a limit of **1,024 entries**, with at most **256 KiB per cached payload**.
+The same key and parameters return the saved result, including its `IsError`
+flag. The domain applies redaction and result limits again. Different parameters,
+including a different `etag`, return `conflict`.
+
+Success and definitive domain errors stay for **15 minutes after the request
+completes**. Unknown outcomes, unclassified errors, and internal errors stay
+**until process exit**. Response serialization or size errors after a successful
+write also stay until process exit. Pending claims never expire. A cancelled or
+timed-out duplicate caller does not release the original request's claim.
+
+A full cache rejects new claims with `conflict` before the write. Keep the key.
+Wait for capacity. After an ambiguous response, read with `get_event` or
+`get_contact` before choosing a new key. A new key or process restart does not
+prove that the previous write failed. Use a fresh strong `etag` for any necessary
+new update.
+
+See the [cache contract](docs/architecture.md#update-idempotency) and
+[recovery procedure](docs/error-codes.md#update-idempotency-and-recovery).
 
 ## Configuration
 
@@ -197,10 +213,6 @@ The default format is `json`.
   dates use `YYYY-MM-DD`. See `calendar_capabilities.outputFormat`.
 - Contacts birthdays: write `YYYY-MM-DD` only.
 - Mail search: `since` inclusive, `before` exclusive (`YYYY-MM-DD`).
-
-Agent error codes and retry policy: [docs/error-codes.md](docs/error-codes.md).
-Host wiring examples: [docs/agent-hosts.md](docs/agent-hosts.md). Product roadmap:
-[ROADMAP.md](ROADMAP.md).
 
 ## Security (summary)
 
@@ -314,6 +326,35 @@ includes windows/amd64 smoke. The binary budget is 20 MiB.
 The public-text policy checks the tree and new commits. Live iCloud tests use
 the `integration` build tag. These tests are optional and never run in CI. See
 [docs/testing.md](docs/testing.md).
+
+For fixture-only protocol evidence, use an absolute output path outside the
+repository:
+
+```bash
+make protocol-evidence EVIDENCE_DIR=/external/path
+```
+
+The runner builds an executable from `cmd/icloud-mcp` tests with shared MCP
+registration and stdio startup code. It also runs in-process idempotency and
+recurrence scenarios. It saves transcripts, run metadata, source revision,
+working diff, fixture SHA-256 values, and results outside the repository.
+CI keeps the `protocol-evidence` artifact for 14 days. These checks use synthetic
+fixtures and do not establish live iCloud compatibility.
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [Host integration](docs/agent-hosts.md) | YAML and JSON setup, multi-account processes, caller behavior |
+| [Error codes](docs/error-codes.md) | Retry rules and mutation recovery |
+| [Architecture](docs/architecture.md) | Startup, domain boundaries, concurrency, update idempotency |
+| [CalDAV compatibility](docs/caldav-compatibility.md) | Calendar discovery, conditional writes, recurrence, limits |
+| [CardDAV compatibility](docs/carddav-compatibility.md) | Contacts discovery, vCard support, search, conditional writes |
+| [Mail compatibility](docs/mail-compatibility.md) | IMAP sessions, message identity, mutation, SMTP submission |
+| [Security policy](SECURITY.md) and [implementation](docs/security.md) | Threat model, reporting, and technical controls |
+| [Testing](docs/testing.md) | Local checks, protocol evidence, CI, and live-integration gates |
+| [Contributing](CONTRIBUTING.md) | Development, writing, testing policy, and support |
+| [Changelog](CHANGELOG.md) | Release history |
 
 ## Attribution
 

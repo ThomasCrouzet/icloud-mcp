@@ -13,7 +13,7 @@ import (
 
 func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
-		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key for retries."),
+		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key to retrieve prior outcomes."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -30,7 +30,7 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
 		mcp.WithString("recurrence_id", mcp.Description("Required for scope=occurrence; copy search_events.recurrenceId. All-day uses YYYY-MM-DD; timed values follow "+datetimeParamDescription("start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *")),
-		mcp.WithString("idempotency_key", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Retry key; reuse with different params conflicts")),
+		mcp.WithString("idempotency_key", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Process-local key. Known outcomes stay 15 minutes; uncertain outcomes stay until process exit. Reconcile uncertain outcomes before using a new key. Different parameters conflict.")),
 	)
 }
 
@@ -203,6 +203,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		var paramsHash string
 		var nsKey string
 		var idemReady bool
+		store := defaultIdempotency
 		if idemKey != "" {
 			paramsHash, err = hashIdempotencyParams(map[string]any{
 				"tool":          "update_event",
@@ -224,13 +225,15 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				return deny("validation", err)
 			}
 			nsKey = namespacedIdempotencyKey("update_event", idemKey)
-			payload, conflict, hit, ready := defaultIdempotency.beginContext(ctx, nsKey, paramsHash)
+			outcome, conflict, hit, ready := store.beginContext(ctx, nsKey, paramsHash)
 			if conflict {
 				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
 					"idempotency_key was reused with different update parameters", nil))
 			}
 			if hit {
-				return writeCalendarEncoded(deps.Redactor, []byte(payload)), nil
+				return outcome.result(func(payload string) *mcp.CallToolResult {
+					return writeCalendarEncoded(deps.Redactor, []byte(payload))
+				}), nil
 			}
 			if !ready {
 				if ctx.Err() != nil {
@@ -239,22 +242,30 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 					))
 				}
 				return deny("validation", icloud.NewError(icloud.CodeConflict, 0,
-					"idempotency_key cache is full; retry without a key or later", nil))
+					"idempotency_key cache is full or the key is still pending; keep the key and retry later", nil))
 			}
 			idemReady = true
 		}
 		idemDone := false
 		if idemReady {
+			// An interrupted handler cannot prove that the service did not write.
 			defer func() {
 				if !idemDone {
-					defaultIdempotency.abort(nsKey, paramsHash)
+					store.complete(nsKey, paramsHash, nil, true)
 				}
 			}()
 		}
 
 		if err := deps.Service.UpdateEvent(ctx, calendarPath, uid, update); err != nil {
 			logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, calendarMutationErrorStatus(err))
-			return errResult(deps.Redactor, "updating event", err), nil
+			result := errResult(deps.Redactor, "updating event", err)
+			if idemReady {
+				typed := icloud.AsICloudError(err)
+				uncertain := typed == nil || typed.Code == icloud.CodeOutcomeUnknown || typed.Code == icloud.CodeInternal
+				store.complete(nsKey, paramsHash, result, uncertain)
+				idemDone = true
+			}
+			return result, nil
 		}
 		logCalendarMutation(deps.Audit, "update_event", calendarPath, uid, "success")
 
@@ -265,10 +276,9 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		result := writeCalendarJSON(deps.Redactor, resp)
 		if idemReady {
-			if text, ok := calendarResultText(result); ok {
-				defaultIdempotency.complete(nsKey, paramsHash, text)
-				idemDone = true
-			}
+			// A formatting error follows a successful write. It must not release the key.
+			store.complete(nsKey, paramsHash, result, result.IsError)
+			idemDone = true
 		}
 		return result, nil
 	}
