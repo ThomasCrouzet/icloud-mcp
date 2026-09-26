@@ -555,10 +555,19 @@ jobs:
             _, _ = http.Get(target)
           }
           EOF
-          if go run "$checker" "$guard_fixture"; then
+          # Keep expected rejections out of the Go error matcher.
+          negative_log="$guard_fixture/result.log"
+          if go run "$checker" "$guard_fixture" >"$negative_log" 2>&1; then
             echo "network guard accepted unresolved direct destinations" >&2
             exit 1
           fi
+          if ! grep -qF 'unresolved dynamic direct dial target' "$negative_log" || \
+             ! grep -qF 'unresolved dynamic direct HTTP target' "$negative_log"; then
+            cat "$negative_log" >&2
+            echo "network guard failed without both expected rejections" >&2
+            exit 1
+          fi
+          echo "Network guard rejected both expected invalid destinations."
 
           cat >"$policy_checker" <<'EOF'
           package main
