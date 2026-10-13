@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -417,8 +418,15 @@ func TestProtocolIdempotencyCancelledClaim(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			request := f.update("cancelled-key", "After")
-			assertIdempotencyProtocolError(t, f.call(t, ctx, "cancelled-before-claim", request), "timeout")
+			response, err := f.client.CallTool(ctx, request)
+			if response != nil || !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled call = (%+v, %v), want nil and context.Canceled", response, err)
+			}
 			f.read(t, "Before", `"v0"`)
+			_, _, calls, writes := f.state.snapshot()
+			if calls != 0 || writes != 0 {
+				t.Fatalf("cancelled request calls/writes = %d/%d, want 0/0", calls, writes)
+			}
 			if f.call(t, t.Context(), "fresh-owner", request).IsError {
 				t.Fatal("cancelled request reserved a key")
 			}
