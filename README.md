@@ -4,25 +4,18 @@
 [![Release](https://img.shields.io/github/v/release/ThomasCrouzet/icloud-mcp)](https://github.com/ThomasCrouzet/icloud-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-This unified **Apple/iCloud** MCP server supports **Calendar, Contacts, and
-Mail**. It is one static Go binary. It uses
-[Model Context Protocol](https://modelcontextprotocol.io) JSON-RPC on **stdio**.
+Access **iCloud Calendar, Contacts, and Mail** through
+[Model Context Protocol](https://modelcontextprotocol.io). One Go binary serves
+JSON-RPC over **stdio** and connects through CalDAV, CardDAV, IMAP, and SMTP.
 
-The server uses only remote protocols: CalDAV, CardDAV, IMAP, and SMTP with
-app-specific passwords. It does not use macOS EventKit, AppleScript, browser
-automation, or a private Apple API. It runs headless on Linux and macOS. Pure
-Go also builds for Windows.
+![A stdio MCP client connects to capability gates and four separate iCloud protocol clients.](docs/diagrams/architecture.svg)
 
-CI runs a `windows/amd64` smoke build. GitHub Release archives contain
-linux/amd64, linux/arm64, and darwin/arm64 builds. Agents, orchestrators, and
-desktop chat applications can use the server.
+The server runs headless with app-specific passwords. It uses remote protocols,
+without macOS frameworks, browser automation, or private Apple APIs.
+Release archives support Linux amd64/arm64 and macOS arm64. CI also builds Windows amd64.
 
-**Host-agnostic.** Any MCP client can use the server if it starts child processes
-with an environment and connects stdin and stdout. Compatible clients include
-personal agents, Hermes, OpenClaw, IDE bridges, runners, and other stdio hosts.
-The server does not prefer a model vendor, chat product, or reseller. Configure
-the server only through its process environment. The binary does not parse
-host-specific config files or `.env`.
+Any stdio MCP host can start the binary with its process environment.
+The binary does not load `.env` or host-specific configuration files.
 
 | Domain | Protocol | Default |
 |--------|----------|---------|
@@ -32,36 +25,36 @@ host-specific config files or `.env`.
 | Mail mutation | IMAP | Off until Mail + `ICLOUD_MCP_ENABLE_MAIL_WRITE` |
 | Mail send | SMTP STARTTLS | Off until Mail + `ICLOUD_MCP_ENABLE_MAIL_SEND` + recipient policy |
 
-Reminders, Notes, Photos, Drive, Messages, and similar apps are **out of scope**.
-They remain out of scope until Apple documents a suitable remote third-party
-connector. See [Supported scope](#supported-scope).
+Reminders, Notes, Photos, Drive, Find My, Keychain, Messages, and Home are outside
+the supported scope. Modern Reminders do not use this server's CalDAV connector.
 
 ## Quick start
 
+Use Go 1.26.0 or later:
+
 ```bash
 go install github.com/ThomasCrouzet/icloud-mcp/cmd/icloud-mcp@latest
-# or: make build
-# or: make release VERSION=v0.4.0
-# or: make release-all VERSION=v0.4.0
 ```
 
 1. Create an [app-specific password](https://appleid.apple.com). Never use the
    main Apple Account password.
-2. Export a minimal environment. For the first deployment, use Calendar
-   **read-only** mode:
+2. Store the identity and password in separate regular files outside the repository.
+3. Give each file mode `0600` or stricter and a maximum size of 4 KiB.
+4. Set the environment for Calendar **read-only** access:
 
 ```bash
-export ICLOUD_EMAIL='you@icloud.com'
-export ICLOUD_PASSWORD='your-app-specific-password'
+export ICLOUD_EMAIL='file:///private/path/icloud-email'
+export ICLOUD_PASSWORD='file:///private/path/icloud-password'
 export ICLOUD_MCP_READ_ONLY=true
 export ICLOUD_MCP_DEFAULT_TZ=Europe/Paris   # owner IANA zone; default UTC
 ```
 
-3. Register the absolute `icloud-mcp` path as the **command** in your MCP host.
-   Register the environment as **env**. The host can use YAML, JSON, TOML, a UI,
-   or an orchestrator. The exact format depends on the host.
-4. Stdio carries JSON-RPC. **stderr** carries logs and the mutation audit.
-   Reload the host after environment changes.
+5. Register the absolute binary path and environment in your MCP host.
+6. Restart the MCP process after configuration changes.
+
+Stdio carries JSON-RPC. Stderr carries logs and mutation audit events.
+The server reads credential files only at startup. Calendar discovery requires
+network access before stdio starts.
 
 This configuration exposes **7 tools**: Calendar reads, local helpers, and
 `icloud_capabilities`. The process does not construct a Contacts or Mail client.
@@ -74,8 +67,9 @@ export ICLOUD_MCP_ENABLE_CONTACTS=true
 
 # Mail reads: IMAP identity may differ from ICLOUD_EMAIL (e.g. name@icloud.com)
 export ICLOUD_MCP_ENABLE_MAIL=true
-export ICLOUD_MAIL_ADDRESS='mailbox@icloud.com'
-# export ICLOUD_MAIL_PASSWORD='...'   # optional; else copy of ICLOUD_PASSWORD
+export ICLOUD_MAIL_ADDRESS='file:///private/path/icloud-mail-address'
+# Optional separate password; otherwise Mail uses ICLOUD_PASSWORD.
+# export ICLOUD_MAIL_PASSWORD='file:///private/path/icloud-mail-password'
 
 # Mail mutation (flags / move / trash); independent of send
 export ICLOUD_MCP_ENABLE_MAIL_WRITE=true
@@ -84,17 +78,6 @@ export ICLOUD_MCP_READ_ONLY=false
 # Mail send: requires exact recipient allowlist even under global read-only
 export ICLOUD_MCP_ENABLE_MAIL_SEND=true
 export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com,bob@example.net'
-```
-
-You can load secrets from `file://` only at boot. Each file must be a regular
-file of at most 4 KiB with mode 0600 or stricter. The server does not read the
-file again after startup:
-
-```bash
-export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
-export ICLOUD_PASSWORD='file:///run/secrets/icloud-password'
-export ICLOUD_MAIL_ADDRESS='file:///run/secrets/icloud-mail-address'
-export ICLOUD_MAIL_PASSWORD='file:///run/secrets/icloud-mail-password'
 ```
 
 See [.env.example](.env.example) for the full 12-variable contract.
@@ -124,8 +107,8 @@ mutation, and Mail send. It does not enable a disabled read domain.
 | Mail mutation | `set_message_flags`, `move_message`, `trash_message` |
 | Mail send | `send_message` |
 
-**Highlights:** Calendar update and delete operations understand occurrences
-and use strong `If-Match`. Contacts uses opaque book IDs and writes vCard 3.0.
+Calendar update and delete operations support occurrences and use strong
+`If-Match`. Contacts uses opaque book IDs and writes vCard 3.0.
 Mail uses `(mailbox, UIDVALIDITY, UID)` identities, PEEK reads, and an exact
 recipient policy for SMTP. `set_message_flags` fails closed with
 `protocol_error` when CONDSTORE is advertised. This occurs because go-imap
@@ -140,24 +123,16 @@ beta.8 cannot observe tagged MODIFIED. See the full behavior notes:
 alias as the resource UID. A create returns `conflict` if that UID exists.
 It never silently overwrites the object.
 
-Only `update_event` and `update_contact` use the **process-local result cache**
-through `idempotency_key`. Keys have separate tool namespaces. The two tools
-share a limit of **1,024 entries**, with at most **256 KiB per cached payload**.
-The same key and parameters return the saved result, including its `IsError`
-flag. The domain applies redaction and result limits again. Different parameters,
-including a different `etag`, return `conflict`.
+Only `update_event` and `update_contact` cache results through `idempotency_key`.
+The process-local cache holds 1,024 entries, with a 256 KiB maximum per payload.
+The same key and parameters return the saved result. Different parameters return
+`conflict`. Success and definitive errors remain for 15 minutes. Unknown outcomes
+remain until process exit. Pending claims do not expire.
 
-Success and definitive domain errors stay for **15 minutes after the request
-completes**. Unknown outcomes, unclassified errors, and internal errors stay
-**until process exit**. Response serialization or size errors after a successful
-write also stay until process exit. Pending claims never expire. A cancelled or
-timed-out duplicate caller does not release the original request's claim.
-
-A full cache rejects new claims with `conflict` before the write. Keep the key.
-Wait for capacity. After an ambiguous response, read with `get_event` or
-`get_contact` before choosing a new key. A new key or process restart does not
-prove that the previous write failed. Use a fresh strong `etag` for any necessary
-new update.
+A full cache rejects new claims before a write. Keep the key and wait for capacity.
+After an ambiguous response, use `get_event` or `get_contact` before a new update.
+A new key or process restart does not prove that the previous write failed.
+Use a fresh strong `etag` for a necessary new update.
 
 See the [cache contract](docs/architecture.md#update-idempotency) and
 [recovery procedure](docs/error-codes.md#update-idempotency-and-recovery).
@@ -259,23 +234,11 @@ uses a fresh IMAP or SMTP session. See these documents for rates, parser
 budgets, and retry rules:
 [docs/testing.md](docs/testing.md), [docs/architecture.md](docs/architecture.md).
 
-## Supported scope
+### Multiple accounts
 
-| Data | Connector | Support |
-|------|-----------|---------|
-| Calendar | CalDAV | Always |
-| Contacts | CardDAV | Optional |
-| Mail read / mutation / send | IMAP + SMTP | Optional, independently gated |
-| Modern Reminders, Notes, Photos, Drive, Find My, Keychain, Messages, Home | No suitable official remote connector for this model | Excluded |
-
-The server does not treat modern Reminders as generic CalDAV VTODO. Apple's
-third-party documentation for this type of access covers Mail, Calendar, and
-Contacts.
-
-**Multi-account:** one process holds one iCloud identity. Start a separate
-`icloud-mcp` process for each identity. Give each process a separate environment
-and, if needed, a separate `-health` port. The MCP host can multiplex these
-processes. See [docs/agent-hosts.md](docs/agent-hosts.md).
+One process holds one iCloud identity. Start a separate process for each identity.
+Give each process a separate environment and optional health port.
+See [host integration](docs/agent-hosts.md).
 
 ## Dependencies
 
@@ -286,7 +249,7 @@ dependencies. If you add a direct dependency, add its justification here.
 |------------|---------------|---------------|
 | `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
 | `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
-| `github.com/mark3labs/mcp-go` | `v0.57.0` | MCP stdio, schemas, JSON-RPC |
+| `github.com/mark3labs/mcp-go` | `v1.2.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
 | `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
 | `github.com/emersion/go-vcard` | `v0.1.0` | vCard 3.0/4.0 read, 3.0 write |
@@ -306,7 +269,7 @@ make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
 
-Release targets reject an unset version or a `dev` version. Archives contain
+Release targets require a clean worktree and a non-`dev` version. Archives contain
 the binary, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also
 contains a SHA-256 checksum file. GitHub tag releases run `make release-all`
 only after CI and gitleaks succeed for that tag. They use Go 1.26.9 with
@@ -317,15 +280,10 @@ Release blobs include cosign keyless signatures. `-version` first uses the
 release ldflags value. If this value is absent, it uses Go module build
 information. Thus, `go install ...@version` reports the module version.
 
-CI runs race tests, fuzz smoke, govulncheck, gitleaks, and
-multi-architecture builds. It also checks coverage, egress and security AST
-guards, binary size, and public text. Aggregate coverage must be at least 78%.
-Package floors include `cmd/icloud-mcp` and `internal/health`. The build check
-includes windows/amd64 smoke. The binary budget is 20 MiB.
-
-The public-text policy checks the tree and new commits. Live iCloud tests use
-the `integration` build tag. These tests are optional and never run in CI. See
-[docs/testing.md](docs/testing.md).
+CI checks formatting, race tests, fuzzing, vulnerabilities, secrets, public text,
+and multi-architecture builds. It enforces coverage floors and a 20 MiB binary limit.
+Live tests require the `integration` build tag and explicit domain/write gates.
+CI never runs them. See [Testing](docs/testing.md).
 
 For fixture-only protocol evidence, use an absolute output path outside the
 repository:

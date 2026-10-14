@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="title desc">
+  <title id="title">iCloud MCP protocol architecture</title>
+  <desc id="desc">A stdio MCP host calls one Go process. Startup configuration selects tools and removes mutations in read-only mode. Separate Calendar, Contacts, IMAP, and SMTP clients use fixed destinations. Results pass through redaction and size limits.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#3974c6"/></marker>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif;fill:#182f4c} .title{font-size:30px;font-weight:700} .label{font-size:20px;font-weight:700} .body{font-size:16px} .small{font-size:14px;fill:#52677f} .eyebrow{font-size:13px;font-weight:700;letter-spacing:2px;fill:#2866b7} .box{fill:#fff;stroke:#cad8e9;stroke-width:1.5} .line{fill:none;stroke:#3974c6;stroke-width:2;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1120" height="660" rx="24" fill="#f3f7fc"/>
+  <path d="M40 106H1080" stroke="#cad8e9"/>
+  <text x="40" y="39" class="eyebrow">ICLOUD MCP / PROTOCOL BOUNDARIES</text>
+  <text x="40" y="79" class="title">One process. Separate protocol clients.</text>
+  <rect x="284" y="130" width="796" height="390" rx="20" fill="#e8f0fb" stroke="#c2d5ef" stroke-dasharray="6 5"/>
+  <text x="306" y="157" class="eyebrow">ICLOUD-MCP</text>
+  <rect x="40" y="269" width="200" height="116" rx="14" class="box"/>
+  <text x="62" y="308" class="label">MCP host</text>
+  <text x="62" y="337" class="body">Child process</text>
+  <text x="62" y="362" class="small">JSON-RPC over stdio</text>
+  <path d="M240 327H314" class="line"/>
+  <rect x="316" y="229" width="280" height="196" rx="14" class="box"/>
+  <text x="338" y="263" class="label">Capability plan</text>
+  <text x="338" y="296" class="body">Calendar always enabled</text>
+  <text x="338" y="324" class="body">Optional Contacts and Mail</text>
+  <text x="338" y="352" class="body">Read-only removes writes</text>
+  <text x="338" y="397" class="small">7 read-only / 10 default / 23 max</text>
+  <path d="M596 327H628V215H662" class="line"/>
+  <path d="M628 327V305H662" class="line"/>
+  <path d="M628 327V395H662" class="line"/>
+  <path d="M628 395V485H662" class="line"/>
+  <rect x="664" y="179" width="392" height="72" rx="12" class="box"/>
+  <rect x="664" y="179" width="5" height="72" rx="2" fill="#3974c6"/>
+  <text x="686" y="208" class="label">Calendar</text>
+  <text x="686" y="234" class="body">CalDAV / HTTPS / discovery at startup</text>
+  <rect x="664" y="269" width="392" height="72" rx="12" class="box"/>
+  <rect x="664" y="269" width="5" height="72" rx="2" fill="#7b63c4"/>
+  <text x="686" y="298" class="label">Contacts</text>
+  <text x="686" y="324" class="body">CardDAV / HTTPS / discovery on first use</text>
+  <rect x="664" y="359" width="392" height="72" rx="12" class="box"/>
+  <rect x="664" y="359" width="5" height="72" rx="2" fill="#218579"/>
+  <text x="686" y="388" class="label">Mail read and mutation</text>
+  <text x="686" y="414" class="body">IMAP / TLS / imap.mail.me.com:993</text>
+  <rect x="664" y="449" width="392" height="60" rx="12" class="box"/>
+  <rect x="664" y="449" width="5" height="60" rx="2" fill="#b57626"/>
+  <text x="686" y="475" class="label">Mail send</text>
+  <text x="686" y="498" class="body">SMTP / STARTTLS / recipient policy</text>
+  <text x="316" y="468" class="small">Separate credentials, limits, and transports</text>
+  <text x="316" y="491" class="small">Fixed destinations / verified TLS</text>
+  <path d="M858 520V556H592" class="line"/>
+  <rect x="304" y="534" width="288" height="48" rx="12" fill="#182f4c"/>
+  <text x="325" y="564" style="font:700 16px Arial,Helvetica,sans-serif;fill:#fff">Redaction + 256 KiB result limit</text>
+  <path d="M304 558H140V385" class="line"/>
+  <text x="40" y="626" class="body">Configuration: environment + boot-only credential files</text>
+  <text x="682" y="626" class="body">Logs and mutation audit: stderr</text>
+</svg>
