@@ -95,14 +95,21 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Cache lint analysis
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/golangci-lint
+          key: lint-${{ runner.os }}-${{ runner.arch }}-go1.27.1-v2.13.2-${{ hashFiles('go.sum', '.golangci.yml') }}
+
       - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         env:
-          GOLANGCI_LINT_VERSION: v2.13.2
           GOTOOLCHAIN: go1.27.1
-        run: |
-          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
-          "$(go env GOPATH)/bin/golangci-lint" version
-          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
+        with:
+          version: v2.13.2
+          args: --timeout=5m ./...
+          skip-cache: true
 
       - name: version injection smoke check
         run: |
