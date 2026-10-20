@@ -133,7 +133,7 @@ jobs:
           name: protocol-evidence
           path: ${{ runner.temp }}/protocol-evidence
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: coverage threshold
         run: |
@@ -183,7 +183,7 @@ jobs:
           name: coverage
           path: coverage.out
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: govulncheck (go.mod vulnerabilities)
         run: |
