@@ -1,0 +1,170 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      API_URL: ${{ github.api_url }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      GRAPHQL_URL: ${{ github.graphql_url }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Prepare job directory
+        shell: bash
+        run: |
+          job_temp="$RUNNER_TEMP/dependabot-auto-merge-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "JOB_TEMP=$job_temp" >>"$GITHUB_ENV"
+          mkdir -p "$job_temp"
+          cat >"$job_temp/github_api.py" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          import urllib.error
+          import urllib.request
+
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+                  return None
+
+
+          method = sys.argv[1]
+          target = sys.argv[2]
+          api_url = os.environ["API_URL"].rstrip("/")
+          graphql_url = os.environ["GRAPHQL_URL"]
+          if target.startswith(("http://", "https://")) and target != graphql_url:
+              raise SystemExit("Refusing an unexpected API URL.")
+          url = target if target == graphql_url else f"{api_url}/{target.lstrip('/')}"
+          if not (url.startswith(f"{api_url}/") or url == graphql_url):
+              raise SystemExit("Refusing an unexpected API URL.")
+
+          data = None
+          if len(sys.argv) == 4:
+              data = pathlib.Path(sys.argv[3]).read_bytes()
+              json.loads(data)
+
+          request = urllib.request.Request(
+              url,
+              data=data,
+              method=method,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['TOKEN']}",
+                  "Content-Type": "application/json",
+                  "User-Agent": "dependabot-auto-merge",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          opener = urllib.request.build_opener(NoRedirect)
+          try:
+              with opener.open(request, timeout=15) as response:
+                  sys.stdout.buffer.write(response.read())
+          except urllib.error.HTTPError as error:
+              sys.stderr.write(f"GitHub API returned HTTP {error.code}.\n")
+              sys.stderr.buffer.write(error.read(4096))
+              raise SystemExit(1) from error
+          PY
+
+      - name: Verify required status checks
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base_encoded="$(jq -rn --arg value "$BASE_REF" '$value | @uri')"
+          repository="$(python3 "$JOB_TEMP/github_api.py" GET "/repos/$REPOSITORY")"
+          test "$(jq -r '.allow_auto_merge' <<<"$repository")" = "true"
+
+          rules_file="$JOB_TEMP/rules.json"
+          python3 "$JOB_TEMP/github_api.py" GET \
+            "/repos/$REPOSITORY/rules/branches/$base_encoded" >"$rules_file"
+          ruleset_count="$(jq '[.[] | select(.type == "required_status_checks")] | length' "$rules_file")"
+          strict_count="$(jq '[.[] | select(.type == "required_status_checks" and .parameters.strict_required_status_checks_policy == true)] | length' "$rules_file")"
+          check_count="$(jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?] | length' "$rules_file")"
+          actions_count="$(jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]? | select(.integration_id == 15368)] | length' "$rules_file")"
+          pull_request_count="$(jq '[.[] | select(.type == "pull_request")] | length' "$rules_file")"
+
+          if [ "$ruleset_count" -eq 0 ] || \
+            [ "$ruleset_count" -ne "$strict_count" ] || \
+            [ "$check_count" -eq 0 ] || \
+            [ "$check_count" -ne "$actions_count" ] || \
+            [ "$pull_request_count" -eq 0 ]; then
+            echo "Auto-merge requires strict GitHub Actions checks and pull requests." >&2
+            exit 1
+          fi
+
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98  # v3
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Approve configured routine updates
+        if: >-
+          vars.DEPENDABOT_AUTO_APPROVE == 'true' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' '{"event":"APPROVE"}' >"$JOB_TEMP/approval.json"
+          python3 "$JOB_TEMP/github_api.py" POST \
+            "/repos/$REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            "$JOB_TEMP/approval.json" >/dev/null
+
+      - name: Enable auto-merge for patch and minor updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          payload="$(jq -cn \
+            --arg query 'mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){enablePullRequestAutoMerge(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid,mergeMethod:SQUASH}){pullRequest{number}}}' \
+            --arg expected_head_oid "$HEAD_SHA" \
+            --arg pull_request_id "$PR_NODE_ID" \
+            '{query:$query,variables:{pullRequestId:$pull_request_id,expectedHeadOid:$expected_head_oid}}')"
+          printf '%s\n' "$payload" >"$JOB_TEMP/graphql.json"
+          response="$(python3 "$JOB_TEMP/github_api.py" POST \
+            "$GRAPHQL_URL" "$JOB_TEMP/graphql.json")"
+          if ! jq -e --argjson expected_number "$PR_NUMBER" '
+            (((.errors? // []) | length) == 0) and
+            (.data.enablePullRequestAutoMerge.pullRequest.number == $expected_number)
+          ' <<<"$response" >/dev/null; then
+            jq '{errors, data}' <<<"$response" >&2
+            exit 1
+          fi
+      - name: Clean job directory
+        if: always()
+        shell: bash
+        run: |
+          job_temp="${JOB_TEMP:-$RUNNER_TEMP/dependabot-auto-merge-${{ github.run_id }}-${{ github.run_attempt }}}"
+          if [ -d "$job_temp" ]; then
+            find "$job_temp" -depth -delete
+          fi
