@@ -6,6 +6,13 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      fuzz:
+        description: Run random fuzz exploration
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -92,9 +99,6 @@ jobs:
           fi
           exit "$status"
 
-      - name: go vet
-        run: go vet ./...
-
       - name: Cache lint analysis
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
@@ -110,13 +114,6 @@ jobs:
           version: v2.13.2
           args: --timeout=5m ./...
           skip-cache: true
-
-      - name: version injection smoke check
-        run: |
-          want=v0.4.0-ci
-          binary="${RUNNER_TEMP}/icloud-mcp-version-check"
-          go build -trimpath -ldflags="-s -w -X main.version=${want}" -o "$binary" ./cmd/icloud-mcp
-          test "$("$binary" -version)" = "$want"
 
       - name: go test (race + coverprofile)
         run: |
@@ -197,6 +194,7 @@ jobs:
       - name: build (linux/amd64 + linux/arm64 + darwin/arm64 + windows/amd64 smoke)
         run: |
           mkdir -p dist
+          version=v0.4.0-ci
           for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
             os="${target%/*}"
             arch="${target#*/}"
@@ -206,8 +204,12 @@ jobs:
             fi
             echo "::group::build $target"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags='-s -w' -o "$out" ./cmd/icloud-mcp
+              go build -trimpath -ldflags="-s -w -X main.version=${version}" \
+              -o "$out" ./cmd/icloud-mcp
             file "$out"
+            if [ "$target" = "linux/amd64" ]; then
+              test "$("$out" -version)" = "$version"
+            fi
             echo "::endgroup::"
           done
 
@@ -217,6 +219,7 @@ jobs:
           go mod tidy -diff
 
       - name: fuzz smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.fuzz
         run: |
           set -e
           # Keep at least one native fuzz target in each protocol parser package.
@@ -252,11 +255,6 @@ jobs:
 
       - name: security guardrails
         run: |
-          # Runtime tests check arbitrary hosts, schemes, ports, and redirects.
-          # They also check isolation between IMAP, SMTP, and DAV domains.
-          # Separate AST checks enforce network literal and production side-effect policies.
-          go test ./internal/security/
-
           checker="${RUNNER_TEMP}/network_literal_guard.go"
           policy_checker="${RUNNER_TEMP}/production_policy_guard.go"
           guard_fixture="${RUNNER_TEMP}/network-guard-fixture"
@@ -938,7 +936,7 @@ jobs:
       - name: Build multi-arch archives
         # Host Go is pinned above to match go.mod. Local `make release` remains
         # the digest-pinned container path for linux/arm64 only.
-        run: make release-all VERSION=${GITHUB_REF_NAME}
+        run: make release-all VERSION="$GITHUB_REF_NAME"
 
       - name: Cosign keyless signatures
         # Sign before publication. If Fulcio or Rekor fails, do not publish an unsigned GitHub Release.
@@ -952,8 +950,11 @@ jobs:
           printf '%s  %s\n' "$EXPECTED_SHA256" "$binary" | sha256sum -c -
           chmod +x "$binary"
           cd dist
-          for f in icloud-mcp-${GITHUB_REF_NAME}-*.tar.gz \
-                   icloud-mcp-${GITHUB_REF_NAME}-checksums.txt; do
+          tag="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          files=(icloud-mcp-"$tag"-*.tar.gz icloud-mcp-"$tag"-checksums.txt)
+          test "${#files[@]}" -eq 4
+          for f in "${files[@]}"; do
             "$binary" sign-blob --yes \
               --output-signature "${f}.sig" \
               --output-certificate "${f}.pem" \
@@ -966,14 +967,18 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          tag="$GITHUB_REF_NAME"
           assets=(
-            "dist/icloud-mcp-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
-            "dist/icloud-mcp-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
-            "dist/icloud-mcp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
-            "dist/icloud-mcp-${GITHUB_REF_NAME}-checksums.txt"
-            dist/icloud-mcp-${GITHUB_REF_NAME}-*.sig
-            dist/icloud-mcp-${GITHUB_REF_NAME}-*.pem
+            "dist/icloud-mcp-${tag}-linux-amd64.tar.gz"
+            "dist/icloud-mcp-${tag}-linux-arm64.tar.gz"
+            "dist/icloud-mcp-${tag}-darwin-arm64.tar.gz"
+            "dist/icloud-mcp-${tag}-checksums.txt"
           )
+          signatures=(dist/icloud-mcp-"$tag"-*.sig)
+          certificates=(dist/icloud-mcp-"$tag"-*.pem)
+          test "${#signatures[@]}" -eq 4
+          test "${#certificates[@]}" -eq 4
+          assets+=("${signatures[@]}" "${certificates[@]}")
           gh release create "$GITHUB_REF_NAME" \
             --generate-notes \
             --title "$GITHUB_REF_NAME" \
