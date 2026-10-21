@@ -142,9 +142,10 @@ This representation reconstructs the exact bytes without repeated padding in log
 The runner saves failure metadata before it exits with a nonzero status.
 It refuses an existing output directory to preserve previous evidence.
 
-CI uploads this directory as `protocol-evidence` for 14 days, including failed
-runs. It combines executable and Go test coverage before it checks existing floors.
-The executable coverage adds lifecycle evidence; no coverage threshold is reduced.
+CI generates this directory on the runner and discards it after the job.
+CI does not upload or archive reports on GitHub. It combines executable and Go
+test coverage before it checks existing floors. The executable coverage adds
+lifecycle evidence; no coverage threshold is reduced.
 
 ## Capability matrix tests
 

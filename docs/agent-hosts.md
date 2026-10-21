@@ -35,6 +35,10 @@ mcp_servers:
       ICLOUD_MCP_DEFAULT_TZ: Europe/Paris
 ```
 
+Quote every boolean value. An unquoted YAML `false` becomes a host-side boolean.
+Hosts that require string values reject it before the server starts, and no tool
+registers. Use `ICLOUD_MCP_READ_ONLY: "false"`, not `ICLOUD_MCP_READ_ONLY: false`.
+
 Store secrets in the Hermes profile `.env` when the host uses that file. Call
 `icloud_capabilities` first to see the active tool list.
 

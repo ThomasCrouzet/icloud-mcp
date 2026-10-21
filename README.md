@@ -158,6 +158,9 @@ Exactly **12** product environment variables:
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
 boot failure. The server validates the configuration **before** network access.
+Hosts must pass these values as strings. Quote a boolean in YAML, for example
+`ICLOUD_MCP_READ_ONLY: "false"`. An unquoted YAML boolean fails host validation
+before the server starts.
 Mail write or send without Mail causes a boot error. Mail without an address or
 password also causes a boot error. Send without a recipient policy causes a
 boot error, including in read-only mode.
@@ -296,7 +299,8 @@ The runner builds an executable from `cmd/icloud-mcp` tests with shared MCP
 registration and stdio startup code. It also runs in-process idempotency and
 recurrence scenarios. It saves transcripts, run metadata, source revision,
 working diff, fixture SHA-256 values, and results outside the repository.
-CI keeps the `protocol-evidence` artifact for 14 days. These checks use synthetic
+CI generates this evidence on the runner and discards it after the job.
+CI does not upload or archive reports on GitHub. These checks use synthetic
 fixtures and do not establish live iCloud compatibility.
 
 ## Documentation
