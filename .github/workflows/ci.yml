@@ -126,15 +126,6 @@ jobs:
           python3 scripts/protocol_evidence.py --merge-coverage coverage.out \
             coverage.out "${RUNNER_TEMP}/protocol-evidence/executable-coverage.out"
 
-      - name: Upload protocol evidence
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: always()
-        with:
-          name: protocol-evidence
-          path: ${{ runner.temp }}/protocol-evidence
-          if-no-files-found: error
-          retention-days: 7
-
       - name: coverage threshold
         run: |
           THRESHOLD=78
@@ -175,15 +166,6 @@ jobs:
           check_package_coverage ./internal/config 85
           check_package_coverage ./internal/health 90
           check_package_coverage ./cmd/icloud-mcp 55
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: always()
-        with:
-          name: coverage
-          path: coverage.out
-          if-no-files-found: error
-          retention-days: 7
 
       - name: govulncheck (go.mod vulnerabilities)
         run: |
