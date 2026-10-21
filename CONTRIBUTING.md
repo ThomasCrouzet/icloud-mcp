@@ -60,6 +60,8 @@ SHA-256 checksums. `make install` always builds for the current host.
 - At the end of each E2E run, save a verifiable and repeatable artifact outside the repository.
 - Record the command, source revision, environment, fixtures, and results with the artifact.
 - Include the working diff identity when the source has uncommitted changes.
+- Keep reports and repeatable evidence in local storage.
+- Never upload or archive reports on GitHub.
 - Examine assertions, fixtures, mocks, and skips before removing a test.
 - Do not treat disabled E2E tests or simulated boundaries as equivalent coverage.
 - If isolation is necessary, first document all identified failure modes. Then write the tests and implementation.

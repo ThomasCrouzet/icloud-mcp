@@ -296,7 +296,8 @@ The runner builds an executable from `cmd/icloud-mcp` tests with shared MCP
 registration and stdio startup code. It also runs in-process idempotency and
 recurrence scenarios. It saves transcripts, run metadata, source revision,
 working diff, fixture SHA-256 values, and results outside the repository.
-CI keeps the `protocol-evidence` artifact for 14 days. These checks use synthetic
+CI generates this evidence on the runner and discards it after the job.
+CI does not upload or archive reports on GitHub. These checks use synthetic
 fixtures and do not establish live iCloud compatibility.
 
 ## Documentation
