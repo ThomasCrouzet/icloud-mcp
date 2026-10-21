@@ -158,6 +158,9 @@ Exactly **12** product environment variables:
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
 boot failure. The server validates the configuration **before** network access.
+Hosts must pass these values as strings. Quote a boolean in YAML, for example
+`ICLOUD_MCP_READ_ONLY: "false"`. An unquoted YAML boolean fails host validation
+before the server starts.
 Mail write or send without Mail causes a boot error. Mail without an address or
 password also causes a boot error. Send without a recipient policy causes a
 boot error, including in read-only mode.
