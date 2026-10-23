@@ -150,6 +150,34 @@ func TestTimeoutMiddlewareBoundsHandlersIgnoringCancellation(t *testing.T) {
 	}
 }
 
+// A canceled request must not enter a mutation handler when a slot is free.
+// The slot and cancellation cases can otherwise be ready at the same time.
+func TestTimeoutMiddlewareDoesNotStartCanceledRequest(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	var calls atomic.Int32
+	mw := timeoutMiddlewareWithLimit(time.Second, time.Millisecond, slots)
+	h := mw(func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		calls.Add(1)
+		return mcp.NewToolResultText("unexpected"), nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var request mcp.CallToolRequest
+	request.Params.Name = "update_event"
+	for range 256 {
+		result, err := h(ctx, request)
+		if err != nil || result == nil || !result.IsError {
+			t.Fatalf("canceled result=%+v err=%v", result, err)
+		}
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("canceled requests entered the mutation handler %d times", got)
+	}
+	if len(slots) != 0 {
+		t.Fatalf("canceled requests retained %d handler slots", len(slots))
+	}
+}
+
 // TestBootRedactorMasksEnabledDomainVariants mirrors main's credential pairs,
 // including Mail SASL PLAIN forms.
 func TestBootRedactorMasksEnabledDomainVariants(t *testing.T) {

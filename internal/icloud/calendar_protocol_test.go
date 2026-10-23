@@ -323,6 +323,108 @@ func TestDiscoveryResolvesHrefsAgainstFinalResponseURLs(t *testing.T) {
 	}
 }
 
+func TestDiscoveryRejectsAmbiguousProperties(t *testing.T) {
+	principalBody := principalResponseXML(testPrincipalPath)
+	homeSetBody := homeSetResponseXML("https://caldav.icloud.com/home/")
+	duplicatePrincipal := strings.Replace(principalResponseXML(testPrincipalPath), "</multistatus>",
+		"<response><href>/</href><propstat><prop><current-user-principal><href>/other-principal/</href></current-user-principal></prop>"+
+			"<status>HTTP/1.1 200 OK</status></propstat></response></multistatus>", 1)
+	duplicateHomeSet := strings.Replace(homeSetResponseXML("https://caldav.icloud.com/home/"), "</multistatus>",
+		"<response><href>/principal/</href><propstat><prop><C:calendar-home-set><href>https://caldav.icloud.com/other-home/</href>"+
+			"</C:calendar-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>", 1)
+	repeatedPrincipalProperty := strings.Replace(principalBody, "</current-user-principal>",
+		"</current-user-principal><current-user-principal><href>/other-principal/</href></current-user-principal>", 1)
+	repeatedEmptyPrincipalProperty := strings.Replace(principalBody, "</current-user-principal>",
+		"</current-user-principal><current-user-principal/>", 1)
+	multiplePrincipalHrefs := strings.Replace(principalBody, "</current-user-principal>",
+		"<href>/other-principal/</href></current-user-principal>", 1)
+	emptyPrincipalHrefSibling := strings.Replace(principalBody, "<href>"+testPrincipalPath+"</href>",
+		"<href></href><href>"+testPrincipalPath+"</href>", 1)
+	repeatedHomeSetProperty := strings.Replace(homeSetBody, "</C:calendar-home-set>",
+		"</C:calendar-home-set><C:calendar-home-set><href>https://caldav.icloud.com/other-home/</href></C:calendar-home-set>", 1)
+	repeatedEmptyHomeSetProperty := strings.Replace(homeSetBody, "</C:calendar-home-set>",
+		"</C:calendar-home-set><C:calendar-home-set/>", 1)
+	multipleHomeSetHrefs := strings.Replace(homeSetBody, "</C:calendar-home-set>",
+		"<href>https://caldav.icloud.com/other-home/</href></C:calendar-home-set>", 1)
+	emptyHomeSetHrefSibling := strings.Replace(homeSetBody, "<href>https://caldav.icloud.com/home/</href>",
+		"<href></href><href>https://caldav.icloud.com/home/</href>", 1)
+
+	tests := []struct {
+		name          string
+		principalBody string
+		homeSetBody   string
+	}{
+		{
+			name:          "multiple principals",
+			principalBody: duplicatePrincipal,
+			homeSetBody:   homeSetBody,
+		},
+		{
+			name:          "multiple home sets",
+			principalBody: principalBody,
+			homeSetBody:   duplicateHomeSet,
+		},
+		{
+			name:          "repeated principal property",
+			principalBody: repeatedPrincipalProperty,
+			homeSetBody:   homeSetBody,
+		},
+		{
+			name:          "multiple principal href children",
+			principalBody: multiplePrincipalHrefs,
+			homeSetBody:   homeSetBody,
+		},
+		{
+			name:          "repeated empty principal property",
+			principalBody: repeatedEmptyPrincipalProperty,
+			homeSetBody:   homeSetBody,
+		},
+		{
+			name:          "empty principal href sibling",
+			principalBody: emptyPrincipalHrefSibling,
+			homeSetBody:   homeSetBody,
+		},
+		{
+			name:          "repeated home-set property",
+			principalBody: principalBody,
+			homeSetBody:   repeatedHomeSetProperty,
+		},
+		{
+			name:          "multiple home-set href children",
+			principalBody: principalBody,
+			homeSetBody:   multipleHomeSetHrefs,
+		},
+		{
+			name:          "repeated empty home-set property",
+			principalBody: principalBody,
+			homeSetBody:   repeatedEmptyHomeSetProperty,
+		},
+		{
+			name:          "empty home-set href sibling",
+			principalBody: principalBody,
+			homeSetBody:   emptyHomeSetHrefSibling,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := NewClient(calendarDoerFunc(func(req *http.Request) (*http.Response, error) {
+				body := test.homeSetBody
+				if req.URL.EscapedPath() == "/" {
+					body = test.principalBody
+				}
+				return calendarTestResponse(req, http.StatusMultiStatus, nil, strings.NewReader(body)), nil
+			}), "https://caldav.icloud.com", func(host string) bool { return host == "caldav.icloud.com" })
+
+			if err := client.Discover(context.Background()); err == nil {
+				t.Fatal("Discover() accepted an ambiguous property")
+			}
+			if client.discovered {
+				t.Fatal("ambiguous discovery result was cached")
+			}
+		})
+	}
+}
+
 func TestDiscoveryWaiterCanCancel(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})

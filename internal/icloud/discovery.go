@@ -89,12 +89,12 @@ func (c *Client) doDiscover(ctx context.Context) (discoveryResult, error) {
 	if err != nil {
 		return discoveryResult{}, err
 	}
-	principal := principalFromMultistatus(response.multistatus)
-	if principal == "" {
-		return discoveryResult{}, fmt.Errorf("iCloud discovery: current-user-principal not found in response")
+	principals := principalHrefsFromMultistatus(response.multistatus)
+	if len(principals) != 1 || principals[0] == "" {
+		return discoveryResult{}, NewError(CodeProtocolError, 0, "iCloud discovery did not return exactly one current-user-principal", nil)
 	}
 
-	principalURL, err := c.resolveDiscoveryHref(response.url, principal, "principal")
+	principalURL, err := c.resolveDiscoveryHref(response.url, principals[0], "principal")
 	if err != nil {
 		return discoveryResult{}, err
 	}
@@ -104,14 +104,14 @@ func (c *Client) doDiscover(ctx context.Context) (discoveryResult, error) {
 	if err != nil {
 		return discoveryResult{}, err
 	}
-	homeSetHref := homeSetFromMultistatus(response2.multistatus)
-	if homeSetHref == "" {
-		return discoveryResult{}, fmt.Errorf("iCloud discovery: calendar-home-set not found in response")
+	homeSetHrefs := homeSetHrefsFromMultistatus(response2.multistatus)
+	if len(homeSetHrefs) != 1 || homeSetHrefs[0] == "" {
+		return discoveryResult{}, NewError(CodeProtocolError, 0, "iCloud discovery did not return exactly one calendar-home-set", nil)
 	}
 
 	// Step 3: resolve against the exact final principal response URL. The
 	// home-set may legitimately move to an allowlisted iCloud shard.
-	homeSetURL, err := c.resolveDiscoveryHref(response2.url, homeSetHref, "home-set")
+	homeSetURL, err := c.resolveDiscoveryHref(response2.url, homeSetHrefs[0], "home-set")
 	if err != nil {
 		return discoveryResult{}, err
 	}

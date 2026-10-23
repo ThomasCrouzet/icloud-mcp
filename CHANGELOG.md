@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-23
+
 ### Added
 - Add an external protocol evidence runner for fixture-only stdio and in-process
   MCP scenarios. Record transcripts, run metadata, source revision, working diff,
@@ -15,7 +17,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add protocol scenarios for update idempotency and domain failure isolation.
 
 ### Changed
-- Update CI and the release builder image to Go 1.26.8. The module go directive moves to 1.26.0.
+- Update CI and the release builder image to Go 1.26.10. Keep the module minimum at Go 1.26.0.
+- Update mcp-go to v1.3.0 and four indirect dependencies. Keep ten direct dependencies.
+- Update golangci-lint to v2.15.0 and its CI toolchain to Go 1.27.3.
+- Run parser fuzz smoke on release tags and optional manual CI runs.
+- Require release tags, registry versions, and changelog entries to match before publication.
+- Use the changelog entry as the GitHub Release notes.
+- Preserve existing release archives. Keep incomplete builds in a separate staging directory.
+- Make `make clean` move build output to a recoverable temporary backup.
+- Consolidate host setup instructions and document release signature verification.
+- Refresh dependency versions in third-party notices. Preserve all license text.
 - Use shared MCP registration and stdio startup code for production and the
   fixture-only executable compiled from `cmd/icloud-mcp` tests.
 - For keyed updates, keep success and definitive domain errors for 15 minutes
@@ -25,6 +36,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   successful write also stay until process exit.
 
 ### Fixed
+- Reject SPECIAL-USE Trash and Junk destinations in `move_message`. Use `trash_message` for intentional deletion.
+- Reject canceled requests before mutation handler dispatch.
+- Reject ambiguous Calendar discovery responses and duplicate recurrence overrides.
+- Require exact `HH:MM` working hours. Reject invalid time and weekday bounds before free-slot calculation.
+- Document quoted boolean environment values for YAML hosts.
+- Exclude macOS metadata files from release archives.
+- Correct the documented retry policy for Contacts reads. Mutations still have no automatic retry.
 - Cancel active handlers on stdin closure. Treat SIGTERM and EOF as normal
   shutdown. Preserve terminal framing errors as failures.
 - Keep pending update claims when duplicate callers cancel or time out.
@@ -34,6 +52,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Document resource reconciliation before a new update key or process restart.
 
 ### Removed
+- Remove unused idempotency helpers, their redundant isolated tests, and an unused health helper.
+- Remove an obsolete ignore entry for internal preparation notes.
 - Remove the obsolete roadmap. Keep current behavior and procedures in the
   README, compatibility documents, and contributor guide.
 - Remove the completed improvement priorities. Keep their repeatable checks in

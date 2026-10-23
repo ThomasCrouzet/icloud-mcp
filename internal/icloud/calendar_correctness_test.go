@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+	extcaldav "github.com/emersion/go-webdav/caldav"
 )
 
 func TestHighFrequencyUnreachableSelectorsFailBeforeIteration(t *testing.T) {
@@ -442,6 +443,70 @@ func TestUnsupportedRecurrenceFormsFailClosed(t *testing.T) {
 			err = validateRemoteCalendar(calendar)
 		}
 		requireICloudCode(t, err, CodeProtocolError)
+	}
+}
+
+func TestCalendarObjectRejectsAmbiguousOverrideIdentity(t *testing.T) {
+	master := "BEGIN:VEVENT\r\nUID:identity\r\nDTSTART:20260701T100000Z\r\n" +
+		"DTEND:20260701T110000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEND:VEVENT\r\n"
+	override := func(recurrenceID, start string) string {
+		return "BEGIN:VEVENT\r\nUID:identity\r\nRECURRENCE-ID" + recurrenceID + "\r\n" +
+			"DTSTART:" + start + "\r\nDTEND:20260702T130000Z\r\nEND:VEVENT\r\n"
+	}
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "duplicate recurrence identifier",
+			body: master +
+				override(":20260702T100000Z", "20260702T120000Z") +
+				override(":20260702T100000Z", "20260702T140000Z"),
+		},
+		{
+			name: "equivalent timezone recurrence identifier",
+			body: master +
+				override(":20260702T100000Z", "20260702T120000Z") +
+				override(";TZID=Europe/Paris:20260702T120000", "20260702T140000Z"),
+		},
+		{
+			name: "override without recurring master",
+			body: strings.Replace(master, "RRULE:FREQ=DAILY;COUNT=3\r\n", "", 1) +
+				override(":20260702T100000Z", "20260702T120000Z"),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calendar, err := decodeRemoteCalendar(strings.NewReader(
+				"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" + test.body + "END:VCALENDAR\r\n",
+			))
+			if err == nil {
+				_, _, err = parseCalendarObject(&extcaldav.CalendarObject{Data: calendar})
+			}
+			requireICloudCode(t, err, CodeProtocolError)
+		})
+	}
+}
+
+func TestCalendarObjectAcceptsDistinctOverrideIdentity(t *testing.T) {
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:identity\r\nDTSTART:20260701T100000Z\r\n" +
+		"DTEND:20260701T110000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:identity\r\nRECURRENCE-ID:20260702T100000Z\r\n" +
+		"DTSTART:20260702T120000Z\r\nDTEND:20260702T130000Z\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:identity\r\nRECURRENCE-ID:20260703T100000Z\r\n" +
+		"DTSTART:20260703T120000Z\r\nDTEND:20260703T130000Z\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+	calendar, err := decodeRemoteCalendar(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, overrides, err := parseCalendarObject(&extcaldav.CalendarObject{Data: calendar})
+	if err != nil {
+		t.Fatalf("parseCalendarObject() error = %v", err)
+	}
+	if len(overrides) != 2 {
+		t.Fatalf("override count = %d, want 2", len(overrides))
 	}
 }
 

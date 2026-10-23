@@ -129,15 +129,6 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// validateLoopbackAddr rejects addresses that would listen on non-loopback
-// interfaces (0.0.0.0, ::, bare ":port", LAN IPs). Only 127.0.0.1, ::1, and
-// localhost are accepted. This enforces the documented threat-model rule:
-// never expose /healthz or /status on all interfaces.
-func validateLoopbackAddr(addr string) error {
-	_, err := canonicalLoopbackAddr(addr)
-	return err
-}
-
 func canonicalLoopbackAddr(addr string) (string, error) {
 	if addr == "" {
 		return "", fmt.Errorf("health address cannot be empty")

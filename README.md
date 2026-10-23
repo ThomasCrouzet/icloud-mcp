@@ -30,7 +30,35 @@ the supported scope. Modern Reminders do not use this server's CalDAV connector.
 
 ## Quick start
 
-Use Go 1.26.0 or later:
+Prebuilt archives are available from [GitHub Releases](https://github.com/ThomasCrouzet/icloud-mcp/releases).
+Each archive contains the binary, license, and third-party notices. Compare the
+archive SHA-256 value with the release checksum file. Each asset also has a
+cosign signature and certificate.
+
+Install the GitHub CLI and Cosign. Authenticate the GitHub CLI before you run
+these commands. Change `platform` to `linux-arm64` or `darwin-arm64` when
+applicable.
+
+```bash
+version=$(gh release view --repo ThomasCrouzet/icloud-mcp --json tagName --jq .tagName)
+platform=linux-amd64
+asset="icloud-mcp-${version}-${platform}.tar.gz"
+checksums="icloud-mcp-${version}-checksums.txt"
+
+gh release download "$version" --repo ThomasCrouzet/icloud-mcp \
+  --pattern "$asset*" --pattern "$checksums"
+grep "  $asset$" "$checksums" | shasum -a 256 -c -
+cosign verify-blob \
+  --certificate "$asset.pem" \
+  --signature "$asset.sig" \
+  --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/${version}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "$asset"
+tar -xzf "$asset"
+./icloud-mcp -version
+```
+
+Alternatively, use Go 1.26.0 or later:
 
 ```bash
 go install github.com/ThomasCrouzet/icloud-mcp/cmd/icloud-mcp@latest
@@ -110,7 +138,9 @@ mutation, and Mail send. It does not enable a disabled read domain.
 Calendar update and delete operations support occurrences and use strong
 `If-Match`. Contacts uses opaque book IDs and writes vCard 3.0.
 Mail uses `(mailbox, UIDVALIDITY, UID)` identities, PEEK reads, and an exact
-recipient policy for SMTP. `set_message_flags` fails closed with
+recipient policy for SMTP. `move_message` rejects SPECIAL-USE Trash and Junk
+destinations. Use `trash_message` to delete a message.
+`set_message_flags` fails closed with
 `protocol_error` when CONDSTORE is advertised. This occurs because go-imap
 beta.8 cannot observe tagged MODIFIED. See the full behavior notes:
 [docs/caldav-compatibility.md](docs/caldav-compatibility.md),
@@ -267,15 +297,16 @@ dependencies. If you add a direct dependency, add its justification here.
 make build        # local host binary, VERSION defaults to dev
 make test         # go test ./... -race -cover
 make lint         # go vet + pinned golangci-lint
-make release VERSION=v0.4.0      # packaged linux/arm64, digest-pinned Go 1.26.9 image
-make release-all VERSION=v0.4.0  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
+make release VERSION=v1.2.3      # packaged linux/arm64, digest-pinned Go 1.26.10 image
+make release-all VERSION=v1.2.3  # packaged linux/amd64, linux/arm64, darwin/arm64 (host Go)
 make install      # host-compatible build to INSTALL_DIR (default ~/.local/bin)
 ```
 
-Release targets require a clean worktree and a non-`dev` version. Archives contain
-the binary, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also
-contains a SHA-256 checksum file. GitHub tag releases run `make release-all`
-only after CI and gitleaks succeed for that tag. They use Go 1.26.9 with
+Release targets require a clean worktree and a version such as `v1.2.3`. They
+refuse to replace an existing release output. Archives contain the binary,
+`LICENSE`, and `THIRD_PARTY_NOTICES.md`. The `dist/` directory also contains a
+SHA-256 checksum file. GitHub tag releases run `make release-all`
+only after CI and gitleaks succeed for that tag. They use Go 1.26.10 with
 `check-latest` disabled.
 
 Local `make release` uses the digest-pinned container path for linux/arm64.
@@ -283,8 +314,10 @@ Release blobs include cosign keyless signatures. `-version` first uses the
 release ldflags value. If this value is absent, it uses Go module build
 information. Thus, `go install ...@version` reports the module version.
 
-CI checks formatting, race tests, fuzzing, vulnerabilities, secrets, public text,
-and multi-architecture builds. It enforces coverage floors and a 20 MiB binary limit.
+CI checks formatting, race tests, vulnerabilities, secrets, public text, and
+multi-architecture builds. It enforces coverage floors and a 20 MiB binary
+limit. Release-tag CI runs fuzz smoke tests for all parser packages. A manual
+workflow option can run the same tests.
 Live tests require the `integration` build tag and explicit domain/write gates.
 CI never runs them. See [Testing](docs/testing.md).
 
@@ -307,7 +340,7 @@ fixtures and do not establish live iCloud compatibility.
 
 | Document | Purpose |
 |----------|---------|
-| [Host integration](docs/agent-hosts.md) | YAML and JSON setup, multi-account processes, caller behavior |
+| [Host integration](docs/agent-hosts.md) | Stdio setup, secret files, health checks, multiple accounts, caller behavior |
 | [Error codes](docs/error-codes.md) | Retry rules and mutation recovery |
 | [Architecture](docs/architecture.md) | Startup, domain boundaries, concurrency, update idempotency |
 | [CalDAV compatibility](docs/caldav-compatibility.md) | Calendar discovery, conditional writes, recurrence, limits |

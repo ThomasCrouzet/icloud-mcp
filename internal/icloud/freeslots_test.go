@@ -75,6 +75,37 @@ func TestFindFreeSlots_ImpossibleDuration(t *testing.T) {
 	}
 }
 
+func TestFindFreeSlots_RejectsInvalidWorkingHoursAndWeekdays(t *testing.T) {
+	day := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		options FreeSlotOptions
+	}{
+		{
+			name:    "negative working-hour start",
+			options: FreeSlotOptions{WorkingHourStart: -1},
+		},
+		{
+			name:    "working-hour end after midnight limit",
+			options: FreeSlotOptions{WorkingHourEnd: 24*60 + 1},
+		},
+		{
+			name:    "weekday outside enum",
+			options: FreeSlotOptions{DaysOfWeek: []time.Weekday{time.Saturday + 1}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.options.RangeStart = day
+			test.options.RangeEnd = day.Add(24 * time.Hour)
+			test.options.Duration = time.Hour
+			if _, err := FindFreeSlots(nil, test.options); err == nil {
+				t.Fatal("FindFreeSlots() accepted invalid options")
+			}
+		})
+	}
+}
+
 func TestFindFreeSlots_WorkingHoursCrossMidnight(t *testing.T) {
 	// Night shift 22:00-06:00 local as one continuous window per start day.
 	// Range covers Tue 00:00 through Wed 12:00 so Tuesday night is fully inside.

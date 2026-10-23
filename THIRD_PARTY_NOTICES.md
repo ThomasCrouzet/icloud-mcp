@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-This distribution contains the Go modules listed below. Versions match the
-module graph used for the v0.4.0 release preparation.
+This distribution contains the Go modules listed below. Versions match
+`go.mod` for v0.4.2.
 
 ## MIT-Licensed Components
 
@@ -15,20 +15,20 @@ module graph used for the v0.4.0 release preparation.
   - Copyright (c) 2016 emersion
 - `github.com/emersion/go-sasl` `v0.0.0-20241020182733-b788ff22d5a6`
   - Copyright (c) 2016 emersion
-- `github.com/emersion/go-smtp` `v0.24.0`
+- `github.com/emersion/go-smtp` `v0.25.0`
   - Copyright (c) 2010 The Go Authors
   - Copyright (c) 2014 Gleez Technologies
   - Copyright (c) 2016 emersion
   - Copyright (c) 2016 Proton Technologies AG
-- `github.com/emersion/go-vcard` `v0.0.0-20260618161152-d854b7e0e2d3`
+- `github.com/emersion/go-vcard` `v0.1.0`
   - Copyright (c) 2017 emersion
 - `github.com/emersion/go-webdav` `v0.7.0`
   - Copyright (c) 2020 Simon Ser
-- `github.com/google/jsonschema-go` `v0.4.2`
+- `github.com/google/jsonschema-go` `v0.4.3`
   - Copyright (c) 2025 JSON Schema Go Project Authors
-- `github.com/mark3labs/mcp-go` `v0.56.0`
+- `github.com/mark3labs/mcp-go` `v1.3.0`
   - Copyright (c) 2024 Anthropic, PBC
-- `github.com/spf13/cast` `v1.7.1`
+- `github.com/spf13/cast` `v1.10.0`
   - Copyright (c) 2014 Steve Francia
 - `github.com/teambition/rrule-go` `v1.8.2`
   - Copyright (c) 2017-2023 Teambition
@@ -107,7 +107,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## golang.org/x/text v0.39.0 and golang.org/x/time v0.15.0
+## golang.org/x/text v0.43.0 and golang.org/x/time v0.16.0
 
 Copyright 2009 The Go Authors.
 
@@ -157,7 +157,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-## github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+## github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 
 Apache License
 Version 2.0, January 2004
