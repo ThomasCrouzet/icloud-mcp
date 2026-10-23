@@ -103,15 +103,15 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/golangci-lint
-          key: lint-${{ runner.os }}-${{ runner.arch }}-go1.27.1-v2.13.2-${{ hashFiles('go.sum', '.golangci.yml') }}
+          key: lint-${{ runner.os }}-${{ runner.arch }}-go1.27.3-v2.15.0-${{ hashFiles('go.sum', '.golangci.yml') }}
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         env:
-          GOTOOLCHAIN: go1.27.1
+          GOTOOLCHAIN: go1.27.3
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
         with:
-          version: v2.13.2
+          version: v2.15.0
           args: --timeout=5m ./...
           skip-cache: true
 
@@ -176,7 +176,7 @@ jobs:
       - name: build (linux/amd64 + linux/arm64 + darwin/arm64 + windows/amd64 smoke)
         run: |
           mkdir -p dist
-          version=v0.4.0-ci
+          version="v$(jq -r .version server.json)-ci"
           for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
             os="${target%/*}"
             arch="${target#*/}"
@@ -201,7 +201,7 @@ jobs:
           go mod tidy -diff
 
       - name: fuzz smoke
-        if: github.event_name == 'workflow_dispatch' && inputs.fuzz
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.fuzz)
         run: |
           set -e
           # Keep at least one native fuzz target in each protocol parser package.
@@ -240,7 +240,7 @@ jobs:
           checker="${RUNNER_TEMP}/network_literal_guard.go"
           policy_checker="${RUNNER_TEMP}/production_policy_guard.go"
           guard_fixture="${RUNNER_TEMP}/network-guard-fixture"
-          trap 'rm -rf "$checker" "$policy_checker" "$guard_fixture"' EXIT
+          trap 'rm -f "$checker" "$policy_checker" "$guard_fixture/dynamic.go" "$guard_fixture/result.log"; rmdir "$guard_fixture" 2>/dev/null || true' EXIT
           cat >"$checker" <<'EOF'
           package main
 
@@ -915,8 +915,29 @@ jobs:
           go-version: '1.26.10'
           check-latest: false
 
+      - name: Validate release metadata
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          version = json.loads(Path("server.json").read_text())["version"]
+          if os.environ["GITHUB_REF_NAME"] != f"v{version}":
+              raise SystemExit("Release tag does not match server.json")
+          changelog = Path("CHANGELOG.md").read_text()
+          section = re.search(
+              rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}\n(.*?)(?=^## |\Z)",
+              changelog, re.MULTILINE | re.DOTALL,
+          )
+          if section is None or not section[1].strip():
+              raise SystemExit("Release notes are missing from CHANGELOG.md")
+          Path(os.environ["RUNNER_TEMP"], "release-notes.md").write_text(section[1].strip() + "\n")
+          PY
+
       - name: Build multi-arch archives
-        # Host Go is pinned above to match go.mod. Local `make release` remains
+        # Host Go is pinned above for release builds. Local `make release` remains
         # the digest-pinned container path for linux/arm64 only.
         run: make release-all VERSION="$GITHUB_REF_NAME"
 
@@ -962,7 +983,8 @@ jobs:
           test "${#certificates[@]}" -eq 4
           assets+=("${signatures[@]}" "${certificates[@]}")
           gh release create "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --verify-tag \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
             --title "$GITHUB_REF_NAME" \
             "${assets[@]}"
 

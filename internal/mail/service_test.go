@@ -508,6 +508,34 @@ func TestMoveCapabilityPathsAndPartialSafety(t *testing.T) {
 	}
 }
 
+func TestMoveRejectsSpecialUseDeletionTargetsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	input := MoveInput{Mailbox: "INBOX", UIDValidity: 4, UID: 2, Destination: "Destination"}
+	for name, attribute := range map[string]string{
+		"trash":      "\\Trash",
+		"mixed junk": "\\jUnK",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			imap := &fakeIMAP{
+				caps: imapadapter.Capabilities{Move: true},
+				mailboxes: []imapadapter.Mailbox{
+					{Name: "INBOX"},
+					{Name: "Destination", Attributes: []string{"custom", attribute}},
+				},
+			}
+			_, err := testService(t, imap, nil, true, false).MoveMessage(context.Background(), input)
+			if errorCode(t, err) != CodeValidation {
+				t.Fatalf("special-use destination error: %v", err)
+			}
+			joined := strings.Join(imap.log, ",")
+			if strings.Contains(joined, "select") || strings.Contains(joined, "move") || strings.Contains(joined, "copy") {
+				t.Fatalf("special-use destination reached the mutation boundary: %v", imap.log)
+			}
+		})
+	}
+}
+
 func TestTrashRequiresExactlyOneSpecialUseMailbox(t *testing.T) {
 	t.Parallel()
 	input := TrashInput{Mailbox: "INBOX", UIDValidity: 4, UID: 2}
@@ -633,7 +661,10 @@ func TestIMAPDeadlineCleanupReleasesReadSemaphore(t *testing.T) {
 	case <-time.After(30 * time.Millisecond):
 	}
 	select {
-	case <-firstDone:
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("successful first read failed during bounded cleanup: %v", err)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("stalled cleanup outlived the first context")
 	}

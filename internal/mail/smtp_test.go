@@ -234,7 +234,9 @@ func TestSMTPInboundBudgetContinuesAcrossSTARTTLS(t *testing.T) {
 	if got, want := readSMTPEvents(t, events, 4), []string{"EHLO", "STARTTLS", "TLS", "EHLO"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("SMTP setup order = %v, want %v", got, want)
 	}
-	<-serverErr
+	if err := <-serverErr; !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("oversized post-TLS reply server error = %v, want closed pipe", err)
+	}
 }
 
 func TestWriteSMTPPayloadDetectsShortWrite(t *testing.T) {

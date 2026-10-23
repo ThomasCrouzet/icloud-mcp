@@ -16,6 +16,3 @@ coverage.html
 .DS_Store
 .idea/
 .vscode/
-
-# Internal open-source preparation notes (must never enter the public history).
-/OPEN-SOURCE.md

@@ -376,8 +376,10 @@ func TestParseWorkingHours(t *testing.T) {
 	if err != nil || m != 9*60+30 {
 		t.Fatalf("%d %v", m, err)
 	}
-	if _, err := ParseWorkingHours("25:00"); err == nil {
-		t.Fatal("expected error")
+	for _, invalid := range []string{"25:00", "9:30", "09:3", "09:30junk", "09:30:00", "+9:30"} {
+		if _, err := ParseWorkingHours(invalid); err == nil {
+			t.Errorf("ParseWorkingHours(%q) accepted an invalid value", invalid)
+		}
 	}
 }
 

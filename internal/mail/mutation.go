@@ -89,6 +89,9 @@ func (s *Client) MoveMessage(ctx context.Context, input MoveInput) (MoveResult, 
 		if err != nil {
 			return nil, err
 		}
+		if specialUseDeletionMailbox(mailboxes, input.Destination) {
+			return nil, validationError("destination cannot be a SPECIAL-USE Trash or Junk mailbox; use trash_message for intentional deletion")
+		}
 		if !selectableMailbox(mailboxes, input.Destination) {
 			return nil, newError(CodeNotFound, "destination mailbox was not returned as selectable by LIST")
 		}
@@ -156,6 +159,20 @@ func selectableMailbox(mailboxes []imapadapter.Mailbox, name string) bool {
 		}
 	}
 	return matches == 1
+}
+
+func specialUseDeletionMailbox(mailboxes []imapadapter.Mailbox, name string) bool {
+	for _, mailbox := range mailboxes {
+		if mailbox.Name != name {
+			continue
+		}
+		for _, attribute := range mailbox.Attributes {
+			if strings.EqualFold(attribute, "\\Trash") || strings.EqualFold(attribute, "\\Junk") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isSelectable(mailbox imapadapter.Mailbox) bool {

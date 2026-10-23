@@ -1,54 +1,27 @@
-# Agent host integration
+# MCP host integration
 
-`icloud-mcp` is a **stdio MCP server**. It works with any host that can start a
-process, set its environment, and connect stdin and stdout. The binary does not
-read host-specific configuration files or `.env` files.
+`icloud-mcp` is a stdio MCP server. A compatible host starts the process and
+connects its standard input and output to JSON-RPC. The binary reads only its
+process environment. It does not read `.env` files or host configuration files.
 
 ## Common setup
 
-1. Follow the [quick start](../README.md#quick-start) to install the binary and
-   configure credentials.
-2. Give the host the absolute path to `icloud-mcp` and the same environment.
-3. Use stdio for JSON-RPC.
-4. Read structured logs and mutation audits from stderr.
-
-Mutation audits use JSON by default. The [configuration
-reference](../README.md#configuration) describes all 12 product variables.
+1. Follow the [quick start](../README.md#quick-start).
+2. Give the host the absolute path to `icloud-mcp`.
+3. Pass each required environment variable as a string.
+4. Use stdio as the transport.
+5. Keep stdout exclusively for JSON-RPC.
+6. Send stderr to the host log collector.
+7. After an environment change, start the process again.
 
 For the first deployment, enable only Calendar and global read-only mode. This
-configuration provides seven tools.
+configuration registers seven tools. Use `icloud_capabilities` to show the
+enabled domains, capabilities, and tool list.
 
-## Hermes
+## Host configuration
 
-Register the stdio MCP server under `mcp_servers` in
-`~/.hermes/config.yaml`. See the current Hermes MCP documentation. Use this
-example:
-
-```yaml
-mcp_servers:
-  icloud:
-    command: /home/you/.local/bin/icloud-mcp
-    env:
-      ICLOUD_EMAIL: you@icloud.com
-      ICLOUD_PASSWORD: app-specific-password
-      ICLOUD_MCP_READ_ONLY: "true"
-      ICLOUD_MCP_DEFAULT_TZ: Europe/Paris
-```
-
-Quote every boolean value. An unquoted YAML `false` becomes a host-side boolean.
-Hosts that require string values reject it before the server starts, and no tool
-registers. Use `ICLOUD_MCP_READ_ONLY: "false"`, not `ICLOUD_MCP_READ_ONLY: false`.
-
-Store secrets in the Hermes profile `.env` when the host uses that file. Call
-`icloud_capabilities` first to see the active tool list.
-
-Hermes also provides an optional catalog entry under `optional-mcps/` in the
-Hermes Agent repository. Catalog installation is separate from this manual
-configuration.
-
-## JSON host configuration
-
-Use the host's "custom MCP server" or "stdio MCP" entry. Use this JSON example:
+Host field names differ. Use the host's custom stdio server option. The
+following JSON object shows the required process configuration:
 
 ```json
 {
@@ -56,8 +29,8 @@ Use the host's "custom MCP server" or "stdio MCP" entry. Use this JSON example:
     "icloud": {
       "command": "/Users/you/.local/bin/icloud-mcp",
       "env": {
-        "ICLOUD_EMAIL": "you@icloud.com",
-        "ICLOUD_PASSWORD": "app-specific-password",
+        "ICLOUD_EMAIL": "file:///private/path/icloud-email",
+        "ICLOUD_PASSWORD": "file:///private/path/icloud-password",
         "ICLOUD_MCP_READ_ONLY": "true",
         "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
       }
@@ -66,49 +39,56 @@ Use the host's "custom MCP server" or "stdio MCP" entry. Use this JSON example:
 }
 ```
 
-Reload the host after environment changes. Never commit the password to a
-shared configuration repository. Use an operating system secret store or a
-boot-only `file://` secret. The secret must be a regular file of 4 KiB or less.
-Its mode must be 0600 or stricter.
+Use absolute paths for the binary and secret files. Each secret file must be a
+regular file of 4 KiB or less. Its mode must be 0600 or stricter.
 
-## OpenClaw and other orchestrators
+Pass boolean values as strings. For YAML hosts, quote every boolean:
 
-Run `icloud-mcp` as a long-lived or per-session child process:
+```yaml
+ICLOUD_MCP_READ_ONLY: "true"
+ICLOUD_MCP_ENABLE_CONTACTS: "false"
+```
 
-- **command**: absolute path to `icloud-mcp`
-- **transport**: stdio JSON-RPC
-- **env**: the [12 product variables](../README.md#configuration)
-- **logs**: parse stderr NDJSON (`msg=audit` for mutations)
+An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
+before the server starts. See the [configuration
+reference](../README.md#configuration) for all 12 product variables.
 
-Supervisors can use the optional loopback health endpoint:
+## Logs and health
+
+Stdio transports reserve stdout for MCP traffic. The server writes operational
+logs and mutation audit records to stderr. Mutation audits use JSON by default.
+
+A supervisor can enable the optional loopback health endpoint:
 
 ```bash
 icloud-mcp -health 127.0.0.1:8797
-# GET http://127.0.0.1:8797/healthz  -> JSON status, domains, rateLimits
+curl --fail http://127.0.0.1:8797/healthz
 ```
 
-## Multi-account
+The endpoint returns JSON status, enabled domains, and rate limits. The listener
+accepts loopback addresses only. Give each process a different port.
 
-One process uses one iCloud identity. For multiple accounts, start **N
-processes** with different environments. Use different health ports when you
-enable health endpoints. Hosts identify each tool set by server name. The
-server does not support multiple accounts in one process.
+## Multiple accounts
 
-## Agent behavior tips
+One process uses one iCloud identity. Start a separate process for each account.
+Give each process a separate environment and server name.
 
-- For Calendar writes, use wall-clock times without an offset. Set
+Use separate secret files for each account. A host uses the server name to
+identify each tool set.
+
+## Caller behavior
+
+- For Calendar writes, use wall-clock values without an offset. Set
   `ICLOUD_MCP_DEFAULT_TZ` to the owner's IANA time zone.
-- Responses use RFC3339 with an explicit offset in that zone. See
+- Calendar responses use RFC3339 with an explicit offset in that zone. See
   `calendar_capabilities.outputFormat`.
 - For `create_event` and `create_contact`, use `client_uid` or its
   `idempotency_key` alias as the resource UID.
 - For `update_event` and `update_contact`, use `idempotency_key` with a strong
-  `etag`. The key identifies a saved result within that process and tool.
-- Known update results stay for 15 minutes after the request completes.
-  Uncertain results stay until process exit. See the
-  [update contract](architecture.md#update-idempotency).
-- Match structured `code` fields. See [error-codes.md](error-codes.md).
+  `etag`.
+- Known update results stay for 15 minutes. Uncertain results stay until process
+  exit. See the [update contract](architecture.md#update-idempotency).
+- Match the structured `code` field. See [error-codes.md](error-codes.md).
 - Obey `retry_after_seconds` for `rate_limited` and `unavailable` errors.
-- After an ambiguous update, read with `get_event` or `get_contact` before
-  selecting a new key. A new key or restart does not prove that the write failed.
-- If the cache is full, keep the key. Wait for capacity.
+- After an `outcome_unknown` update, read the resource before you select a new key.
+- If the update cache is full, keep the key and wait for capacity.

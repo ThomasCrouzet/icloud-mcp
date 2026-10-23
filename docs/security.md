@@ -259,6 +259,9 @@ Move uses native UID MOVE when available. Otherwise, it requires UIDPLUS. It
 sends UID COPY, adds Deleted, and sends UID EXPUNGE for the one UID. The server
 does not expose plain or mailbox-wide EXPUNGE.
 
+`move_message` rejects a destination with a case-insensitive SPECIAL-USE Trash
+or Junk attribute. Callers use `trash_message` to delete a message.
+
 A failure after a completed step returns `partial_failure` or
 `outcome_unknown`. The result includes reconciliation guidance. Trash requires
 exactly one selectable SPECIAL-USE Trash mailbox. It does not expose permanent

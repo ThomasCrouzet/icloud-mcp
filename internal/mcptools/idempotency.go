@@ -74,17 +74,8 @@ func namespacedIdempotencyKey(tool, key string) string {
 	return tool + "\x00" + key
 }
 
-// begin claims a key for mutation or returns a prior outcome.
-//
-//	hit:      outcome contains the cached text and error status
-//	conflict: same key was used with different params
-//	ready:    caller must complete the claim after the service call
-//
+// beginContext claims a key for mutation or returns a prior outcome.
 // Concurrent same-key requests wait for the original owner's outcome.
-func (s *idempotencyStore) begin(key, paramsHash string) (outcome idempotencyOutcome, conflict, hit, ready bool) {
-	return s.beginContext(context.Background(), key, paramsHash)
-}
-
 func (s *idempotencyStore) beginContext(ctx context.Context, key, paramsHash string) (outcome idempotencyOutcome, conflict, hit, ready bool) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -184,42 +175,6 @@ func (s *idempotencyStore) complete(key, paramsHash string, result *mcp.CallTool
 	if entry.done != nil {
 		close(entry.done)
 	}
-}
-
-// abort releases a claim only before a service call can dispatch a mutation.
-func (s *idempotencyStore) abort(key, paramsHash string) {
-	if key == "" || paramsHash == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entry, ok := s.entries[key]
-	if !ok || !entry.pending || entry.paramsHash != paramsHash {
-		return
-	}
-	done := entry.done
-	delete(s.entries, key)
-	if done != nil {
-		close(done)
-	}
-}
-
-// lookup is retained for tests that inspect completed entries only.
-func (s *idempotencyStore) lookup(key, paramsHash string) (payload string, conflict, found bool) {
-	if key == "" || paramsHash == "" {
-		return "", false, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.purgeLocked()
-	entry, ok := s.entries[key]
-	if !ok || entry.pending {
-		return "", false, false
-	}
-	if entry.paramsHash != paramsHash {
-		return "", true, true
-	}
-	return entry.outcome.payload, false, true
 }
 
 func (s *idempotencyStore) purgeLocked() {

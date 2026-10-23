@@ -665,7 +665,10 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 	}
 	events := 0
 	masters := 0
+	overrides := 0
 	uid := ""
+	masterRecurring := false
+	overrideIDs := make(map[int64]struct{})
 	type componentPosition struct {
 		component *ical.Component
 		direct    bool
@@ -705,11 +708,27 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 		if len(recurrenceIDs) > 1 {
 			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 		}
+		recurrenceRules := child.Props[ical.PropRecurrenceRule]
+		if len(recurrenceRules) > 1 || (len(recurrenceIDs) == 1 && len(recurrenceRules) != 0) {
+			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
+		}
 		if len(recurrenceIDs) == 0 {
 			masters++
+			masterRecurring = len(recurrenceRules) == 1
+			continue
 		}
+		overrides++
+		recurrenceID, err := recurrenceIDs[0].DateTime(time.UTC)
+		if err != nil {
+			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
+		}
+		key := recurrenceID.UTC().Unix()
+		if _, duplicate := overrideIDs[key]; duplicate {
+			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
+		}
+		overrideIDs[key] = struct{}{}
 	}
-	if events == 0 || masters != 1 || (expectedUID != "" && uid != expectedUID) {
+	if events == 0 || masters != 1 || (overrides != 0 && !masterRecurring) || (expectedUID != "" && uid != expectedUID) {
 		return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 	}
 	return nil

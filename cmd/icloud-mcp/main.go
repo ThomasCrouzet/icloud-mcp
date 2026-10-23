@@ -232,9 +232,16 @@ func timeoutMiddlewareWithLimit(d, graceDuration time.Duration, slots chan struc
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx, cancel := context.WithTimeout(ctx, d)
 			defer cancel()
+			if ctx.Err() != nil {
+				return toolTimeoutResult(req.Params.Name), nil
+			}
 			select {
 			case slots <- struct{}{}:
 			case <-ctx.Done():
+				return toolTimeoutResult(req.Params.Name), nil
+			}
+			if ctx.Err() != nil {
+				<-slots
 				return toolTimeoutResult(req.Params.Name), nil
 			}
 			type outcome struct {

@@ -182,7 +182,7 @@ func TestStart_AcceptsLoopback(t *testing.T) {
 	}
 }
 
-func TestValidateLoopbackAddr(t *testing.T) {
+func TestCanonicalLoopbackAddr(t *testing.T) {
 	tests := []struct {
 		addr    string
 		wantErr bool
@@ -197,9 +197,9 @@ func TestValidateLoopbackAddr(t *testing.T) {
 		{"loopback.example:8797", true},
 	}
 	for _, tt := range tests {
-		err := validateLoopbackAddr(tt.addr)
+		_, err := canonicalLoopbackAddr(tt.addr)
 		if (err != nil) != tt.wantErr {
-			t.Errorf("validateLoopbackAddr(%q) err=%v, wantErr=%v", tt.addr, err, tt.wantErr)
+			t.Errorf("canonicalLoopbackAddr(%q) err=%v, wantErr=%v", tt.addr, err, tt.wantErr)
 		}
 	}
 }

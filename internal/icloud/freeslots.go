@@ -118,6 +118,14 @@ func FindFreeSlots(busy []Interval, opts FreeSlotOptions) ([]Interval, error) {
 	if opts.Duration > opts.RangeEnd.Sub(opts.RangeStart) {
 		return nil, NewValidationError("requested duration is longer than the search range")
 	}
+	if opts.WorkingHourStart < 0 || opts.WorkingHourStart > 24*60 || opts.WorkingHourEnd < 0 || opts.WorkingHourEnd > 24*60 {
+		return nil, NewValidationError("working hours must be between 00:00 and 24:00")
+	}
+	for _, day := range opts.DaysOfWeek {
+		if day < time.Sunday || day > time.Saturday {
+			return nil, NewValidationError("days of week must be between Sunday and Saturday")
+		}
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 50
@@ -197,12 +205,6 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 	whStart := opts.WorkingHourStart
 	whEnd := opts.WorkingHourEnd
 	useWH := whStart != 0 || whEnd != 0
-	if useWH {
-		if whStart < 0 || whStart > 24*60 || whEnd < 0 || whEnd > 24*60 {
-			// Invalid hours: treat as no working-hours filter (caller should validate).
-			useWH = false
-		}
-	}
 
 	// Overnight working hours: End <= Start (e.g. 22:00-06:00).
 	overnight := useWH && whEnd <= whStart
@@ -300,11 +302,14 @@ func intersect(a, b Interval) Interval {
 
 // ParseWorkingHours parses "HH:MM" into minutes from midnight.
 func ParseWorkingHours(s string) (int, error) {
-	var h, m int
-	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {
+	if len(s) != len("HH:MM") || s[2] != ':' ||
+		s[0] < '0' || s[0] > '9' || s[1] < '0' || s[1] > '9' ||
+		s[3] < '0' || s[3] > '9' || s[4] < '0' || s[4] > '9' {
 		return 0, NewValidationError(fmt.Sprintf("invalid working hours %q: use HH:MM", s))
 	}
-	if h < 0 || h > 24 || m < 0 || m > 59 || (h == 24 && m != 0) {
+	h := int(s[0]-'0')*10 + int(s[1]-'0')
+	m := int(s[3]-'0')*10 + int(s[4]-'0')
+	if h > 24 || m > 59 || (h == 24 && m != 0) {
 		return 0, NewValidationError(fmt.Sprintf("invalid working hours %q", s))
 	}
 	return h*60 + m, nil

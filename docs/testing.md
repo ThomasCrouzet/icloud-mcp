@@ -2,10 +2,10 @@
 
 ## Commands
 
-`make lint` uses golangci-lint v2.13.2 and supports Go 1.27.1.
+`make lint` uses golangci-lint v2.15.0 and supports Go 1.27.3.
 The linter requires Go 1.26 or newer to build. With an older host toolchain,
 Go can download a compatible version when automatic toolchain selection is enabled.
-The CI lint step uses Go 1.27.1. Other CI checks and release builds use Go 1.26.9.
+The CI lint step uses Go 1.27.3. Other CI checks and release builds use Go 1.26.10.
 
 Run the complete local gates:
 
@@ -13,7 +13,7 @@ Run the complete local gates:
 GOMAXPROCS=2 GOFLAGS=-p=1 make test # go test ./... -race -cover
 GOMAXPROCS=2 GOFLAGS=-p=1 make lint # go vet plus pinned golangci-lint
 GOMAXPROCS=2 GOFLAGS=-p=1 make build # host-toolchain development binary
-make release VERSION=v0.4.0 # packaged linux/arm64 in pinned Go 1.26.9 container
+make release VERSION=v1.2.3 # packaged linux/arm64 in pinned Go 1.26.10 container
 ```
 
 Useful focused commands for the unified domains:
@@ -200,6 +200,8 @@ Mail:
 - Non-CONDSTORE flag writes are delta-only and cannot set Deleted or keywords.
 - Move uses native UID MOVE or a UIDPLUS-only one-message fallback; plain
   EXPUNGE is impossible.
+- `move_message` rejects SPECIAL-USE Trash and Junk destinations before
+  mutation dispatch. Attribute matching ignores case.
 - Trash requires exactly one selectable SPECIAL-USE Trash target.
 - All SMTP recipients pass the local policy before connection. All RCPT commands
   pass before DATA. Message headers exclude Bcc.
@@ -214,9 +216,10 @@ Mail:
 runs race tests with a 78% total coverage threshold. It also runs
 `govulncheck`, module verification, and tidy checks.
 
-CI runs a fuzz smoke test for each target in all five packages. It builds for
-multiple architectures and applies a 20 MiB binary limit. It also runs gitleaks
-and security source guards. Package coverage floors are:
+Release-tag CI runs a fuzz smoke test for each target in all five packages. A
+manual workflow dispatch can run the same tests. CI builds for multiple
+architectures and applies a 20 MiB binary limit. It also runs gitleaks and
+security source guards. Package coverage floors are:
 
 | Package | Floor |
 |---------|-------|
@@ -232,7 +235,7 @@ and security source guards. Package coverage floors are:
 
 Tag releases publish only after the CI and gitleaks jobs succeed on the same
 ref. See the `release` job in `.github/workflows/ci.yml`. GitHub archives use
-`make release-all` with Go 1.26.9 pinned. The setting is
+`make release-all` with Go 1.26.10 pinned. The setting is
 `check-latest: false`.
 
 Local `make release` remains the digest-pinned container path for linux/arm64.

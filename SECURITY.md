@@ -61,7 +61,8 @@ stronger isolation.
   MODSEQ/MODIFIED safety.
 - **No mutation replay:** the server does not automatically replay Calendar PUT
   or DELETE, Contacts writes, IMAP mutations, or SMTP submission. Calendar
-  series delete follows the same rule. The server retries only Calendar reads.
+  series delete follows the same rule. The server retries only Calendar and
+  Contacts reads.
   Ambiguous mutation failures return `outcome_unknown` with reconciliation
   guidance. SMTP failures after DATA starts use the same result.
 - **Mutation audit:** each production mutation emits `domain`, `resourceType`,
@@ -84,8 +85,9 @@ caller. Remote content remains untrusted. These boundaries do not remove
 vulnerabilities from the process or its dependencies.
 
 For target confirmation, a successful `delete_event` response can include
-`deletedTitle`. The audit trail never includes it. Before you retry a Mail
-operation with `outcome_unknown`, check Sent and the recipients.
+`deletedTitle`. The audit trail never includes it. For a Mail mutation with
+`outcome_unknown`, check the source and destination state. For a send with
+`outcome_unknown`, check Sent and the recipients.
 
 When an IMAP server advertises CONDSTORE, go-imap beta.8 cannot expose the
 tagged MODIFIED response. A safe conditional STORE requires this response.

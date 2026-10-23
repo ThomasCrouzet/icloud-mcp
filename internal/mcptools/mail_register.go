@@ -115,7 +115,7 @@ func newSetMessageFlagsTool() mcp.Tool {
 
 func newMoveMessageTool() mcp.Tool {
 	return mcp.NewTool("move_message",
-		mcp.WithDescription("Moves one message identified by (mailbox, UIDVALIDITY, UID) to a selectable destination returned by list_mailboxes. It uses native UID MOVE or the UIDPLUS-only safe fallback, never plain or mailbox-wide EXPUNGE. Partial or ambiguous outcomes require reconciliation and are never automatically retried."),
+		mcp.WithDescription("Moves one message identified by (mailbox, UIDVALIDITY, UID) to a selectable destination returned by list_mailboxes. It rejects SPECIAL-USE Trash and Junk destinations. Use trash_message for intentional deletion. It uses native UID MOVE or the UIDPLUS-only safe fallback, never plain or mailbox-wide EXPUNGE. Partial or ambiguous outcomes require reconciliation and are never automatically retried."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
@@ -123,7 +123,7 @@ func newMoveMessageTool() mcp.Tool {
 		mailMailboxProperty("mailbox", "Source mailbox name returned by list_mailboxes", true),
 		mailUint32Property("uid_validity", "Expected source UIDVALIDITY", true),
 		mailUint32Property("uid", "Non-zero source message UID", true),
-		mailMailboxProperty("destination", "Selectable destination mailbox returned by list_mailboxes", true),
+		mailMailboxProperty("destination", "Selectable non-Trash and non-Junk destination returned by list_mailboxes", true),
 	)
 }
 

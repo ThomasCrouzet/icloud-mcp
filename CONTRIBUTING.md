@@ -8,14 +8,15 @@ make lint    # go vet + golangci-lint (pinned in Makefile / CI)
 make build   # local binary under bin/
 ```
 
-You must use Go 1.26.0 or newer. `make release VERSION=vX.Y.Z` uses a
-digest-pinned Go 1.26.9 image. It builds and packages static linux/arm64.
-`make release-all VERSION=vX.Y.Z` uses the host toolchain. It cross-compiles
+You must use Go 1.26.0 or newer. `make release VERSION=v1.2.3` uses a
+digest-pinned Go 1.26.10 image. It builds and packages static linux/arm64.
+`make release-all VERSION=v1.2.3` uses the host toolchain. It cross-compiles
 and packages linux/amd64, linux/arm64, and darwin/arm64. GitHub tag releases
 use this target after CI and gitleaks succeed.
 
-Release targets reject an unset version or a `dev` version. They also make
-SHA-256 checksums. `make install` always builds for the current host.
+Release targets require a version such as `v1.2.3` and a clean worktree. They
+refuse to replace existing output files. They also make SHA-256 checksums.
+`make install` always builds for the current host.
 
 ## Rules
 
@@ -36,7 +37,8 @@ SHA-256 checksums. `make install` always builds for the current host.
 - Do not change the hand-written CalDAV discovery, REPORT, or conditional
   PUT/DELETE without reading
   [docs/caldav-compatibility.md](docs/caldav-compatibility.md).
-- Retry only Calendar reads. Never replay PUT, DELETE, or a full-series delete.
+- Retry only Calendar and Contacts reads. Never replay PUT, DELETE, or a
+  full-series delete.
   Keep `outcome_unknown` for ambiguous mutations after dispatch.
 - Keep the [update idempotency contract](docs/architecture.md#update-idempotency).
   A cached uncertain result must prevent another write with the same key.
@@ -109,12 +111,13 @@ These voluntary maintainer targets are not a paid SLA:
 
 - Prefer small, focused PRs.
 - CI must pass all checks. These checks include gofmt, vet, golangci-lint, race
-  tests, the coverage gate, govulncheck, and fuzz smoke for all five parser
-  packages. They also include security AST guards, multi-architecture builds,
-  gitleaks, and the public-text policy. The build check includes a
-  windows/amd64 smoke build. The public-text policy checks the tracked tree and
-  new commit messages in the PR or push range. Coverage must meet the package
-  floors and the 78% aggregate threshold.
+  tests, the coverage gate, and govulncheck. They also include security AST
+  guards, multi-architecture builds, gitleaks, and the public-text policy.
+  Release-tag CI runs fuzz smoke tests for all five parser packages. A manual
+  workflow option can run the same tests. The build check includes a
+  windows/amd64 smoke build. The public-text policy checks the tracked tree.
+  It also checks new commit messages in the PR or push range. Coverage must meet
+  the package floors and the 78% aggregate threshold.
 - Tag releases require green CI.
 - Do not commit secrets, `.env` files, or local agent notes.
 - Do not create or store audit or review reports in this repository.

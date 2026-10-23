@@ -160,6 +160,9 @@ detection.
 for the destination. It then selects the source for read and write. It checks
 UIDVALIDITY and the source UID.
 
+The destination cannot have the SPECIAL-USE `\\Trash` or `\\Junk` attribute.
+This check ignores attribute case. Use `trash_message` for intentional deletion.
+
 - When the server advertises MOVE, the client uses native UID MOVE.
 - Otherwise, it requires UIDPLUS. It sends UID COPY, adds Deleted to that UID,
   and then sends UID EXPUNGE for that UID.

@@ -40,8 +40,8 @@ type msPropstat struct {
 }
 
 type msProp struct {
-	CurrentUserPrincipal *msHref         `xml:"current-user-principal"`
-	CalendarHomeSet      *msHref         `xml:"urn:ietf:params:xml:ns:caldav calendar-home-set"`
+	CurrentUserPrincipal []msHref        `xml:"current-user-principal"`
+	CalendarHomeSet      []msHref        `xml:"urn:ietf:params:xml:ns:caldav calendar-home-set"`
 	DisplayName          string          `xml:"displayname"`
 	CalendarDescription  string          `xml:"urn:ietf:params:xml:ns:caldav calendar-description"`
 	CalendarColor        string          `xml:"http://apple.com/ns/ical/ calendar-color"`
@@ -52,7 +52,7 @@ type msProp struct {
 }
 
 type msHref struct {
-	Href string `xml:"href"`
+	Hrefs []string `xml:"href"`
 }
 
 type msResourceType struct {
@@ -251,11 +251,11 @@ func mergedOKProp(r msResponse) *msProp {
 			continue
 		}
 		found = true
-		if ps.Prop.CurrentUserPrincipal != nil {
-			merged.CurrentUserPrincipal = ps.Prop.CurrentUserPrincipal
+		if len(ps.Prop.CurrentUserPrincipal) > 0 {
+			merged.CurrentUserPrincipal = append(merged.CurrentUserPrincipal, ps.Prop.CurrentUserPrincipal...)
 		}
-		if ps.Prop.CalendarHomeSet != nil {
-			merged.CalendarHomeSet = ps.Prop.CalendarHomeSet
+		if len(ps.Prop.CalendarHomeSet) > 0 {
+			merged.CalendarHomeSet = append(merged.CalendarHomeSet, ps.Prop.CalendarHomeSet...)
 		}
 		if ps.Prop.DisplayName != "" {
 			merged.DisplayName = ps.Prop.DisplayName
@@ -285,26 +285,44 @@ func mergedOKProp(r msResponse) *msProp {
 	return &merged
 }
 
-// principalFromMultistatus extracts the current-user-principal href from
-// the discovery step 1 response.
-func principalFromMultistatus(ms *msMultistatus) string {
+// principalHrefsFromMultistatus extracts all successful
+// current-user-principal href values from discovery step 1.
+func principalHrefsFromMultistatus(ms *msMultistatus) []string {
+	var hrefs []string
 	for _, r := range ms.Responses {
-		prop := mergedOKProp(r)
-		if prop != nil && prop.CurrentUserPrincipal != nil && prop.CurrentUserPrincipal.Href != "" {
-			return prop.CurrentUserPrincipal.Href
+		for _, propstat := range r.Propstats {
+			if !isOKStatus(propstat.Status) {
+				continue
+			}
+			for _, property := range propstat.Prop.CurrentUserPrincipal {
+				if len(property.Hrefs) == 0 {
+					hrefs = append(hrefs, "")
+					continue
+				}
+				hrefs = append(hrefs, property.Hrefs...)
+			}
 		}
 	}
-	return ""
+	return hrefs
 }
 
-// homeSetFromMultistatus extracts the calendar-home-set href from the
-// discovery step 2 response.
-func homeSetFromMultistatus(ms *msMultistatus) string {
+// homeSetHrefsFromMultistatus extracts all successful calendar-home-set href
+// values from discovery step 2.
+func homeSetHrefsFromMultistatus(ms *msMultistatus) []string {
+	var hrefs []string
 	for _, r := range ms.Responses {
-		prop := mergedOKProp(r)
-		if prop != nil && prop.CalendarHomeSet != nil && prop.CalendarHomeSet.Href != "" {
-			return prop.CalendarHomeSet.Href
+		for _, propstat := range r.Propstats {
+			if !isOKStatus(propstat.Status) {
+				continue
+			}
+			for _, property := range propstat.Prop.CalendarHomeSet {
+				if len(property.Hrefs) == 0 {
+					hrefs = append(hrefs, "")
+					continue
+				}
+				hrefs = append(hrefs, property.Hrefs...)
+			}
 		}
 	}
-	return ""
+	return hrefs
 }

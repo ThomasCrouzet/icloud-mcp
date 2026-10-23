@@ -16,6 +16,8 @@ policies. See [CardDAV compatibility](carddav-compatibility.md) and
   redirects and direct PROPFIND requests.
 - The server does not cache a failed discovery. A later call can retry after a
   transient error.
+- Discovery requires exactly one successful principal and one calendar home set.
+  Multiple values return `protocol_error`.
 
 ## calendar-query REPORT
 
@@ -67,6 +69,8 @@ sends no new CalDAV mutation. See the
   Dtstart.
 - Expansion handles EXDATE and RECURRENCE-ID overrides. It includes occurrences
   that overlap the range start.
+- Each override must have a unique recurrence identifier and a recurring master.
+  Ambiguous objects return `protocol_error` before use or mutation.
 - When DTEND is missing, DURATION sets the duration. Calendar days and weeks
   follow local time across DST.
 - Without DURATION, an all-day event ends on the next civil day.
@@ -113,6 +117,9 @@ sends no new CalDAV mutation. See the
   search has a total limit of 250,000 advances.
 - The search reserves selector reachability proof work before iteration.
 - Calendar permits four concurrent reads and two concurrent writes.
+
+Working hours require exact ASCII `HH:MM` values from `00:00` through `24:00`.
+Invalid hours or weekdays return a validation error before free-slot calculation.
 
 ## Limits (Apple)
 
