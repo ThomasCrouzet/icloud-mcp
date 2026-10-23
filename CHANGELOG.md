@@ -41,6 +41,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject ambiguous Calendar discovery responses and duplicate recurrence overrides.
 - Require exact `HH:MM` working hours. Reject invalid time and weekday bounds before free-slot calculation.
 - Document quoted boolean environment values for YAML hosts.
+- Exclude macOS metadata files from release archives.
 - Correct the documented retry policy for Contacts reads. Mutations still have no automatic retry.
 - Cancel active handlers on stdin closure. Treat SIGTERM and EOF as normal
   shutdown. Preserve terminal framing errors as failures.

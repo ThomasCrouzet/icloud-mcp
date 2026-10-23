@@ -80,7 +80,7 @@ release: check-release-version check-release-clean ## Static linux/arm64 archive
 			go build -trimpath -ldflags='$(LDFLAGS)' -o /out/$(PROJECT) ./cmd/$(PROJECT); \
 		cp "$$stage/$(PROJECT)" "$$stage/package/$(PROJECT)"; \
 		cp $(RELEASE_FILES) "$$stage/package/"; \
-		tar -czf "$$stage/$$archive" -C "$$stage/package" $(PROJECT) $(RELEASE_FILES); \
+		COPYFILE_DISABLE=1 tar -czf "$$stage/$$archive" -C "$$stage/package" $(PROJECT) $(RELEASE_FILES); \
 		(cd "$$stage" && shasum -a 256 "$$archive" >"$$checksums"); \
 		ln "$$stage/$$archive" "$$dist/$$archive"; \
 		ln "$$stage/$$checksums" "$$dist/$$checksums"
@@ -127,7 +127,7 @@ release-all: check-release-version check-release-clean ## Cross-compile and pack
 			mkdir -p "$$package"; \
 			cp "$$binary" "$$package/$(PROJECT)"; \
 			cp $(RELEASE_FILES) "$$package/"; \
-			tar -czf "$$stage/$$archive" -C "$$package" $(PROJECT) $(RELEASE_FILES); \
+			COPYFILE_DISABLE=1 tar -czf "$$stage/$$archive" -C "$$package" $(PROJECT) $(RELEASE_FILES); \
 		done; \
 		(cd "$$stage" && shasum -a 256 \
 			$(PROJECT)-$(VERSION)-linux-amd64.tar.gz \
