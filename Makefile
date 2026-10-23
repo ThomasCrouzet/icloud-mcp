@@ -74,7 +74,7 @@ release: check-release-version check-release-clean ## Static linux/arm64 archive
 		}; \
 		trap cleanup_stage 0; \
 		mkdir -p "$$stage/package"; \
-		docker run --rm -v "$(PWD):/src" -v "$$stage:/out" -w /src \
+		docker run --rm -v "$(CURDIR):/src" -v "$$stage:/out" -w /src \
 			-e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
 			$(GOLANG_IMAGE) \
 			go build -trimpath -ldflags='$(LDFLAGS)' -o /out/$(PROJECT) ./cmd/$(PROJECT); \
