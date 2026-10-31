@@ -18,6 +18,81 @@ For the first deployment, enable only Calendar and global read-only mode. This
 configuration registers seven tools. Use `icloud_capabilities` to show the
 enabled domains, capabilities, and tool list.
 
+## Configuration reference
+
+Exactly **12** product environment variables:
+
+| Variable | Default | Contract |
+|----------|---------|----------|
+| `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported (regular file, <=4 KiB, mode 0600+). |
+| `ICLOUD_PASSWORD` | none | Required app-specific password. Mail uses it as a fallback. `file://` as above. |
+| `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
+| `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
+| `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
+| `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools. Writes require read-only mode to be off. |
+| `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads. Requires a Mail address and password. |
+| `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
+| `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
+| `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Three IMAP mutation tools. |
+| `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` (independent of Mail write). |
+| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send is on. Use exact addresses or literal `*`. Literal `*` causes a boot warning. Use exact addresses when possible. |
+
+Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
+boot failure. The server validates the configuration **before** network access.
+Hosts must pass these values as strings. Quote a boolean in YAML, for example
+`ICLOUD_MCP_READ_ONLY: "false"`. An unquoted YAML boolean fails host validation
+before the server starts.
+
+Mail write or send without Mail causes a boot error. Mail without an address or
+password also causes a boot error. Send without a recipient policy causes a
+boot error, including in read-only mode. Global read-only can coexist with write
+and send flags, but it prevents their registration.
+
+The server trims log levels and ignores case. It accepts `debug` or `-4`,
+`info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized
+values use `info`.
+
+Use `-version` to print the version. The optional
+`-health 127.0.0.1:port` flag serves `/healthz` and `/status` on loopback. Both
+endpoints return JSON with domains and rate limits. The optional
+`-audit-format=json|text` flag selects the mutation audit format on stderr.
+The default format is `json`.
+
+### Optional domains
+
+```bash
+# Contacts reads (writes also need ICLOUD_MCP_READ_ONLY=false)
+export ICLOUD_MCP_ENABLE_CONTACTS=true
+
+# Mail reads: IMAP identity may differ from ICLOUD_EMAIL (for example name@icloud.com)
+export ICLOUD_MCP_ENABLE_MAIL=true
+export ICLOUD_MAIL_ADDRESS='file:///private/path/icloud-mail-address'
+# Optional separate password; otherwise Mail uses ICLOUD_PASSWORD.
+# export ICLOUD_MAIL_PASSWORD='file:///private/path/icloud-mail-password'
+
+# Mail mutation (flags, move, trash); independent of send
+export ICLOUD_MCP_ENABLE_MAIL_WRITE=true
+export ICLOUD_MCP_READ_ONLY=false
+
+# Mail send: requires an exact recipient allowlist even under global read-only
+export ICLOUD_MCP_ENABLE_MAIL_SEND=true
+export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com,bob@example.net'
+```
+
+### Dates
+
+- Calendar **input** `start` and `end` accept RFC3339 with an offset. They also
+  accept wall-clock values without an offset in `ICLOUD_MCP_DEFAULT_TZ`. Use
+  values without an offset for the user's local time. Recurring creates and
+  creates with an explicit timezone write TZID and VTIMEZONE. Non-recurring
+  timed creates default to UTC `Z` on the wire. All-day creates use
+  `VALUE=DATE`.
+- Calendar **output** uses RFC3339 for timed events. It always includes an
+  explicit numeric offset in `ICLOUD_MCP_DEFAULT_TZ`, never bare `Z`. All-day
+  dates use `YYYY-MM-DD`. See `calendar_capabilities.outputFormat`.
+- Contacts birthdays: write `YYYY-MM-DD` only.
+- Mail search: `since` inclusive, `before` exclusive (`YYYY-MM-DD`).
+
 ## Host configuration
 
 Host field names differ. Use the host's custom stdio server option. The
@@ -50,8 +125,8 @@ ICLOUD_MCP_ENABLE_CONTACTS: "false"
 ```
 
 An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
-before the server starts. See the [configuration
-reference](../README.md#configuration) for all 12 product variables.
+before the server starts. See the [configuration reference](#configuration-reference)
+for all 12 product variables.
 
 ## Logs and health
 

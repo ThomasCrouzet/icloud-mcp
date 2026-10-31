@@ -5,6 +5,17 @@ client. Contacts and Mail use separate protocol clients and destination
 policies. See [CardDAV compatibility](carddav-compatibility.md) and
 [Mail compatibility](mail-compatibility.md).
 
+## Compatibility summary
+
+| Item | Value |
+|------|-------|
+| Protocol | CalDAV over HTTPS |
+| Endpoints | `caldav.icloud.com` and `p[0-9]{1,3}-caldav.icloud.com:443` |
+| Authentication | HTTP Basic with `ICLOUD_EMAIL` and `ICLOUD_PASSWORD` (app-specific password) |
+| Writes | Conditional PUT/DELETE with a strong `If-Match`; create uses `If-None-Match: *` |
+| Recurrence | RRULE, EXDATE, and RECURRENCE-ID with TZID; at most 2,000 occurrences |
+| Limits | 366-day range; 400 results; 60 reads and 20 writes per minute |
+
 ## Discovery
 
 - Entry: `https://caldav.icloud.com`.
