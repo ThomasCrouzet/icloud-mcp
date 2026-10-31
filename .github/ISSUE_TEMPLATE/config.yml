@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ThomasCrouzet/icloud-mcp/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Support and maintenance
+    url: https://github.com/ThomasCrouzet/icloud-mcp/blob/main/CONTRIBUTING.md#support-and-maintenance
+    about: Read the support targets before you open an issue.
