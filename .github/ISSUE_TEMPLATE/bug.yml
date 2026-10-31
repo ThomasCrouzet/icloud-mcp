@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a reproducible defect in the MCP server.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include passwords, app-specific passwords, tokens, certificate
+        material, or live account data. Report vulnerabilities through
+        SECURITY.md, not this form.
+  - type: input
+    id: host
+    attributes:
+      label: MCP host and version
+      description: Name the host and its version.
+      placeholder: Claude Desktop 0.12.0
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - stdio
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: Enabled capability flags
+      description: Select every flag that was set to true or 1.
+      options:
+        - label: ICLOUD_MCP_READ_ONLY
+        - label: ICLOUD_MCP_ENABLE_CONTACTS
+        - label: ICLOUD_MCP_ENABLE_MAIL
+        - label: ICLOUD_MCP_ENABLE_MAIL_WRITE
+        - label: ICLOUD_MCP_ENABLE_MAIL_SEND
+  - type: input
+    id: tool
+    attributes:
+      label: Tool name
+      description: Name the MCP tool that failed.
+      placeholder: search_events
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: Use the output of icloud-mcp -version.
+      placeholder: v0.4.2
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: State the result that you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+      description: Paste the redacted error or result. Remove all secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest sequence that shows the defect.
+      placeholder: |
+        1. Set ...
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Paste relevant stderr lines. Remove credentials, paths, and account data.
+    validations:
+      required: false
+  - type: checkboxes
+    id: secret_check
+    attributes:
+      label: Secret check
+      options:
+        - label: I removed passwords, app-specific passwords, tokens, certificate material, and live account data.
+          required: true

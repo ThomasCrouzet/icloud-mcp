@@ -3,6 +3,18 @@
 This document is Contacts-specific. Calendar uses the separate CalDAV client in
 [caldav-compatibility.md](caldav-compatibility.md).
 
+## Compatibility summary
+
+| Item | Value |
+|------|-------|
+| Protocol | CardDAV over HTTPS |
+| Endpoints | `contacts.icloud.com` and `p[0-9]{1,3}-contacts.icloud.com:443` |
+| Authentication | HTTP Basic with `ICLOUD_EMAIL` and `ICLOUD_PASSWORD` |
+| Reads | vCard 3.0 and 4.0; PHOTO bytes omitted |
+| Writes | vCard 3.0 with strong `If-Match`; vCard 4.0 and groups are read-only |
+| Search | Server prefilter plus local re-filter; digit-normalized phone matching |
+| Limits | 100 books; 2,000 cards per search; 60 reads and 20 writes per minute |
+
 ## Endpoint and authentication
 
 - Entry URL: `https://contacts.icloud.com/`.

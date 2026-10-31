@@ -244,6 +244,50 @@ that build.
 
 Live iCloud credentials and the `integration` build tag are never used in CI.
 
+## Release metadata and registry
+
+The release tag, `server.json`, `CHANGELOG.md`, and the public MCP Registry
+must agree. Run the guard from the repository root:
+
+```bash
+make check-registry
+```
+
+It fails when the latest Git tag, `server.json`, the changelog section, or the
+registry entry differ. It also fails on a network error. This command runs in
+CI on `main` in the `registry` job. It does not run on pull requests.
+
+The tag job in `ci.yml` builds archives with `make release-all`, signs them with
+cosign keyless, and creates the GitHub Release. It does not publish registry
+metadata. Publish only after the archives exist.
+
+```bash
+mcp-publisher login github
+mcp-publisher validate
+mcp-publisher publish
+make check-registry
+curl -fsSL 'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ThomasCrouzet/icloud-mcp'
+```
+
+Verify one archive before publication:
+
+```bash
+gh release download vX.Y.Z --repo ThomasCrouzet/icloud-mcp \
+  --pattern 'icloud-mcp-vX.Y.Z-linux-amd64.tar.gz*' \
+  --pattern 'icloud-mcp-vX.Y.Z-checksums.txt'
+grep '  icloud-mcp-vX.Y.Z-linux-amd64.tar.gz$' icloud-mcp-vX.Y.Z-checksums.txt \
+  | sha256sum -c -
+cosign verify-blob \
+  --certificate icloud-mcp-vX.Y.Z-linux-amd64.tar.gz.pem \
+  --signature icloud-mcp-vX.Y.Z-linux-amd64.tar.gz.sig \
+  --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/vX.Y.Z" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  icloud-mcp-vX.Y.Z-linux-amd64.tar.gz
+```
+
+Do not publish when the checksum or signature check fails. `make check-registry`
+must print that all four sources agree before you report a release as complete.
+
 ## Real iCloud integration
 
 With valid credentials, the checked-in build-tagged suite always tests Calendar

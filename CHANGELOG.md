@@ -6,6 +6,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add a fail-closed registry drift check. It compares the latest tag,
+  `server.json`, `CHANGELOG.md`, and the public MCP Registry.
+- Run the registry drift check in CI on `main`.
+- Add issue forms, a pull request template, and the Contributor Covenant 2.1
+  code of conduct.
+- Add directory submission material under `docs/distribution/`.
+
+### Changed
+- Move the README configuration reference, tool inventory, limits, and
+  dependency table into the existing documents. Keep a short quick start first.
+
 ## [0.4.2] - 2026-10-23
 
 ### Added

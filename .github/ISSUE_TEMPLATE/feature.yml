@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose a new tool, capability, or behavior.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include passwords, app-specific passwords, tokens, or live
+        account data. Describe the problem and the smallest useful change.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the task that the server cannot complete today.
+    validations:
+      required: true
+  - type: textarea
+    id: surface
+    attributes:
+      label: Proposed tool surface
+      description: List the new or changed tools, their inputs, and their results.
+    validations:
+      required: true
+  - type: dropdown
+    id: gate
+    attributes:
+      label: Capability gate
+      description: Name the gate that the change needs.
+      options:
+        - Calendar (always enabled)
+        - Contacts read
+        - Contacts write
+        - Mail read
+        - Mail mutation
+        - Mail send
+        - Global read-only interaction
+        - No new gate
+    validations:
+      required: true
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Protocol and scope
+      description: Name the protocol and any new network destination or credential.
+      placeholder: CalDAV, CardDAV, IMAP, or SMTP. Use existing destinations only.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Describe the current workaround or another design.
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope_check
+    attributes:
+      label: Scope check
+      options:
+        - label: This request does not add Reminders, Notes, Photos, Drive, Messages, Find My, Keychain, or Home support.
+          required: true
+        - label: This request does not add a private Apple API, EventKit, browser automation, or a new network destination.
+          required: true

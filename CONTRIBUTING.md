@@ -18,6 +18,28 @@ Release targets require a version such as `v1.2.3` and a clean worktree. They
 refuse to replace existing output files. They also make SHA-256 checksums.
 `make install` always builds for the current host.
 
+## Release procedure
+
+The release path is local and guarded. The tag, `server.json`, `CHANGELOG.md`,
+and the public registry must name the same version.
+
+1. Set `version` in `server.json` and add a dated `CHANGELOG.md` section.
+2. Merge the change to `main`. The `registry` CI job fails until publication.
+   This failure is expected and proves the guard.
+3. Wait for CI and gitleaks to pass on `main`.
+4. Create and push the `vX.Y.Z` tag after the maintainer approves the version.
+   The tag job runs `make release-all`. It builds, signs, and publishes the
+   archives and checksums. It does not publish to the registry.
+5. Verify the archives and signatures before publication.
+6. Authenticate the official publisher once: `mcp-publisher login github`.
+7. Publish the metadata: `mcp-publisher publish`.
+8. Run `make check-registry`. It must exit with status zero.
+9. Read the registry API. Confirm the version and the `updatedAt` value.
+
+Never publish a version without a verified release archive. Keep signing keys
+outside the repository and outside logs. Do not push a tag or publish to the
+registry before the maintainer approves the version.
+
 ## Rules
 
 - Use **English ASCII** in tracked files, commits, and tags.

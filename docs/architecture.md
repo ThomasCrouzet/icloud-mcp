@@ -106,6 +106,25 @@ reports sorted tool names and the count.
 The result contains no identity, secret, host, shard, path, mailbox, recipient,
 or runtime error. `calendar_capabilities` contains only Calendar data.
 
+## Tool inventory
+
+The server exposes at most **23** tools. Disabled tools are absent from
+`tools/list`. A disabled optional domain has no client.
+
+| Group | Tools |
+|-------|--------|
+| Global | `icloud_capabilities` |
+| Calendar read | `list_calendars`, `search_events`, `get_event`, `find_free_slots`, `validate_event`, `calendar_capabilities` |
+| Calendar write | `create_event`, `update_event`, `delete_event` |
+| Contacts read | `list_address_books`, `search_contacts`, `get_contact` |
+| Contacts write | `create_contact`, `update_contact`, `delete_contact` |
+| Mail read | `list_mailboxes`, `search_messages`, `get_message` |
+| Mail mutation | `set_message_flags`, `move_message`, `trash_message` |
+| Mail send | `send_message` |
+
+The default surface has 10 tools. Global read-only with optional domains off
+has 7 tools. The complete surface has 23 tools.
+
 ## Domain request paths
 
 ### Calendar
@@ -284,6 +303,38 @@ advances at most 100,000 times for each series.
 IMAP limits protocol nesting and list counts before recursive decode. It limits
 modeled MIME parts and depth after decode. SMTP accepts at most 1 MiB of inbound
 responses in each session.
+
+## Public limits
+
+| Area | Limits |
+|------|--------|
+| Tool deadline | 25 s (DAV HTTP 30 s) |
+| Stdio / MCP result | 1 MiB frame. 256 KiB result. Reflected protocol errors have a 64 KiB limit. |
+| Calendar | Search range: 366 days. Results: 400 total, 2,500 per calendar, and 10,000 materialized across calendars. Recurrence: 2,000 expansions, 100k steps per series, and 250k steps per search. Rate: 60 reads and 20 writes per minute. Concurrency: 4 reads and 2 writes. |
+| Contacts | 100 books. 100 summaries. 2000 cards scanned. Rate: 60 reads and 20 writes per minute. Concurrency: 4. |
+| Mail | Rate: 60 reads, 20 mutations, and 20 sends per minute. Semaphores: 2 reads, 1 mutation, and 1 send. No mutation or send retry. |
+| Writes | No automatic replay of Calendar PUT/DELETE, Contacts writes, IMAP mutations, or SMTP. Ambiguous outcomes use `outcome_unknown`. |
+
+The server discovers Calendar at boot and Contacts when first used. Each call
+uses a fresh IMAP or SMTP session.
+
+## Direct dependencies
+
+Use Go 1.26.0 or newer. The project has one module and exactly **10** direct
+dependencies. If you add a direct dependency, add its justification here.
+
+| Dependency | Exact version | Justification |
+|------------|---------------|---------------|
+| `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
+| `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
+| `github.com/mark3labs/mcp-go` | `v1.2.0` | MCP stdio, schemas, JSON-RPC |
+| `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
+| `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
+| `github.com/emersion/go-vcard` | `v0.1.0` | vCard 3.0/4.0 read, 3.0 write |
+| `github.com/emersion/go-imap/v2` | `v2.0.0-beta.8` | IMAP behind `internal/mail/imapadapter` |
+| `github.com/emersion/go-message` | `v0.18.2` | MIME / plain-text bounds |
+| `github.com/emersion/go-smtp` | `v0.25.0` | SMTP + STARTTLS |
+| `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
 
 ## Hand-rolled DAV boundaries
 
