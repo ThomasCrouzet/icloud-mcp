@@ -895,6 +895,22 @@ jobs:
             exit 1
           fi
 
+  # Drift is visible on main without a release. Tag pushes cannot pass this
+  # check before the registry has the new version, so the job runs on main only.
+  registry:
+    name: release metadata and registry drift
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check tag, server.json, changelog, and registry
+        run: make check-registry
+
   # Tag releases only after CI and secret scan succeed on the same ref.
   release:
     name: build archives and checksums
