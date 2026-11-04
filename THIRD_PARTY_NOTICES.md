@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This distribution contains the Go modules listed below. Versions match
-`go.mod` for v0.4.2.
+`go.mod` for v0.4.3.
 
 ## MIT-Licensed Components
 

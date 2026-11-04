@@ -51,7 +51,7 @@ body:
     attributes:
       label: Server version
       description: Use the output of icloud-mcp -version.
-      placeholder: v0.4.2
+      placeholder: v0.4.3
     validations:
       required: true
   - type: textarea
