@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-04
+
 ### Added
 - Add a fail-closed registry drift check. It compares the latest tag,
   `server.json`, `CHANGELOG.md`, and the public MCP Registry.
@@ -17,6 +19,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - Move the README configuration reference, tool inventory, limits, and
   dependency table into the existing documents. Keep a short quick start first.
+- Update mcp-go to v1.4.0. Keep ten direct dependencies.
 
 ## [0.4.2] - 2026-10-23
 
