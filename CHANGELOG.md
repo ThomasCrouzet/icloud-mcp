@@ -15,6 +15,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accept a vCard 4.0 contact without N. Keep version 3.0 N and FN
   cardinality, and select one deterministic display name from valid FN
   alternatives.
+- Return a usable `nextBeforeUid` after an empty bounded mail search. Resume at
+  completed scan progress, and at the oldest returned message after count or
+  byte truncation.
 
 ## [0.4.3] - 2026-11-04
 

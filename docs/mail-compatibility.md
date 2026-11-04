@@ -78,6 +78,13 @@ Results sort by descending UID within one UIDVALIDITY. UID order is append
 order, not message header-date order. The default result limit is 20. The
 maximum is 50. `nextBeforeUid` is the next exclusive cursor.
 
+`nextBeforeUid` can be present on an empty page. When the scan stops at its
+50,000 UID limit, the cursor is the oldest completed scan boundary plus one.
+That cursor reaches older matches without a new search of the same UID range.
+When the count or 256 KiB limit removes summaries, the cursor is the oldest
+returned message. No page is terminal while older searchable UID space remains.
+An absent cursor and `scanLimitReached: false` mean the scan reached UID 1.
+
 `scanLimitReached` means that the search did not read older UID space.
 `truncated` means that the count or 256 KiB output limit removed summaries.
 

@@ -368,9 +368,11 @@ func (s *Client) SearchMessages(ctx context.Context, input SearchInput) (SearchR
 			}
 		}
 		sort.Slice(found, func(i, j int) bool { return found[i] > found[j] })
+		countTruncated := false
 		if len(found) > limit {
 			result.Truncated = true
 			found = found[:limit]
+			countTruncated = true
 		}
 		result.ScanLimitReached = scanned == MaxUIDsScanned && high > 0
 		if len(found) > 0 {
@@ -382,14 +384,25 @@ func (s *Client) SearchMessages(ctx context.Context, input SearchInput) (SearchR
 				result.Messages = append(result.Messages, summaryFromProtocol(input.Mailbox, selected.UIDValidity, item))
 			}
 			sort.Slice(result.Messages, func(i, j int) bool { return result.Messages[i].UID > result.Messages[j].UID })
-			result.NextBeforeUID = found[len(found)-1]
 		}
+		byteTruncated := false
 		for serializedSize(result) > MaxResultBytes && len(result.Messages) > 0 {
 			result.Messages = result.Messages[:len(result.Messages)-1]
 			result.Truncated = true
+			byteTruncated = true
+		}
+		switch {
+		case countTruncated || byteTruncated:
 			if len(result.Messages) > 0 {
 				result.NextBeforeUID = result.Messages[len(result.Messages)-1].UID
+			} else if high > 0 {
+				result.NextBeforeUID = high + 1
 			}
+		case result.ScanLimitReached:
+			// Resume at the oldest completed scan boundary, not at the last
+			// match. This reaches older UID space after an empty or sparse
+			// window without skipping unscanned messages.
+			result.NextBeforeUID = high + 1
 		}
 		return result, nil
 	})
