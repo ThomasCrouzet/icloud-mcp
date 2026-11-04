@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-vcard"
 )
 
 type doerFunc func(*http.Request) (*http.Response, error)
@@ -1304,6 +1306,60 @@ func TestV4ReadAndUpdateRejected(t *testing.T) {
 	requireCode(t, err, CodeValidation)
 	if len(fixture.recordsFor(http.MethodPut)) != 0 {
 		t.Fatal("v4 update issued PUT")
+	}
+}
+
+func TestV4WithoutNReadsInSearchAndGet(t *testing.T) {
+	card := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:v4-no-n\r\nFN:Default Name\r\nFN;PREF=1:Preferred Name\r\nEMAIL:preferred@example.com\r\nEND:VCARD\r\n"
+	fixture := &crudFixture{card: card, href: "/home/book/v4-random.vcf", etag: `"v4"`}
+	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+
+	result, err := client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier, Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchContacts(v4 without N) error = %v", err)
+	}
+	if len(result.Contacts) != 1 {
+		t.Fatalf("contacts = %d, want 1", len(result.Contacts))
+	}
+	if got := result.Contacts[0].DisplayName; got != "Preferred Name" {
+		t.Errorf("search display name = %q, want deterministic preferred FN", got)
+	}
+
+	detail, err := client.GetContact(context.Background(), book.Identifier, "v4-no-n")
+	if err != nil {
+		t.Fatalf("GetContact(v4 without N) error = %v", err)
+	}
+	if detail.Version != "4.0" || detail.Name != nil {
+		t.Fatalf("detail = %#v, want v4 without structured name", detail)
+	}
+	if detail.DisplayName != "Preferred Name" {
+		t.Errorf("get display name = %q", detail.DisplayName)
+	}
+}
+
+func TestVCardVersionPropertyRules(t *testing.T) {
+	tests := []struct {
+		name string
+		card string
+	}{
+		{"v3 without N", "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:v3-no-n\r\nFN:No Name\r\nEND:VCARD\r\n"},
+		{"v3 with two FN", "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:v3-two-fn\r\nFN:One\r\nFN:Two\r\nN:Two;One;;;\r\nEND:VCARD\r\n"},
+		{"v4 with two N", "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:v4-two-n\r\nFN:Two Names\r\nN:One;;;;\r\nN:Two;;;;\r\nEND:VCARD\r\n"},
+		{"v4 without FN", "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:v4-no-fn\r\nN:No;Name;;;\r\nEND:VCARD\r\n"},
+		{"v4 with empty FN", "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:v4-empty-fn\r\nFN: \r\nEND:VCARD\r\n"},
+		{"v4 with malformed N", "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:v4-bad-n\r\nFN:Bad Name\r\nN:Only;Two\r\nEND:VCARD\r\n"},
+		{"duplicate UID", "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:one\r\nUID:two\r\nFN:Two UIDs\r\nEND:VCARD\r\n"},
+		{"duplicate VERSION", "BEGIN:VCARD\r\nVERSION:4.0\r\nVERSION:4.0\r\nUID:dup-version\r\nFN:Dup\r\nEND:VCARD\r\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := decodeCard([]byte(test.card))
+			requireCode(t, err, CodeProtocolError)
+		})
+	}
+	if card, version, err := decodeCard([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:ok\r\nFN:One\r\nFN:Two\r\nN:Two;One;;;\r\nEND:VCARD\r\n")); err != nil || version != "4.0" || card.Value(vcard.FieldUID) != "ok" {
+		t.Fatalf("valid v4 card rejected: %v", err)
 	}
 }
 

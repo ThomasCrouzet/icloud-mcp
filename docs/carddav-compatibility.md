@@ -77,6 +77,11 @@ it returns or changes the contact.
 ## vCard model
 
 - Reads accept vCard 3.0 and 4.0.
+- A vCard 4.0 contact can omit N. Version 3.0 requires exactly one N and one FN.
+  Version 4.0 requires one or more FN and accepts zero or one N.
+- A present N must contain five components for both versions.
+- Multiple vCard 4.0 FN alternatives are valid. The client selects the lowest
+  PREF value, then the first non-empty property in document order.
 - Writes encode only vCard 3.0. An address book is writable when it advertises
   3.0 or does not include `supported-address-data`.
 - Create includes VERSION, PRODID, UID, FN, and N.

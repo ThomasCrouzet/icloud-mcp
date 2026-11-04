@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/emersion/go-vcard"
@@ -258,7 +259,7 @@ func validPropertyToken(value string) bool {
 }
 
 func validateRawCard(raw *rawCard) error {
-	if raw == nil || len(raw.properties) < 6 {
+	if raw == nil || len(raw.properties) < 5 {
 		return invalidCardError()
 	}
 	first := raw.properties[0]
@@ -268,30 +269,61 @@ func validateRawCard(raw *rawCard) error {
 		return invalidCardError()
 	}
 	counts := make(map[string]int)
-	var required = map[string]rawProperty{}
+	var version, uid *rawProperty
+	var formattedNames, names []*rawProperty
 	for index, property := range raw.properties {
 		if index > 0 && index < len(raw.properties)-1 && (property.name == "BEGIN" || property.name == "END") {
 			return invalidCardError()
 		}
 		counts[property.name]++
-		if property.name == vcard.FieldVersion || property.name == vcard.FieldUID || property.name == vcard.FieldFormattedName || property.name == vcard.FieldName {
-			required[property.name] = property
+		switch property.name {
+		case vcard.FieldVersion:
+			version = &raw.properties[index]
+		case vcard.FieldUID:
+			uid = &raw.properties[index]
+		case vcard.FieldFormattedName:
+			formattedNames = append(formattedNames, &raw.properties[index])
+		case vcard.FieldName:
+			names = append(names, &raw.properties[index])
 		}
 	}
-	if raw.properties[1].name != vcard.FieldVersion || counts[vcard.FieldVersion] != 1 || counts[vcard.FieldUID] != 1 || counts[vcard.FieldFormattedName] != 1 || counts[vcard.FieldName] != 1 {
+	if raw.properties[1].name != vcard.FieldVersion || counts[vcard.FieldVersion] != 1 || counts[vcard.FieldUID] != 1 {
 		return invalidCardError()
 	}
-	for _, name := range []string{vcard.FieldVersion, vcard.FieldUID, vcard.FieldFormattedName, vcard.FieldName} {
-		if required[name].group != "" {
+	if version == nil || version.hasParams || version.value != "3.0" && version.value != "4.0" {
+		return invalidCardError()
+	}
+	v4 := version.value == "4.0"
+	if len(formattedNames) == 0 || !v4 && (len(formattedNames) != 1 || len(names) != 1) || v4 && len(names) > 1 {
+		return invalidCardError()
+	}
+	for _, property := range []*rawProperty{version, uid} {
+		if property.group != "" {
 			return invalidCardError()
 		}
 	}
-	version := required[vcard.FieldVersion]
-	if version.hasParams || version.value != "3.0" && version.value != "4.0" {
+	for _, property := range append(formattedNames, names...) {
+		if property.group != "" {
+			return invalidCardError()
+		}
+	}
+	if strings.TrimSpace(uid.value) == "" {
 		return invalidCardError()
 	}
-	if strings.TrimSpace(required[vcard.FieldUID].value) == "" || strings.TrimSpace(required[vcard.FieldFormattedName].value) == "" || countUnescaped(required[vcard.FieldName].value, ';') != 4 {
+	displayName := false
+	for _, property := range formattedNames {
+		if strings.TrimSpace(property.value) != "" {
+			displayName = true
+			break
+		}
+	}
+	if !displayName {
 		return invalidCardError()
+	}
+	for _, property := range names {
+		if countUnescaped(property.value, ';') != 4 {
+			return invalidCardError()
+		}
 	}
 	return nil
 }
@@ -459,9 +491,35 @@ func canonicalProperties(card vcard.Card, names []string) (map[string][][]byte, 
 	return properties, nil
 }
 
+// preferredFormattedName selects one deterministic display name from the FN
+// alternatives. A PREF parameter wins (lower value first), then document
+// order. Empty alternatives are ignored.
+func preferredFormattedName(card vcard.Card) string {
+	selected := ""
+	selectedPref := 101
+	for _, field := range card[vcard.FieldFormattedName] {
+		if field == nil || strings.TrimSpace(field.Value) == "" {
+			continue
+		}
+		pref := 100
+		if value := field.Params.Get(vcard.ParamPreferred); value != "" {
+			if parsed, err := strconv.Atoi(value); err == nil {
+				pref = parsed
+			}
+		} else if field.Params.HasType("pref") {
+			pref = 1
+		}
+		if selected == "" || pref < selectedPref {
+			selected = field.Value
+			selectedPref = pref
+		}
+	}
+	return selected
+}
+
 func cardSummary(card vcard.Card, addressBook, etag string) ContactSummary {
 	uid := truncateUTF8(card.Value(vcard.FieldUID), maxUIDBytes)
-	display := truncateUTF8(card.Value(vcard.FieldFormattedName), maxDisplayNameBytes)
+	display := truncateUTF8(preferredFormattedName(card), maxDisplayNameBytes)
 	organization := truncateUTF8(firstComponent(card.Value(vcard.FieldOrganization)), maxTextBytes)
 	return ContactSummary{
 		AddressBook:  addressBook,

@@ -187,11 +187,9 @@ func contactMatches(card vcard.Card, opts SearchOptions) bool {
 	}
 	if opts.Query != "" {
 		needle := strings.ToLower(opts.Query)
-		fields := []string{
-			card.Value(vcard.FieldFormattedName),
-			card.Value(vcard.FieldName),
-			card.Value(vcard.FieldOrganization),
-		}
+		fields := card.Values(vcard.FieldFormattedName)
+		fields = append(fields, card.Values(vcard.FieldName)...)
+		fields = append(fields, card.Value(vcard.FieldOrganization))
 		fields = append(fields, card.Values(vcard.FieldEmail)...)
 		fields = append(fields, card.Values(vcard.FieldTelephone)...)
 		matched := false
