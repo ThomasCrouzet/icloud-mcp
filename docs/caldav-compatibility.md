@@ -85,6 +85,12 @@ sends no new CalDAV mutation. See the
 - When DTEND is missing, DURATION sets the duration. Calendar days and weeks
   follow local time across DST.
 - Without DURATION, an all-day event ends on the next civil day.
+- An occurrence override copies the master duration form. A DURATION with days
+  or weeks stays nominal across DST. An elapsed DURATION stays elapsed.
+- A title-only occurrence update does not change its start or end.
+- A start-only occurrence update keeps the inherited duration. An all-day
+  override keeps DATE bounds, and a timed event without an end keeps zero
+  duration.
 - Expansion returns at most 2,000 occurrences. The iterator advances at most
   100,000 times for each series.
 - A preflight estimate rejects a rule that would exceed the work budget before

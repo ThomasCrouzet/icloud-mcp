@@ -535,53 +535,39 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 			return err
 		}
 		override.Props.Set(recProp)
-		dur := masterEventDuration(master)
-		ov := &ical.Event{Component: override}
-		start := recID
-		if up.StartTime != nil {
-			start = *up.StartTime
-		}
-		end := start.Add(dur)
-		if up.EndTime != nil {
-			end = *up.EndTime
-		}
-		if err := setEventDateProp(ov, ical.PropDateTimeStart, start); err != nil {
-			return err
-		}
-		if err := setEventDateProp(ov, ical.PropDateTimeEnd, end); err != nil {
-			return err
-		}
-		// DTEND and DURATION are mutually exclusive (RFC 5545).
-		ov.Props.Del(ical.PropDuration)
 		cal.Children = append(cal.Children, override)
 	}
 	ov := &ical.Event{Component: override}
-	prevDur := masterEventDuration(master)
-	preserveOwnDuration := false
-	if !created {
-		if sp := ov.Props.Get(ical.PropDateTimeStart); sp != nil {
-			if ep := ov.Props.Get(ical.PropDateTimeEnd); ep != nil {
-				if st, serr := sp.DateTime(time.UTC); serr == nil {
-					if en, eerr := ep.DateTime(time.UTC); eerr == nil && en.After(st) {
-						prevDur = en.Sub(st)
-					}
-				}
-			} else if dp := ov.Props.Get(ical.PropDuration); dp != nil {
-				if duration, derr := parseICalDuration(dp.Value); derr == nil && duration > 0 {
-					prevDur = duration
-					preserveOwnDuration = true
-				}
-			}
+
+	// Capture the duration semantics and the date forms before the field
+	// update mutates the VEVENT. The master duration is copied onto a new
+	// override, so this also covers creation.
+	spec := eventDurationFromEvent(ov)
+	startForm := ov.Props.Get(ical.PropDateTimeStart)
+	endForm := ov.Props.Get(ical.PropDateTimeEnd)
+
+	start := up.StartTime
+	if created && start == nil {
+		value := recID
+		start = &value
+	}
+	if created && up.StartTime == nil {
+		if err := setEventDatePropWithForm(ov, ical.PropDateTimeStart, *start, startForm); err != nil {
+			return err
 		}
 	}
+
 	if err := applyFieldUpdate(ov, up); err != nil {
 		return err
 	}
-	if up.StartTime != nil && up.EndTime == nil && !preserveOwnDuration {
-		if err := setEventDateProp(ov, ical.PropDateTimeEnd, up.StartTime.Add(prevDur)); err != nil {
-			return err
+	if start != nil {
+		if up.EndTime == nil {
+			// A start-only change preserves the occurrence duration. A new
+			// override always derives its end from the inherited duration.
+			if err := applyOccurrenceDuration(ov, spec, *start, startForm, endForm); err != nil {
+				return err
+			}
 		}
-		ov.Props.Del(ical.PropDuration)
 	}
 	if sp := ov.Props.Get(ical.PropDateTimeStart); sp != nil {
 		if ep := ov.Props.Get(ical.PropDateTimeEnd); ep != nil {

@@ -419,36 +419,58 @@ func incrementSequence(vevent *ical.Event) error {
 // intent across DST and leaves orphan VTIMEZONE components.
 // Unknown TZIDs fail closed so wall times are never silently reinterpreted.
 func setEventDateProp(vevent *ical.Event, name string, t time.Time) error {
+	return setEventDatePropWithForm(vevent, name, t, nil)
+}
+
+// setEventDatePropWithForm is setEventDateProp with an optional fallback form.
+// The fallback is used when the named property is absent, for example an
+// all-day occurrence that inherits the DATE form of the master DTSTART.
+func setEventDatePropWithForm(vevent *ical.Event, name string, t time.Time, form *ical.Prop) error {
 	existing := vevent.Props.Get(name)
+	if existing == nil && form == nil && name == ical.PropDateTimeEnd {
+		form = vevent.Props.Get(ical.PropDateTimeStart)
+	}
 	if existing == nil {
-		vevent.Props.SetDateTime(name, t.UTC())
+		if form == nil {
+			vevent.Props.SetDateTime(name, t.UTC())
+			return nil
+		}
+		prop := *form
+		prop.Name = name
+		if err := setDatePropLike(&prop, form, t); err != nil {
+			return err
+		}
+		vevent.Props.Set(&prop)
 		return nil
 	}
-	if isDateOnlyProp(existing) {
+	return setDatePropLike(existing, existing, t)
+}
+
+func setDatePropLike(prop, reference *ical.Prop, t time.Time) error {
+	if isDateOnlyProp(reference) {
 		// All-day: keep calendar date components only.
 		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-		vevent.Props.SetDate(name, day)
+		prop.SetDate(day)
 		return nil
 	}
-	if tzid := existing.Params.Get(ical.PropTimezoneID); tzid != "" {
+	if tzid := reference.Params.Get(ical.PropTimezoneID); tzid != "" {
 		loc, err := time.LoadLocation(tzid)
 		if err != nil {
 			return NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
 		}
 		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
-		vevent.Props.SetDateTime(name, t.In(loc))
+		prop.SetDateTime(t.In(loc))
 		return nil
 	}
-	if strings.HasSuffix(existing.Value, "Z") {
-		vevent.Props.SetDateTime(name, t.UTC())
+	if strings.HasSuffix(reference.Value, "Z") {
+		prop.Params.Del(ical.PropTimezoneID)
+		prop.SetDateTime(t.UTC())
 		return nil
 	}
 	// A DATE-TIME without TZID or Z is floating. Keep it floating and retain
 	// any non-timezone parameters rather than converting wall time to UTC.
-	prop := *existing
 	prop.Value = t.Format("20060102T150405")
 	prop.Params.Del(ical.PropTimezoneID)
-	vevent.Props.Set(&prop)
 	return nil
 }
 
@@ -492,36 +514,111 @@ func setRecurrenceInstantProp(name string, master *ical.Event, instant time.Time
 	return p, nil
 }
 
-// masterEventDuration returns the master's duration from DTEND, else DURATION,
-// else 24h for all-day, else 1h for timed (occurrence override default).
-func masterEventDuration(master *ical.Event) time.Duration {
-	if master == nil {
-		return time.Hour
+// eventDurationKind identifies how a VEVENT expresses its duration.
+type eventDurationKind int
+
+const (
+	eventDurationNone eventDurationKind = iota
+	eventDurationEnd
+	eventDurationDuration
+	eventDurationImplicitAllDay
+)
+
+// eventDurationSpec is the parsed duration semantics of a VEVENT. A DURATION
+// with day or week components is nominal calendar time, not elapsed hours.
+type eventDurationSpec struct {
+	kind      eventDurationKind
+	allDay    bool
+	days      int
+	remainder time.Duration
+	elapsed   time.Duration
+	value     string
+}
+
+// eventDurationFromEvent derives the duration semantics from DTEND, then
+// DURATION, then the all-day convention. A timed event with neither end nor
+// duration has zero duration.
+func eventDurationFromEvent(vevent *ical.Event) eventDurationSpec {
+	if vevent == nil {
+		return eventDurationSpec{}
 	}
-	stProp := master.Props.Get(ical.PropDateTimeStart)
+	stProp := vevent.Props.Get(ical.PropDateTimeStart)
 	if stProp == nil {
-		return time.Hour
+		return eventDurationSpec{}
 	}
 	st, err := stProp.DateTime(time.UTC)
 	if err != nil {
-		return time.Hour
+		return eventDurationSpec{}
 	}
-	if ep := master.Props.Get(ical.PropDateTimeEnd); ep != nil {
-		if en, e2 := ep.DateTime(time.UTC); e2 == nil {
-			if d := en.Sub(st); d > 0 {
-				return d
+	if ep := vevent.Props.Get(ical.PropDateTimeEnd); ep != nil {
+		en, e2 := ep.DateTime(time.UTC)
+		if e2 == nil && en.After(st) {
+			spec := eventDurationSpec{kind: eventDurationEnd, elapsed: en.Sub(st)}
+			if isDateOnlyProp(stProp) && isDateOnlyProp(ep) {
+				spec.allDay = true
+				spec.days = int(en.Sub(st) / (24 * time.Hour))
+			}
+			return spec
+		}
+	}
+	if dp := vevent.Props.Get(ical.PropDuration); dp != nil {
+		if d, derr := parseICalDuration(dp.Value); derr == nil && d > 0 {
+			days, remainder, derr := nominalICalDurationParts(dp.Value, d)
+			if derr == nil {
+				return eventDurationSpec{
+					kind:      eventDurationDuration,
+					days:      days,
+					remainder: remainder,
+					elapsed:   d,
+					value:     dp.Value,
+				}
 			}
 		}
 	}
-	if dp := master.Props.Get(ical.PropDuration); dp != nil {
-		if d, derr := parseICalDuration(dp.Value); derr == nil && d > 0 {
-			return d
-		}
-	}
 	if isDateOnlyProp(stProp) {
-		return 24 * time.Hour
+		return eventDurationSpec{kind: eventDurationImplicitAllDay, allDay: true, days: 1}
 	}
-	return time.Hour
+	return eventDurationSpec{}
+}
+
+// end returns the occurrence end for a given start. A zero time means the
+// VEVENT has no end property (zero duration).
+func (s eventDurationSpec) end(start time.Time) time.Time {
+	switch s.kind {
+	case eventDurationEnd:
+		if s.allDay {
+			return start.AddDate(0, 0, s.days)
+		}
+		return start.Add(s.elapsed)
+	case eventDurationImplicitAllDay:
+		return start.AddDate(0, 0, 1)
+	default:
+		return time.Time{}
+	}
+}
+
+// applyOccurrenceDuration sets or clears DTEND and DURATION on an override
+// according to spec, anchoring the end at start. DURATION stays on the
+// VEVENT so nominal days continue to follow calendar dates across DST.
+func applyOccurrenceDuration(vevent *ical.Event, spec eventDurationSpec, start time.Time, startForm, endForm *ical.Prop) error {
+	switch spec.kind {
+	case eventDurationEnd:
+		vevent.Props.Del(ical.PropDuration)
+		return setEventDatePropWithForm(vevent, ical.PropDateTimeEnd, spec.end(start), endForm)
+	case eventDurationDuration:
+		vevent.Props.Del(ical.PropDateTimeEnd)
+		prop := ical.NewProp(ical.PropDuration)
+		prop.Value = spec.value
+		vevent.Props.Set(prop)
+		return nil
+	case eventDurationImplicitAllDay:
+		vevent.Props.Del(ical.PropDuration)
+		return setEventDatePropWithForm(vevent, ical.PropDateTimeEnd, spec.end(start), startForm)
+	default:
+		vevent.Props.Del(ical.PropDateTimeEnd)
+		vevent.Props.Del(ical.PropDuration)
+		return nil
+	}
 }
 
 // validateRemoteCalendar bounds the decoded shape before any event fields are

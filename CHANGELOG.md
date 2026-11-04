@@ -6,6 +6,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Preserve occurrence duration semantics across DST. A nominal DURATION stays
+  nominal, an elapsed DURATION stays elapsed, and a title-only update does not
+  change start or end.
+- Write DATE bounds for an all-day occurrence without DTEND. Keep zero duration
+  for a timed occurrence without an end or duration.
+
 ## [0.4.3] - 2026-11-04
 
 ### Added
