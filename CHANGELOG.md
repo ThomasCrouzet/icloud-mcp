@@ -7,6 +7,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Include the validated calendar path in every `search_events` row so an agent
+  can continue with `get_event` or `update_event` when a UID exists in several
+  calendars.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.
@@ -23,10 +26,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Extract the security AST guards into versioned tools under `scripts/guards/`.
   Add `make check` for gofmt, vet, guards, race tests, protocol evidence, and
   the shared coverage floors. CI invokes the same guard and coverage scripts.
-
-### Fixed
-- Make the concurrent ETag update regression deterministic by synchronizing
-  both initial reads before either conditional PUT.
 
 ### Fixed
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays

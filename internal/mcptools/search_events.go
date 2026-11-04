@@ -19,7 +19,7 @@ const maxExplicitSearchCalendars = 10
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
-		mcp.WithDescription("Searches events over a range. Recurrence expands by default; occurrences include recurrenceId for occurrence updates. Results are sorted, capped at 400 and 256 KiB, and may report truncation or partial calendar failures."),
+		mcp.WithDescription("Searches events over a range. Recurrence expands by default; occurrences include recurrenceId and calendar for follow-up calls. Results are sorted, capped at 400 and 256 KiB, and may report truncation or partial calendar failures."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -41,6 +41,7 @@ func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 }
 
 type searchEventDTO struct {
+	Calendar     string `json:"calendar"`
 	UID          string `json:"uid"`
 	Title        string `json:"title"`
 	Location     string `json:"location,omitempty"`
@@ -190,6 +191,9 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				truncatedByExpansion = true
 			}
 			batch := result.Events
+			for i := range batch {
+				batch[i].Calendar = path
+			}
 			if query != "" {
 				batch = filterByQuery(batch, query)
 			}
@@ -219,13 +223,18 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			)), nil
 		}
 
-		// Stable sort: start ascending, then UID, then title.
+		// Stable sort: start ascending, then UID, calendar, then title. The
+		// calendar tie-breaker keeps identical events from different
+		// collections in a deterministic order.
 		sort.SliceStable(all, func(i, j int) bool {
 			if !all[i].StartTime.Equal(all[j].StartTime) {
 				return all[i].StartTime.Before(all[j].StartTime)
 			}
 			if all[i].UID != all[j].UID {
 				return all[i].UID < all[j].UID
+			}
+			if all[i].Calendar != all[j].Calendar {
+				return all[i].Calendar < all[j].Calendar
 			}
 			return all[i].Title < all[j].Title
 		})
@@ -400,6 +409,7 @@ func eventsToDTO(events []icloud.Event, compact bool, loc *time.Location) []sear
 	out := make([]searchEventDTO, 0, len(events))
 	for _, e := range events {
 		dto := searchEventDTO{
+			Calendar:     e.Calendar,
 			UID:          e.UID,
 			Title:        e.Title,
 			Location:     e.Location,

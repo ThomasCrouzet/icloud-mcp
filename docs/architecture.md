@@ -145,7 +145,9 @@ have the same result. Update and delete read the full object again and use
 conditional requests.
 
 Multi-calendar `search_events` queries each selected calendar. It then sorts the
-events and applies the fair 400-event result limit. More than 10,000 filtered
+events and applies the fair 400-event result limit. Every search row includes the
+validated `calendar` path, so callers can pass it to `get_event` or
+`update_event` without resolving the UID again. More than 10,000 filtered
 materialized events cause `payload_too_large`. The per-calendar REPORT
 materialization limit is 2,500. When `<uid>.ics` is missing, imported-UID REPORT
 fallback uses a 50-year window on each side of now.

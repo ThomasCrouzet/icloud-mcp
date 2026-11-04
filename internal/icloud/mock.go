@@ -51,10 +51,12 @@ type MockService struct {
 
 	LastCreated    *NewEvent
 	LastUpdateUID  string
+	LastUpdatePath string
 	LastUpdate     *EventUpdate
 	LastDeleteUID  string
 	LastDeleteOpts *DeleteOptions
 	LastGetUID     string
+	LastGetPath    string
 	LastSearchPath string
 	LastSearchFrom time.Time
 	LastSearchTo   time.Time
@@ -125,6 +127,13 @@ func (m *MockService) GetEvent(ctx context.Context, calendarPath, uid string) (*
 	m.mu.Lock()
 	m.GetCallCount++
 	m.LastGetUID = uid
+	m.LastGetPath = calendarPath
+	events := m.Events
+	if m.EventsByPath != nil {
+		if byPath, ok := m.EventsByPath[calendarPath]; ok {
+			events = byPath
+		}
+	}
 	m.mu.Unlock()
 	if m.GetErr != nil {
 		return nil, m.GetErr
@@ -133,7 +142,7 @@ func (m *MockService) GetEvent(ctx context.Context, calendarPath, uid string) (*
 		d := *m.Detail
 		return &d, nil
 	}
-	for _, e := range m.Events {
+	for _, e := range events {
 		if e.UID == uid {
 			return &EventDetail{Event: e}, nil
 		}
@@ -169,6 +178,7 @@ func (m *MockService) UpdateEvent(ctx context.Context, calendarPath, uid string,
 	m.mu.Lock()
 	m.UpdateCallCount++
 	m.LastUpdateUID = uid
+	m.LastUpdatePath = calendarPath
 	m.LastUpdate = up
 	m.RecordedMutations = append(m.RecordedMutations, "PUT")
 	m.mu.Unlock()
