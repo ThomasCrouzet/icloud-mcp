@@ -2,7 +2,7 @@
 
 ## Current record
 
-Read on 2026-10-31 from
+Read on 2026-11-04 from
 `https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ThomasCrouzet/icloud-mcp`:
 
 ```json
@@ -14,17 +14,25 @@ Read on 2026-10-31 from
     "url": "https://github.com/ThomasCrouzet/icloud-mcp",
     "source": "github"
   },
-  "version": "0.4.0",
+  "version": "0.4.3",
   "websiteUrl": "https://github.com/ThomasCrouzet/icloud-mcp#quick-start",
   "status": "active",
-  "publishedAt": "2026-07-25T12:06:22.539034Z",
-  "updatedAt": "2026-07-25T12:06:22.539034Z",
+  "publishedAt": "2026-11-04T16:41:16.698962Z",
+  "updatedAt": "2026-11-04T16:41:16.698962Z",
   "isLatest": true
 }
 ```
 
-The repository `server.json` declares version `0.4.2`. The description,
-title, repository URL, and website URL are identical. Only the version differs.
+The repository `server.json` declares version `0.4.3`. The tag, `server.json`,
+`CHANGELOG.md`, and the registry agree, and `make check-registry` passes.
+
+## How 0.4.3 was published
+
+1. The `v0.4.3` tag published the release archives and cosign signatures.
+2. The downloaded archives matched `icloud-mcp-v0.4.3-checksums.txt`.
+3. `mcp-publisher` 1.8.7 accepted `server.json` with `validate`.
+4. `mcp-publisher publish` ran after GitHub authentication.
+5. `make check-registry` passed.
 
 ## How 0.4.0 was published
 

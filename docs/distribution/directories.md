@@ -3,11 +3,11 @@
 No submission was made for this list. Read the current rules again before each
 submission. Prices and forms change.
 
-Checked on 2026-10-31.
+Checked on 2026-10-31. The registry row was updated on 2026-11-04.
 
 | Directory | Submission path | Required fields | Current status |
 |-----------|-----------------|-----------------|----------------|
-| Official MCP Registry | `mcp-publisher publish` with `server.json` | `name`, `version`, `description` (100 characters or fewer), `repository.url`, `websiteUrl` | Active at `0.4.0`. Publish `0.4.2` after the archive and signature check. |
+| Official MCP Registry | `mcp-publisher publish` with `server.json` | `name`, `version`, `description` (100 characters or fewer), `repository.url`, `websiteUrl` | Active at `0.4.3`. `make check-registry` passes. |
 | Glama | Automatic GitHub index. Use "Claim" on the listing. | Public GitHub repository. Claim uses GitHub authentication. | Indexed. `https://glama.ai/mcp/servers/@ThomasCrouzet/icloud-mcp` returned HTTP 200 and shows the project. |
 | PulseMCP | Web form at `/submit` | Name, repository, description, remote flag (when the form reopens) | Not listed. Submissions and listing changes are paused. The page says "Last updated: September 3, 2026". |
 | mcp.so | Web form at `/submit` | Repository URL, name, listing type. Paid placement is optional. | Not listed. The site search returned 0 results for `icloud-mcp`. |
