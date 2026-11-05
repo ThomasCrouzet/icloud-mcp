@@ -436,7 +436,8 @@ func recurrenceProtocolMinutePage(uid, title, first string, count, total int) ma
 		instant := start.Add(time.Duration(i) * time.Minute)
 		formatted := instant.Format("2006-01-02T15:04:05-07:00")
 		rows = append(rows, map[string]any{
-			"uid": uid, "title": title, "start": formatted, "end": instant.Add(time.Minute).Format("2006-01-02T15:04:05-07:00"),
+			"calendar": recurrenceProtocolHome + uid + "/",
+			"uid":      uid, "title": title, "start": formatted, "end": instant.Add(time.Minute).Format("2006-01-02T15:04:05-07:00"),
 			"recurrenceId": formatted, "etag": recurrenceProtocolETag,
 		})
 	}

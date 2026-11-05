@@ -129,6 +129,10 @@ sends no new CalDAV mutation. See the
 - A single-calendar search materializes at most 2,500 events.
 - Multi-calendar `search_events` still queries each selected calendar. It fails
   closed when more than 10,000 filtered events materialize.
+- Every search row carries the validated calendar path and the recurrence
+  identifier when applicable. The internal resource href stays private.
+- Sort order is start, UID, calendar, then title. Identical events from
+  different calendars therefore keep a deterministic order.
 - This failure occurs before the public sorted result limit of 400 events.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.

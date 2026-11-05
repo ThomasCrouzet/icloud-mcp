@@ -132,6 +132,110 @@ func TestSearchEventsHandler_Pagination(t *testing.T) {
 	}
 }
 
+func TestSearchEventsHandler_CalendarProvenanceDrivesGetAndUpdate(t *testing.T) {
+	start := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	svc := &icloud.MockService{
+		Calendars: []icloud.Calendar{{Path: "/cal/work/"}, {Path: "/cal/home/"}},
+		EventsByPath: map[string][]icloud.Event{
+			"/cal/work/": {{UID: "shared-uid", Title: "Same title", Location: "Work room", StartTime: start, EndTime: start.Add(time.Hour)}},
+			"/cal/home/": {{UID: "shared-uid", Title: "Same title", Location: "Home room", StartTime: start, EndTime: start.Add(time.Hour)}},
+		},
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start":   "2026-07-01T00:00:00Z",
+		"end":     "2026-07-08T00:00:00Z",
+		"compact": true,
+	}))
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("search result error: %s", resultText(t, res))
+	}
+	var payload searchEventsResponse
+	decodeResult(t, res, &payload)
+	if len(payload.Events) != 2 {
+		t.Fatalf("events = %d, want 2", len(payload.Events))
+	}
+	if payload.Events[0].Calendar != "/cal/home/" || payload.Events[1].Calendar != "/cal/work/" {
+		t.Fatalf("deterministic calendar order = %q, %q", payload.Events[0].Calendar, payload.Events[1].Calendar)
+	}
+
+	getHandler := getEventHandler(testDeps(svc))
+	for _, row := range payload.Events {
+		got, err := getHandler(context.Background(), newReq(map[string]any{
+			"calendar": row.Calendar,
+			"uid":      row.UID,
+		}))
+		if err != nil {
+			t.Fatalf("get %s: %v", row.Calendar, err)
+		}
+		if got.IsError {
+			t.Fatalf("get %s result error: %s", row.Calendar, resultText(t, got))
+		}
+		if svc.LastGetPath != row.Calendar {
+			t.Errorf("get used calendar %q, want %q", svc.LastGetPath, row.Calendar)
+		}
+		var detail getEventDTO
+		decodeResult(t, got, &detail)
+		if detail.Location == "" {
+			t.Errorf("get %s returned no location", row.Calendar)
+		}
+	}
+
+	updateHandler := updateEventHandler(testDeps(svc))
+	title := "Updated only here"
+	selected := payload.Events[1]
+	updated, err := updateHandler(context.Background(), newReq(map[string]any{
+		"calendar": selected.Calendar,
+		"uid":      selected.UID,
+		"title":    title,
+	}))
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.IsError {
+		t.Fatalf("update result error: %s", resultText(t, updated))
+	}
+	if svc.LastUpdatePath != selected.Calendar || svc.LastUpdateUID != selected.UID {
+		t.Fatalf("update targeted %q/%q, want %q/%q", svc.LastUpdatePath, svc.LastUpdateUID, selected.Calendar, selected.UID)
+	}
+	if svc.UpdateCallCount != 1 {
+		t.Fatalf("update calls = %d, want 1", svc.UpdateCallCount)
+	}
+}
+
+func TestSearchEventsHandler_RecurringProvenanceSurvivesPagination(t *testing.T) {
+	start := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	svc := &icloud.MockService{
+		Calendars: []icloud.Calendar{{Path: "/cal/a/"}, {Path: "/cal/b/"}},
+		EventsByPath: map[string][]icloud.Event{
+			"/cal/a/": {{UID: "recurring", Title: "Series", StartTime: start, EndTime: start.Add(time.Hour), Recurrence: "FREQ=WEEKLY", RecurrenceID: start, IsOverride: true}},
+			"/cal/b/": {{UID: "other", Title: "Other", StartTime: start.Add(time.Hour), EndTime: start.Add(2 * time.Hour)}},
+		},
+	}
+	handler := searchEventsHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"start":  "2026-07-01T00:00:00Z",
+		"end":    "2026-07-08T00:00:00Z",
+		"limit":  float64(1),
+		"offset": float64(0),
+	}))
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var payload searchEventsResponse
+	decodeResult(t, res, &payload)
+	if len(payload.Events) != 1 {
+		t.Fatalf("events = %d", len(payload.Events))
+	}
+	row := payload.Events[0]
+	if row.Calendar != "/cal/a/" || row.UID != "recurring" || row.RecurrenceID == "" || !row.IsOverride {
+		t.Fatalf("recurring row lost identity: %+v", row)
+	}
+}
+
 func TestSearchEventsHandler_InvalidDates(t *testing.T) {
 	svc := &icloud.MockService{}
 	handler := searchEventsHandler(testDeps(svc))

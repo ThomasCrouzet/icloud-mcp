@@ -7,6 +7,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Include the validated calendar path in every `search_events` row so an agent
+  can continue with `get_event` or `update_event` when a UID exists in several
+  calendars.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.

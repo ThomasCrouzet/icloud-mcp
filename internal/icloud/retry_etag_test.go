@@ -108,7 +108,11 @@ func TestClient_UpdateEvent_Concurrent412PreconditionFailed(t *testing.T) {
 	objPath := testHomeCalendar + "uid-simple-1.ics"
 	m.objects["uid-simple-1"] = mockObject{path: objPath, ics: icsSimpleEvent}
 	m.etags[objPath] = `"v1"`
-	c := m.client()
+	// Both updates must read the same ETag before either PUT. Without this
+	// barrier, the second GET can see the first PUT's new ETag and both
+	// updates succeed, which makes the test timing-dependent.
+	authHTTP := basicAuthDoer{inner: m.srv.Client(), user: "user@example.com", pass: "app-password"}
+	c := NewClient(&getBarrierDoer{inner: authHTTP, want: 2, release: make(chan struct{})}, m.srv.URL, func(string) bool { return true })
 
 	var wg sync.WaitGroup
 	var aErr, bErr error
@@ -476,4 +480,29 @@ func TestNewRetryClassifierReturnsWorkingDoer(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
+}
+
+type getBarrierDoer struct {
+	inner   httpDoer
+	want    int
+	mu      sync.Mutex
+	gets    int
+	release chan struct{}
+}
+
+func (d *getBarrierDoer) Do(req *http.Request) (*http.Response, error) {
+	response, err := d.inner.Do(req)
+	if req.Method == http.MethodGet {
+		d.mu.Lock()
+		d.gets++
+		if d.gets == d.want {
+			close(d.release)
+		}
+		d.mu.Unlock()
+		select {
+		case <-d.release:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return response, err
 }
