@@ -398,3 +398,20 @@ func TestDoctorRejectsUnknownFormatWithoutNetwork(t *testing.T) {
 		t.Fatalf("doctor format error = %q", output.String())
 	}
 }
+
+func TestLazyDomainHelpers(t *testing.T) {
+	limits := collectRateLimits(nil, nil, nil)
+	if len(limits) != 0 {
+		t.Fatalf("collectRateLimits without domains = %#v", limits)
+	}
+	cfg := &config.Config{Email: "calendar@example.com", Password: "calendar-app-password", Timeout: time.Second}
+	if client := newCalendarClient(cfg); client == nil {
+		t.Fatal("newCalendarClient returned nil")
+	}
+	if got := startupDomainStatus(true); got != "not_checked" {
+		t.Fatalf("startupDomainStatus(true) = %q", got)
+	}
+	if got := startupDomainStatus(false); got != "disabled" {
+		t.Fatalf("startupDomainStatus(false) = %q", got)
+	}
+}
