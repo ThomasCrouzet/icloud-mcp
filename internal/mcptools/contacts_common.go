@@ -404,7 +404,7 @@ func contactsWriteJSON(deps ContactsDeps, payload any) *mcp.CallToolResult {
 			Message: "Contacts result exceeds its byte limit",
 		})
 	}
-	return mcp.NewToolResultText(text)
+	return structuredOrText(text)
 }
 
 // contactsWriteCachedJSON re-applies the result size gate on an idempotent hit.

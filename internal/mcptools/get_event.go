@@ -14,6 +14,7 @@ import (
 
 func newGetEventTool() mcp.Tool {
 	return mcp.NewTool("get_event",
+		mcp.WithOutputSchema[getEventDTO](),
 		mcp.WithDescription("Gets one event by calendar path and exact UID, including recurrence overrides and etag. Results are bounded to 256 KiB; timed values use RFC3339 with an explicit offset."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

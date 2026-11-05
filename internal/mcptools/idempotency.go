@@ -22,14 +22,16 @@ const (
 )
 
 type idempotencyOutcome struct {
-	payload string
-	isError bool
+	payload    string
+	structured any
+	isError    bool
 }
 
 // result keeps IsError and applies the domain's redaction and result size guards.
 func (o idempotencyOutcome) result(write func(string) *mcp.CallToolResult) *mcp.CallToolResult {
 	result := write(o.payload)
 	result.IsError = result.IsError || o.isError
+	result.StructuredContent = o.structured
 	return result
 }
 
@@ -157,7 +159,7 @@ func (s *idempotencyStore) complete(key, paramsHash string, result *mcp.CallTool
 	valid := false
 	if result != nil && len(result.Content) == 1 {
 		if text, ok := mcp.AsTextContent(result.Content[0]); ok && text.Text != "" && len(text.Text) <= maxIdempotencyPayload {
-			outcome = idempotencyOutcome{payload: text.Text, isError: result.IsError}
+			outcome = idempotencyOutcome{payload: text.Text, structured: result.StructuredContent, isError: result.IsError}
 			valid = true
 		}
 	}

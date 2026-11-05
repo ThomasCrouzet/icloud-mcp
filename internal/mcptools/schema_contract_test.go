@@ -38,7 +38,10 @@ func TestCalendarToolSchemasStayWithinPromptBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const maxSchemaBytes = 17_000
+	// Output schemas add structured-result contracts to the existing input
+	// schemas. The measured increase is documented in CHANGELOG.md; keep the
+	// budget bounded rather than removing the structured contract.
+	const maxSchemaBytes = 24_000
 	if len(encoded) > maxSchemaBytes {
 		t.Fatalf("calendar tool schemas use %d bytes, budget is %d", len(encoded), maxSchemaBytes)
 	}

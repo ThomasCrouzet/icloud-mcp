@@ -127,7 +127,15 @@ func writeJSON(red *security.Redactor, payload any) *mcp.CallToolResult {
 			icloud.CodePayloadTooLarge, 0, "serialized MCP result exceeded 256 KiB", nil,
 		))
 	}
-	return mcp.NewToolResultText(text)
+	return structuredOrText(text)
+}
+
+func structuredOrText(text string) *mcp.CallToolResult {
+	var value any
+	if err := json.Unmarshal([]byte(text), &value); err != nil || value == nil {
+		return mcp.NewToolResultText(text)
+	}
+	return mcp.NewToolResultStructured(value, text)
 }
 
 // writeCalendarJSON applies the Calendar-specific serialized result budget.
@@ -147,7 +155,7 @@ func writeCalendarEncoded(red *security.Redactor, encoded []byte) *mcp.CallToolR
 			icloud.CodePayloadTooLarge, 0, "serialized Calendar result exceeded 256 KiB", nil,
 		))
 	}
-	return mcp.NewToolResultText(text)
+	return structuredOrText(text)
 }
 
 func logCalendarMutation(audit *security.AuditLogger, tool, calendarPath, uid, status string) {

@@ -11,6 +11,7 @@ import (
 
 func newListCalendarsTool() mcp.Tool {
 	return mcp.NewTool("list_calendars",
+		mcp.WithOutputSchema[calendarsResponse](),
 		mcp.WithDescription("Lists iCloud calendars and the paths required by other calendar tools."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

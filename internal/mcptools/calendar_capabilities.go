@@ -11,6 +11,7 @@ import (
 
 func newCalendarCapabilitiesTool() mcp.Tool {
 	return mcp.NewTool("calendar_capabilities",
+		mcp.WithOutputSchema[capabilitiesResponse](),
 		mcp.WithDescription("Returns local calendar capabilities and limits without network access or private data."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
