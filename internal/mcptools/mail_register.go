@@ -104,7 +104,7 @@ func newGetMessageTool() mcp.Tool {
 
 func newSetMessageFlagsTool() mcp.Tool {
 	return mcp.NewTool("set_message_flags",
-		mcp.WithDescription("Adds or removes only the safe seen, flagged, and answered flags on one message identified by (mailbox, UIDVALIDITY, UID). It never replaces all flags and cannot set Deleted, Recent, or arbitrary keywords. expected_modseq is required when the server advertises CONDSTORE. The current go-imap beta.8 adapter cannot observe MODIFIED, so conditional requests are rejected before STORE with protocol_error rather than claiming concurrent_modification. Mutations are never automatically retried."),
+		mcp.WithDescription("Adds or removes only the safe seen, flagged, and answered flags on one message identified by (mailbox, UIDVALIDITY, UID). It never replaces all flags and cannot set Deleted, Recent, or arbitrary keywords. expected_modseq is required when the server advertises CONDSTORE. The adapter sends one UID STORE with UNCHANGEDSINCE and validates the returned FETCH metadata, so a stale MODSEQ returns concurrent_modification without changing flags. Mutations are never automatically retried."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),

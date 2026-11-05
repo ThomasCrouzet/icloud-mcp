@@ -13,6 +13,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add `-doctor` with text or JSON output and bounded read-only probes for
   enabled domains. Enabled domains start as `not_checked`; health polling stays
   local. Report authentication and availability states without secrets.
+- Implement conditional IMAP flag updates on CONDSTORE servers. A matching
+  MODSEQ permits one UID STORE with UNCHANGEDSINCE; a stale MODSEQ returns
+  `concurrent_modification` without changing flags.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.
