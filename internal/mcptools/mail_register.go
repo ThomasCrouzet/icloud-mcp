@@ -147,7 +147,7 @@ func newTrashMessageTool() mcp.Tool {
 
 func newSendMessageTool() mcp.Tool {
 	tool := mcp.NewTool("send_message",
-		mcp.WithDescription("Sends one bounded UTF-8 plain-text message through iCloud SMTP. At least one address across to, cc, and bcc is required, with at most 50 unique recipients total. Every recipient is enforced against the service's configured exact-address allowlist before connecting. HTML, attachments, raw MIME, custom headers, and caller-supplied From are not supported. Submission is never automatically retried, especially after outcome_unknown."),
+		mcp.WithDescription("Sends one bounded UTF-8 plain-text message through iCloud SMTP. At least one address across to, cc, and bcc is required, with at most 50 unique recipients total. Every recipient is enforced against the service's configured exact-address allowlist before connecting. HTML, attachments, raw MIME, custom headers, and caller-supplied From are not supported. Submission is never automatically retried, especially after outcome_unknown. An optional idempotency_key reuses one in-process submission for identical content."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
@@ -157,6 +157,7 @@ func newSendMessageTool() mcp.Tool {
 		mailRecipientArrayProperty("bcc", "Blind-carbon-copy recipient plain addr-specs; omitted from message headers", false),
 		mcp.WithString("subject", mcp.MaxLength(maildomain.MaxSubjectBytes), mcp.Description("Optional UTF-8 subject, at most 998 bytes; CR, LF, NUL, and other controls are rejected")),
 		mcp.WithString("body", mcp.Required(), mcp.MaxLength(maildomain.MaxSendBodyBytes), mcp.Description("UTF-8 plain-text body, at most 102400 bytes; NUL is rejected")),
+		mcp.WithString("idempotency_key", mcp.MaxLength(255), mcp.Description("Optional process-local key. Identical calls reuse one submission and Message-ID; changed content conflicts. Accepted and uncertain outcomes stay until process exit; at most 128 keys.")),
 	)
 	schema, err := json.Marshal(map[string]any{
 		"type":                 tool.InputSchema.Type,

@@ -242,7 +242,23 @@ type preparedMessage struct {
 	smtpUTF8   bool
 }
 
-func (s *Client) SendMessage(ctx context.Context, input SendInput) (result SendResult, err error) {
+func (s *Client) SendMessage(ctx context.Context, input SendInput) (SendResult, error) {
+	if err := validateSendIdempotencyKey(input.IdempotencyKey); err != nil {
+		return SendResult{}, err
+	}
+	if input.IdempotencyKey == "" {
+		return s.sendOnce(ctx, input)
+	}
+	claim, owner, result, err := s.sendCache.claim(ctx, s.config.Address, input)
+	if !owner {
+		return result, err
+	}
+	result, err = s.sendOnce(ctx, input)
+	s.sendCache.complete(claim, result, err)
+	return result, err
+}
+
+func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResult, err error) {
 	var conn net.Conn
 	var dataPhase smtpDataPhase
 	defer func() {

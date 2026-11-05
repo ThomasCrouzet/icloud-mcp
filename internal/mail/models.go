@@ -184,11 +184,12 @@ type MoveResult struct {
 }
 
 type SendInput struct {
-	To      []string `json:"to"`
-	Cc      []string `json:"cc,omitempty"`
-	Bcc     []string `json:"bcc,omitempty"`
-	Subject string   `json:"subject,omitempty"`
-	Body    string   `json:"body"`
+	To             []string `json:"to"`
+	Cc             []string `json:"cc,omitempty"`
+	Bcc            []string `json:"bcc,omitempty"`
+	Subject        string   `json:"subject,omitempty"`
+	Body           string   `json:"body"`
+	IdempotencyKey string   `json:"idempotency_key,omitempty"`
 }
 
 type SendStatus string

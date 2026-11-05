@@ -217,7 +217,7 @@ func trashMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 func sendMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		const tool = "send_message"
-		args, err := mailArguments(req, mailKeySet("to", "cc", "bcc", "subject", "body"))
+		args, err := mailArguments(req, mailKeySet("to", "cc", "bcc", "subject", "body", "idempotency_key"))
 		if err != nil {
 			mailAudit(deps, tool, "submission", "invalid", "denied")
 			return mailSendValidationResult(deps, err), nil
@@ -516,6 +516,13 @@ func mailSendInput(args map[string]any) (maildomain.SendInput, error) {
 	}
 	if len(input.Body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
 		return maildomain.SendInput{}, fmt.Errorf("body contains invalid or excessive data")
+	}
+	input.IdempotencyKey, _, err = mailOptionalString(args, "idempotency_key")
+	if err != nil {
+		return maildomain.SendInput{}, err
+	}
+	if len(input.IdempotencyKey) > 255 || strings.ContainsAny(input.IdempotencyKey, "\r\n\x00") {
+		return maildomain.SendInput{}, fmt.Errorf("idempotency_key contains invalid or excessive data")
 	}
 	return input, nil
 }

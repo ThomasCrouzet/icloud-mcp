@@ -1232,3 +1232,131 @@ func TestSendLimits(t *testing.T) {
 		t.Fatalf("invalid messages reached SMTP: %v", log)
 	}
 }
+
+func TestSendIdempotencyReusesOneSubmission(t *testing.T) {
+	t.Parallel()
+	var log []string
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fake := &fakeSMTP{log: &log, dataFn: func() error {
+		close(started)
+		<-release
+		return nil
+	}}
+	service := testService(t, nil, fake, false, true)
+	input := SendInput{To: []string{"to@example.com"}, Subject: "same", Body: "same body", IdempotencyKey: "send-key"}
+
+	type outcome struct {
+		result SendResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	go func() {
+		result, err := service.SendMessage(context.Background(), input)
+		results <- outcome{result, err}
+	}()
+	<-started
+	go func() {
+		result, err := service.SendMessage(context.Background(), input)
+		results <- outcome{result, err}
+	}()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.result.Status != SendAccepted || second.result.Status != SendAccepted {
+		t.Fatalf("concurrent send outcomes = %+v / %+v", first, second)
+	}
+	if first.result.MessageID == "" || first.result.MessageID != second.result.MessageID {
+		t.Fatalf("Message-ID reuse failed: %q / %q", first.result.MessageID, second.result.MessageID)
+	}
+	if strings.Count(strings.Join(log, ","), "data") != 1 || strings.Count(strings.Join(log, ","), "mail") != 1 {
+		t.Fatalf("duplicate SMTP submission: %v", log)
+	}
+}
+
+func TestSendIdempotencyChangedContentConflictsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	var log []string
+	fake := &fakeSMTP{log: &log}
+	service := testService(t, nil, fake, false, true)
+	first, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "one", IdempotencyKey: "changed"})
+	if err != nil || first.Status != SendAccepted {
+		t.Fatalf("first send = %+v, %v", first, err)
+	}
+	second, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "two", IdempotencyKey: "changed"})
+	if errorCode(t, err) != CodeConflict || second.MessageID != "" {
+		t.Fatalf("changed content = %+v, %v", second, err)
+	}
+	if strings.Count(strings.Join(log, ","), "data") != 1 {
+		t.Fatalf("changed content dispatched again: %v", log)
+	}
+}
+
+func TestSendIdempotencyRetainsUncertainOutcome(t *testing.T) {
+	t.Parallel()
+	var log []string
+	fake := &fakeSMTP{log: &log, dataStarted: true, dataErr: io.ErrUnexpectedEOF}
+	service := testService(t, nil, fake, false, true)
+	input := SendInput{To: []string{"to@example.com"}, Body: "uncertain", IdempotencyKey: "uncertain"}
+	first, firstErr := service.SendMessage(context.Background(), input)
+	second, secondErr := service.SendMessage(context.Background(), input)
+	if errorCode(t, firstErr) != CodeOutcomeUnknown || errorCode(t, secondErr) != CodeOutcomeUnknown {
+		t.Fatalf("uncertain errors = %v / %v", firstErr, secondErr)
+	}
+	if first.Status != SendOutcomeUnknown || second.Status != SendOutcomeUnknown || first.MessageID == "" || first.MessageID != second.MessageID {
+		t.Fatalf("uncertain outcomes = %+v / %+v", first, second)
+	}
+	if strings.Count(strings.Join(log, ","), "data") != 1 {
+		t.Fatalf("uncertain outcome was resubmitted: %v", log)
+	}
+}
+
+func TestSendIdempotencyCacheExhaustionRejectsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+	var log []string
+	fake := &fakeSMTP{log: &log}
+	service := testService(t, nil, fake, false, true)
+	for index := 0; index < maxSendIdempotencyEntries; index++ {
+		key := fmt.Sprintf("full-%d", index)
+		service.sendCache.entries[key] = &sendClaim{done: make(chan struct{})}
+	}
+	_, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "x", IdempotencyKey: "new"})
+	if errorCode(t, err) != CodeConflict || len(log) != 0 {
+		t.Fatalf("cache exhaustion = %v, log=%v", err, log)
+	}
+}
+
+func TestSendIdempotencyCallerCancellationDoesNotReleaseClaim(t *testing.T) {
+	t.Parallel()
+	var log []string
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fake := &fakeSMTP{log: &log, dataFn: func() error {
+		close(started)
+		<-release
+		return nil
+	}}
+	service := testService(t, nil, fake, false, true)
+	input := SendInput{To: []string{"to@example.com"}, Body: "owner", IdempotencyKey: "cancel"}
+	owner := make(chan SendResult, 1)
+	go func() {
+		result, _ := service.SendMessage(context.Background(), input)
+		owner <- result
+	}()
+	<-started
+	waitCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.SendMessage(waitCtx, input); errorCode(t, err) != CodeTimeout {
+		t.Fatalf("cancelled duplicate error = %v", err)
+	}
+	close(release)
+	first := <-owner
+	third, err := service.SendMessage(context.Background(), input)
+	if err != nil || third.Status != SendAccepted || third.MessageID != first.MessageID {
+		t.Fatalf("claim was lost after caller cancellation: %+v %+v %v", first, third, err)
+	}
+	if strings.Count(strings.Join(log, ","), "data") != 1 {
+		t.Fatalf("cancelled duplicate dispatched again: %v", log)
+	}
+}

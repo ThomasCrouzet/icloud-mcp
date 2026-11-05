@@ -242,6 +242,21 @@ Submission outcomes are:
 
 The client never retries SMTP. After `outcome_unknown`, inspect Sent and the
 recipients before another send. The client never uses APPEND for a Sent copy.
+
+### Send idempotency
+
+`send_message` accepts an optional `idempotency_key`. The first caller claims the
+key before SMTP dispatch. Identical content reuses the active or retained result
+and the same Message-ID. Changed content for the same key returns `conflict`
+before dispatch. The fingerprint binds the sender, recipient groups, subject,
+body, and options.
+
+The cache is process-local and retains accepted, rejected, and uncertain
+outcomes until process exit. It has 128 keys. A full cache rejects a new claim
+`conflict` before SMTP. A cancelled duplicate caller does not release the
+original claim. A later call receives the original result, including
+`outcome_unknown`, and never submits again. Restart clears the cache, so this is
+not an exactly-once delivery guarantee.
 Thus, accepted SMTP returns `sentCopyUnavailable: true`. This field means that
 the client did not make sure that a copy exists. iCloud can create one, but the
 client does not assume this behavior.
