@@ -38,7 +38,7 @@ type doctorReport struct {
 
 func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
 	if format != "text" && format != "json" {
-		fmt.Fprintln(stdout, "doctor: format must be text or json")
+		_, _ = fmt.Fprintln(stdout, "doctor: format must be text or json")
 		return 2
 	}
 	report := doctorReport{
@@ -60,7 +60,7 @@ func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
 			return 2
 		}
 	} else {
-		fmt.Fprintf(stdout, "version: %s\nread_only: %t\n", report.Version, report.ReadOnly)
+		_, _ = fmt.Fprintf(stdout, "version: %s\nread_only: %t\n", report.Version, report.ReadOnly)
 		for _, domain := range report.Domains {
 			line := fmt.Sprintf("%s: %s", domain.Domain, domain.Status)
 			if domain.ErrorCode != "" {
@@ -72,7 +72,7 @@ func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
 			if domain.AddressBooks > 0 {
 				line += fmt.Sprintf(" address_books=%d", domain.AddressBooks)
 			}
-			fmt.Fprintln(stdout, line)
+			_, _ = fmt.Fprintln(stdout, line)
 		}
 	}
 	return status
