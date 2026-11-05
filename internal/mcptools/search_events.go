@@ -194,8 +194,8 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				truncatedByExpansion = true
 			}
 			batch := result.Events
-			for i := range batch {
-				batch[i].Calendar = path
+			for j := range batch {
+				batch[j].Calendar = calendarPaths[i]
 			}
 			if query != "" {
 				batch = filterByQuery(batch, query)
