@@ -92,9 +92,22 @@ func (f *fakeIMAP) Search(request imapadapter.SearchRequest) ([]uint32, error) {
 	}
 	return nil, f.operationError("search")
 }
-func (f *fakeIMAP) FetchMetadata(_ []uint32, _ bool) ([]imapadapter.Message, error) {
+func (f *fakeIMAP) FetchMetadata(uids []uint32, _ bool) ([]imapadapter.Message, error) {
 	f.record("metadata")
-	return f.metadata, f.operationError("metadata")
+	if len(uids) == 0 {
+		return f.metadata, f.operationError("metadata")
+	}
+	wanted := make(map[uint32]struct{}, len(uids))
+	for _, uid := range uids {
+		wanted[uid] = struct{}{}
+	}
+	var out []imapadapter.Message
+	for _, message := range f.metadata {
+		if _, ok := wanted[message.UID]; ok {
+			out = append(out, message)
+		}
+	}
+	return out, f.operationError("metadata")
 }
 func (f *fakeIMAP) FetchBodyPart(_ uint32, _ []int) (imapadapter.BodyData, error) {
 	f.record("body-peek")
@@ -299,6 +312,128 @@ func TestSearchUIDWindowsAndIdentity(t *testing.T) {
 	}
 }
 
+func TestSearchEmptyBoundedPageReturnsContinuation(t *testing.T) {
+	t.Parallel()
+	imap := &fakeIMAP{
+		selected: imapadapter.SelectedMailbox{UIDValidity: 7, UIDNext: 60_001},
+		searchFn: func(request imapadapter.SearchRequest) ([]uint32, error) {
+			if request.UIDMin <= 5000 && request.UIDMax >= 5000 {
+				return []uint32{5000}, nil
+			}
+			return nil, nil
+		},
+	}
+	service := testService(t, imap, nil, false, false)
+	first, err := service.SearchMessages(context.Background(), SearchInput{Mailbox: "INBOX", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.ScanLimitReached || len(first.Messages) != 0 {
+		t.Fatalf("first page = %+v, want empty scan-limited page", first)
+	}
+	if first.NextBeforeUID != 10_001 {
+		t.Fatalf("nextBeforeUid = %d, want completed scan boundary 10001", first.NextBeforeUID)
+	}
+
+	imap.metadata = []imapadapter.Message{{UID: 5000, Envelope: imapadapter.Envelope{Subject: "older match"}}}
+	second, err := service.SearchMessages(context.Background(), SearchInput{
+		Mailbox: "INBOX", BeforeUID: first.NextBeforeUID, UIDValidity: first.UIDValidity, Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Messages) != 1 || second.Messages[0].UID != 5000 {
+		t.Fatalf("second page = %+v, want UID 5000", second)
+	}
+	if second.NextBeforeUID != 0 || second.ScanLimitReached {
+		t.Fatalf("terminal page = %+v, want no continuation", second)
+	}
+}
+
+func TestSearchCountTruncationDoesNotSkipOrDuplicate(t *testing.T) {
+	t.Parallel()
+	uids := []uint32{80, 70, 60, 50}
+	imap := &fakeIMAP{
+		selected: imapadapter.SelectedMailbox{UIDValidity: 9, UIDNext: 101},
+		searchFn: func(request imapadapter.SearchRequest) ([]uint32, error) {
+			var found []uint32
+			for _, uid := range uids {
+				if uid >= request.UIDMin && uid <= request.UIDMax {
+					found = append(found, uid)
+				}
+			}
+			return found, nil
+		},
+	}
+	metadataFor := func(values []uint32) []imapadapter.Message {
+		var out []imapadapter.Message
+		for _, uid := range values {
+			out = append(out, imapadapter.Message{UID: uid, Envelope: imapadapter.Envelope{Subject: fmt.Sprintf("uid %d", uid)}})
+		}
+		return out
+	}
+	imap.metadata = metadataFor([]uint32{80, 70, 60, 50})
+	service := testService(t, imap, nil, false, false)
+	first, err := service.SearchMessages(context.Background(), SearchInput{Mailbox: "INBOX", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Messages) != 2 || first.Messages[0].UID != 80 || first.Messages[1].UID != 70 || first.NextBeforeUID != 70 {
+		t.Fatalf("first page = %+v", first)
+	}
+	imap.metadata = metadataFor([]uint32{60, 50})
+	second, err := service.SearchMessages(context.Background(), SearchInput{
+		Mailbox: "INBOX", BeforeUID: first.NextBeforeUID, UIDValidity: first.UIDValidity, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Messages) != 2 || second.Messages[0].UID != 60 || second.Messages[1].UID != 50 {
+		t.Fatalf("second page = %+v", second)
+	}
+}
+
+func TestSearchByteTruncationResumesAtLastReturnedMessage(t *testing.T) {
+	t.Parallel()
+	imap := &fakeIMAP{
+		selected: imapadapter.SelectedMailbox{UIDValidity: 11, UIDNext: 101},
+		searchFn: func(request imapadapter.SearchRequest) ([]uint32, error) {
+			var found []uint32
+			for _, uid := range []uint32{90, 80} {
+				if uid >= request.UIDMin && uid <= request.UIDMax {
+					found = append(found, uid)
+				}
+			}
+			return found, nil
+		},
+		metadata: []imapadapter.Message{
+			{UID: 90, Envelope: imapadapter.Envelope{Subject: strings.Repeat("a", 200<<10)}},
+			{UID: 80, Envelope: imapadapter.Envelope{Subject: strings.Repeat("b", 200<<10)}},
+		},
+	}
+	service := testService(t, imap, nil, false, false)
+	first, err := service.SearchMessages(context.Background(), SearchInput{Mailbox: "INBOX", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Messages) != 1 || first.Messages[0].UID != 90 || !first.Truncated {
+		t.Fatalf("first page = %+v, want one byte-bounded message", first)
+	}
+	if first.NextBeforeUID != 90 {
+		t.Fatalf("nextBeforeUid = %d, want last returned UID 90", first.NextBeforeUID)
+	}
+	imap.metadata = []imapadapter.Message{{UID: 80, Envelope: imapadapter.Envelope{Subject: "older"}}}
+	second, err := service.SearchMessages(context.Background(), SearchInput{
+		Mailbox: "INBOX", BeforeUID: first.NextBeforeUID, UIDValidity: first.UIDValidity, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Messages) != 1 || second.Messages[0].UID != 80 {
+		t.Fatalf("second page = %+v, want the dropped older message", second)
+	}
+}
+
 func TestSearchUsesTypedCriteriaAndReturnsNewestUIDFirst(t *testing.T) {
 	t.Parallel()
 	imap := &fakeIMAP{
@@ -320,7 +455,7 @@ func TestSearchUsesTypedCriteriaAndReturnsNewestUIDFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Messages) != 2 || result.Messages[0].UID != 25 || result.Messages[1].UID != 20 || result.NextBeforeUID != 20 {
+	if len(result.Messages) != 2 || result.Messages[0].UID != 25 || result.Messages[1].UID != 20 || result.NextBeforeUID != 0 {
 		t.Fatalf("unexpected search result: %+v", result)
 	}
 	request := imap.searches[0]
