@@ -307,8 +307,21 @@ vulnerabilities privately through [SECURITY.md](SECURITY.md).
 ## Status
 
 The implemented scope is iCloud Calendar with optional Contacts and Mail.
-Release archives cover Linux amd64/arm64 and macOS arm64; CI also smoke-builds
-Windows amd64, which has no published archive.
+
+| Target | Published archive | Native release smoke | Status |
+|--------|-------------------|----------------------|--------|
+| Linux amd64 | Yes | Ubuntu GitHub-hosted runner | Supported |
+| Linux arm64 | Yes | Compile and archive only | Supported |
+| macOS arm64 | Yes | macOS GitHub-hosted arm64 runner | Supported |
+| Windows amd64 | No | None | Compile-only, explicit scope decision |
+
+Windows has no signed archive and no runtime support claim. Compilation is not
+evidence of file-credential handling, service startup, or installation.
+
+Install without Go by downloading `icloud-mcp-vX.Y.Z-<os>-<arch>.tar.gz` and
+`icloud-mcp-vX.Y.Z-checksums.txt` from the release. Verify the checksum and
+cosign signature, extract `icloud-mcp`, and use its absolute path in the host
+configuration. See the [release verification procedure](docs/testing.md#release-metadata-and-registry).
 
 Current limits to account for:
 
