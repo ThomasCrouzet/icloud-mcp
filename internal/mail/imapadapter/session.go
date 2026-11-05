@@ -782,3 +782,24 @@ func classify(err error, ambiguous bool) error {
 	}
 	return &Error{Kind: ErrorProtocol, Ambiguous: ambiguous}
 }
+
+// AppendSent appends one already-built message to the selected Sent mailbox.
+// The caller must resolve exactly one SPECIAL-USE Sent target first.
+func (s *Session) AppendSent(mailbox string, message []byte) (AppendData, error) {
+	command := s.client.Append(mailbox, int64(len(message)), nil)
+	if _, err := command.Write(message); err != nil {
+		_ = command.Close()
+		return AppendData{}, classify(err, true)
+	}
+	if err := command.Close(); err != nil {
+		return AppendData{}, classify(err, true)
+	}
+	data, err := command.Wait()
+	if err != nil {
+		return AppendData{}, classify(err, true)
+	}
+	if data == nil {
+		return AppendData{}, &Error{Kind: ErrorProtocol, Ambiguous: true}
+	}
+	return AppendData{UIDValidity: data.UIDValidity, UID: uint32(data.UID)}, nil
+}

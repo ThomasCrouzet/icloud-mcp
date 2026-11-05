@@ -112,3 +112,8 @@ type CopyData struct {
 	UIDValidity    uint32
 	DestinationUID uint32
 }
+
+type AppendData struct {
+	UIDValidity uint32
+	UID         uint32
+}

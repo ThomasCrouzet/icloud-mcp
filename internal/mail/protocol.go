@@ -27,6 +27,7 @@ type imapSession interface {
 	ConditionalStoreDelta(uid uint32, add bool, flags []string, expectedModSeq uint64) (imapadapter.Message, error)
 	FetchFlags(uid uint32) (imapadapter.Message, error)
 	NativeMove(uid uint32, destination string) (imapadapter.CopyData, error)
+	AppendSent(mailbox string, message []byte) (imapadapter.AppendData, error)
 	Copy(uid uint32, destination string) (imapadapter.CopyData, error)
 	AddDeleted(uid uint32) error
 	UIDExpunge(uid uint32) error

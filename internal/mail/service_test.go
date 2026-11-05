@@ -49,6 +49,10 @@ type fakeIMAP struct {
 	body                 imapadapter.BodyData
 	flags                imapadapter.Message
 	copyData             imapadapter.CopyData
+	appendData           imapadapter.AppendData
+	appendErr            error
+	appendedMailbox      string
+	appendedMessage      []byte
 	nativeMoveFn         func() (imapadapter.CopyData, error)
 	closeFn              func()
 	errors               map[string]error
@@ -141,6 +145,14 @@ func (f *fakeIMAP) NativeMove(_ uint32, _ string) (imapadapter.CopyData, error) 
 		return f.nativeMoveFn()
 	}
 	return f.copyData, f.operationError("move")
+}
+func (f *fakeIMAP) AppendSent(mailbox string, message []byte) (imapadapter.AppendData, error) {
+	f.record("append-sent")
+	f.mu.Lock()
+	f.appendedMailbox = mailbox
+	f.appendedMessage = append([]byte(nil), message...)
+	f.mu.Unlock()
+	return f.appendData, f.appendErr
 }
 func (f *fakeIMAP) Copy(_ uint32, _ string) (imapadapter.CopyData, error) {
 	f.record("copy")
@@ -1102,6 +1114,9 @@ func (b *blockingIMAP) FetchFlags(uint32) (imapadapter.Message, error) {
 func (b *blockingIMAP) NativeMove(uint32, string) (imapadapter.CopyData, error) {
 	return imapadapter.CopyData{}, nil
 }
+func (b *blockingIMAP) AppendSent(string, []byte) (imapadapter.AppendData, error) {
+	return imapadapter.AppendData{}, &imapadapter.Error{Kind: imapadapter.ErrorProtocol}
+}
 func (b *blockingIMAP) Copy(uint32, string) (imapadapter.CopyData, error) {
 	return imapadapter.CopyData{}, nil
 }
@@ -1406,5 +1421,74 @@ func TestSendIdempotencyCallerCancellationDoesNotReleaseClaim(t *testing.T) {
 	}
 	if strings.Count(strings.Join(log, ","), "data") != 1 {
 		t.Fatalf("cancelled duplicate dispatched again: %v", log)
+	}
+}
+
+func TestSendArchiveSentCopyHasSeparateOutcome(t *testing.T) {
+	t.Parallel()
+	var log []string
+	imap := &fakeIMAP{
+		mailboxes:  []imapadapter.Mailbox{{Name: "INBOX"}, {Name: "Sent", Attributes: []string{"\\Sent"}}, {Name: "Archive"}},
+		appendData: imapadapter.AppendData{UIDValidity: 9, UID: 42},
+	}
+	fake := &fakeSMTP{log: &log}
+	service := testService(t, imap, fake, false, true)
+	service.config.EnableSentCopy = true
+	result, err := service.SendMessage(context.Background(), SendInput{
+		To: []string{"to@example.com"}, Subject: "archived", Body: "body", ArchiveSent: true,
+	})
+	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalStored || result.SentDestination != "Sent" || result.SentCopyUnavailable {
+		t.Fatalf("archived send = %+v, %v", result, err)
+	}
+	if imap.appendedMailbox != "Sent" || len(imap.appendedMessage) == 0 || !strings.Contains(string(imap.appendedMessage), "Subject: archived") {
+		t.Fatalf("APPEND target/message = %q/%d", imap.appendedMailbox, len(imap.appendedMessage))
+	}
+	if strings.Count(strings.Join(log, ","), "data") != 1 {
+		t.Fatalf("SMTP submission count changed after archive: %v", log)
+	}
+
+	imap.appendErr = &imapadapter.Error{Kind: imapadapter.ErrorProtocol}
+	fake = &fakeSMTP{log: &log}
+	service = testService(t, imap, fake, false, true)
+	service.config.EnableSentCopy = true
+	result, err = service.SendMessage(context.Background(), SendInput{
+		To: []string{"to@example.com"}, Body: "body", ArchiveSent: true,
+	})
+	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalFailed || result.ArchivalError == "" || !result.SentCopyUnavailable {
+		t.Fatalf("failed archive = %+v, %v", result, err)
+	}
+
+	imap.appendErr = &imapadapter.Error{Kind: imapadapter.ErrorUnavailable, Ambiguous: true}
+	fake = &fakeSMTP{log: &log}
+	service = testService(t, imap, fake, false, true)
+	service.config.EnableSentCopy = true
+	result, err = service.SendMessage(context.Background(), SendInput{
+		To: []string{"to@example.com"}, Body: "body", ArchiveSent: true,
+	})
+	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalUnknown {
+		t.Fatalf("unknown archive = %+v, %v", result, err)
+	}
+}
+
+func TestArchiveSentRequiresExplicitCapability(t *testing.T) {
+	t.Parallel()
+	var log []string
+	service := testService(t, &fakeIMAP{}, &fakeSMTP{log: &log}, false, true)
+	_, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "body", ArchiveSent: true})
+	if errorCode(t, err) != CodeValidation || len(log) != 0 {
+		t.Fatalf("archive without capability = %v, log=%v", err, log)
+	}
+}
+
+func TestArchiveSentRequiresUniqueSpecialUseMailbox(t *testing.T) {
+	t.Parallel()
+	var log []string
+	imap := &fakeIMAP{mailboxes: []imapadapter.Mailbox{{Name: "Sent A", Attributes: []string{"\\Sent"}}, {Name: "Sent B", Attributes: []string{"\\Sent"}}}}
+	fake := &fakeSMTP{log: &log}
+	service := testService(t, imap, fake, false, true)
+	service.config.EnableSentCopy = true
+	result, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "body", ArchiveSent: true})
+	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalFailed {
+		t.Fatalf("ambiguous Sent result = %+v, %v", result, err)
 	}
 }
