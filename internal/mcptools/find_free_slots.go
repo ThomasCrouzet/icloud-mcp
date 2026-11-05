@@ -158,24 +158,23 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			opts.DaysOfWeek = days
 		}
 
+		readResults := parallelCalendarReads(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+			return deps.Service.SearchEvents(ctx, path, queryStart, queryEnd, nil)
+		})
 		var allEvents []icloud.Event
-		for _, path := range paths {
-			if err := ctx.Err(); err != nil {
-				return errResult(deps.Redactor, "searching events", err), nil
+		for _, read := range readResults {
+			if read.err != nil {
+				return errResult(deps.Redactor, "searching events", read.err), nil
 			}
-			res, serr := deps.Service.SearchEvents(ctx, path, queryStart, queryEnd, nil)
-			if serr != nil {
-				return errResult(deps.Redactor, "searching events", serr), nil
-			}
-			if err := ctx.Err(); err != nil {
-				return errResult(deps.Redactor, "searching events", err), nil
-			}
-			if res.TruncatedByExpansion {
+			if read.value.TruncatedByExpansion {
 				return errResult(deps.Redactor, "searching events", icloud.NewError(
 					icloud.CodePartialFailure, 0, "recurrence expansion was truncated; availability cannot be determined", nil,
 				)), nil
 			}
-			allEvents = append(allEvents, res.Events...)
+			allEvents = append(allEvents, read.value.Events...)
+		}
+		if err := ctx.Err(); err != nil {
+			return errResult(deps.Redactor, "searching events", err), nil
 		}
 		busy := icloud.BusyFromEvents(allEvents, opts.IncludeAllDayBusy, opts.BufferBefore, opts.BufferAfter, opts.Location)
 		slots, err := icloud.FindFreeSlots(busy, opts)

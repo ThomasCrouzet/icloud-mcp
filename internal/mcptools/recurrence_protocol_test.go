@@ -368,7 +368,12 @@ func (p *recurrenceProtocol) call(t *testing.T, tool string, args map[string]any
 	if multiple, ok := args["calendars"].(string); ok {
 		selection = multiple
 	}
-	if want := strings.Split(selection, ","); !reflect.DeepEqual(paths, want) {
+	want := strings.Split(selection, ",")
+	gotSorted := append([]string(nil), paths...)
+	wantSorted := append([]string(nil), want...)
+	sort.Strings(gotSorted)
+	sort.Strings(wantSorted)
+	if !reflect.DeepEqual(gotSorted, wantSorted) {
 		t.Fatalf("REPORT paths = %v, want %v", paths, want)
 	}
 	return result
