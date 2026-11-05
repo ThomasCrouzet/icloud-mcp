@@ -61,6 +61,7 @@ type Client struct {
 	shardBase    string
 	homeSetPath  string
 	allowHost    func(string) bool
+	locations    *eventLocationCache
 }
 
 var _ Service = (*Client)(nil)
@@ -74,6 +75,7 @@ func NewClient(authHTTP httpDoer, baseURL string, allowHost func(string) bool) *
 		http:      authHTTP,
 		baseURL:   strings.TrimSuffix(baseURL, "/"),
 		allowHost: allowHost,
+		locations: newEventLocationCache(),
 	}
 }
 
@@ -128,6 +130,7 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		// Propagate REPORT getetag onto every returned row so agents can
 		// conditional-update without an extra get_event round-trip.
 		master.ETag = objs[i].ETag
+		c.locations.put(calendarPath, master.UID, objs[i].Path)
 		if !expand {
 			// The server selects recurring resources when any occurrence is in
 			// range, even though the master's DTSTART can be years outside it.
@@ -756,6 +759,7 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 			"Call get_event with this UID. A not_found result confirms deletion; if it still exists, compare its ETag before deciding whether to retry.")
 		return DeleteResult{}, fmt.Errorf("deleting event: %w", err)
 	}
+	c.locations.evict(calendarPath, uid)
 	return result, nil
 }
 
@@ -881,12 +885,28 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 	// observed 2026-07-12), so filtering by UID server-side is impossible. But
 	// iCloud names its resources <UID>.ics (verified): first try a direct GET
 	// on that path, which returns the FULL object (suitable for update/delete).
+	if cached, ok := c.locations.get(calendarPath, uid); ok {
+		obj, cachedErr := c.getCalendarObject(ctx, calendarPath, cached)
+		if cachedErr == nil {
+			if err := validateCalendarObjectIdentity(obj.Data, uid); err != nil {
+				c.locations.evict(calendarPath, uid)
+				return nil, err
+			}
+			return obj, nil
+		}
+		if ie := AsICloudError(cachedErr); ie == nil || ie.Code != CodeNotFound {
+			return nil, cachedErr
+		}
+		c.locations.evict(calendarPath, uid)
+	}
+
 	directPath := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
 	obj, directErr := c.getCalendarObject(ctx, calendarPath, directPath)
 	if directErr == nil {
 		if err := validateCalendarObjectIdentity(obj.Data, uid); err != nil {
 			return nil, err
 		}
+		c.locations.put(calendarPath, uid, directPath)
 		return obj, nil
 	} else if ie := AsICloudError(directErr); ie == nil || ie.Code != CodeNotFound {
 		return nil, directErr
@@ -924,6 +944,7 @@ func (c *Client) findEventByUID(ctx context.Context, calendarPath, uid string) (
 		if err := validateCalendarObjectIdentity(obj.Data, uid); err != nil {
 			return nil, err
 		}
+		c.locations.put(calendarPath, uid, href)
 		return obj, nil
 	}
 	return nil, NewError(CodeNotFound, 404,
