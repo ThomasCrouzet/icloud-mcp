@@ -67,6 +67,8 @@ func main() {
 	healthAddr := flag.String("health", "", "HTTP healthcheck address (e.g. 127.0.0.1:8797), disabled if empty")
 	auditFormatFlag := flag.String("audit-format", "json", "mutation audit format on stderr: json (default) or text")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	doctor := flag.Bool("doctor", false, "run bounded read-only domain probes and exit")
+	doctorFormat := flag.String("doctor-format", "text", "doctor output format: text or json")
 	flag.Parse()
 
 	if *showVersion {
@@ -87,20 +89,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
+	if *doctor {
+		os.Exit(runDoctor(cfg, *doctorFormat, os.Stdout))
+	}
 
 	// Fixed production transports remain separate from the shared lifecycle.
 	// Disabled domains construct no client and make no network request.
 	capabilities := cfg.Capabilities()
 	var ic *icloud.Client
 	if capabilities.CalendarRead || capabilities.CalendarWrite || capabilities.CalendarDelete {
-		calendarCredentials := security.CredentialPair{
-			Username: strings.Clone(cfg.Email),
-			Password: strings.Clone(cfg.Password),
-		}
-		httpClient := security.NewICloudHTTPClient(cfg.Timeout)
-		authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
-		doer := icloud.NewRetryClassifier(authHTTP)
-		ic = icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
+		ic = newCalendarClient(cfg)
 	}
 	contactsService, mailService, err := newOptionalServices(cfg)
 	if err == nil {
@@ -167,9 +165,9 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	// 6. Optional healthcheck (off by default).
 	if healthEnabled {
 		domains := map[string]health.DomainStatus{
-			"calendar": {Status: domainStatus(plan.CalendarReadEnabled() || plan.CalendarWritesEnabled())},
-			"contacts": {Status: domainStatus(plan.ContactsEnabled())},
-			"mail":     {Status: domainStatus(plan.MailEnabled())},
+			"calendar": {Status: startupDomainStatus(plan.CalendarReadEnabled() || plan.CalendarWritesEnabled())},
+			"contacts": {Status: startupDomainStatus(plan.ContactsEnabled())},
+			"mail":     {Status: startupDomainStatus(plan.MailEnabled())},
 		}
 		h, err := health.Start(healthAddr, version, domains, func() any {
 			return collectRateLimits(guardedCalendar, contactsService, mailService)
@@ -299,6 +297,13 @@ func domainStatus(enabled bool) string {
 	return "disabled"
 }
 
+func startupDomainStatus(enabled bool) string {
+	if enabled {
+		return "not_checked"
+	}
+	return "disabled"
+}
+
 type rateLimitReporter interface {
 	RateLimitStatus() map[string]any
 }
@@ -315,6 +320,17 @@ func collectRateLimits(calendar *icloud.GuardedService, contactsService contacts
 		out["mail"] = reporter.RateLimitStatus()
 	}
 	return out
+}
+
+func newCalendarClient(cfg *config.Config) *icloud.Client {
+	calendarCredentials := security.CredentialPair{
+		Username: strings.Clone(cfg.Email),
+		Password: strings.Clone(cfg.Password),
+	}
+	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
+	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
+	doer := icloud.NewRetryClassifier(authHTTP)
+	return icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
 }
 
 func newBootRedactor(cfg *config.Config) *security.Redactor {

@@ -378,3 +378,23 @@ func TestSMTPAllowAllBootWarningCondition(t *testing.T) {
 		t.Fatal("exact policy must not report AllowAll")
 	}
 }
+
+func TestStartupHealthDoesNotClaimVerifiedReadiness(t *testing.T) {
+	if got := startupDomainStatus(true); got != "not_checked" {
+		t.Fatalf("startupDomainStatus(true) = %q, want not_checked", got)
+	}
+	if got := startupDomainStatus(false); got != "disabled" {
+		t.Fatalf("startupDomainStatus(false) = %q, want disabled", got)
+	}
+}
+
+func TestDoctorRejectsUnknownFormatWithoutNetwork(t *testing.T) {
+	cfg := &config.Config{}
+	var output strings.Builder
+	if code := runDoctor(cfg, "yaml", &output); code != 2 {
+		t.Fatalf("runDoctor unknown format code = %d, want 2", code)
+	}
+	if !strings.Contains(output.String(), "text or json") {
+		t.Fatalf("doctor format error = %q", output.String())
+	}
+}
