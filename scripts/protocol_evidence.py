@@ -33,7 +33,7 @@ CALENDAR_WRITES = {"create_event", "update_event", "delete_event"}
 CONTACT_READS = {"list_address_books", "search_contacts", "get_contact"}
 CONTACT_WRITES = {"create_contact", "update_contact", "delete_contact"}
 MAIL_READS = {"list_mailboxes", "search_messages", "get_message"}
-MAIL_WRITES = {"set_message_flags", "move_message", "trash_message", "send_message"}
+MAIL_WRITES = {"set_message_flags", "move_message", "trash_message", "send_message", "reply_message"}
 
 
 def require(condition, message):
