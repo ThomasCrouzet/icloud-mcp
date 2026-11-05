@@ -215,16 +215,8 @@ func contactsReadToolNames() []string {
 	return []string{"list_address_books", "search_contacts", "get_contact"}
 }
 
-func contactsWriteToolNames() []string {
-	return []string{"create_contact", "update_contact", "delete_contact"}
-}
-
 func mailReadToolNames() []string {
 	return []string{"list_mailboxes", "search_messages", "get_message"}
-}
-
-func mailMutationToolNames() []string {
-	return []string{"set_message_flags", "move_message", "trash_message"}
 }
 
 // defaultLocationName returns the display name for tool descriptions and error
