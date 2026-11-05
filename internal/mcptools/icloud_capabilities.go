@@ -9,6 +9,7 @@ import (
 
 func newICloudCapabilitiesTool() mcp.Tool {
 	return mcp.NewTool("icloud_capabilities",
+		mcp.WithOutputSchema[icloudCapabilitiesResponse](),
 		mcp.WithDescription("Returns enabled local iCloud domains and tools without network access or account data."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

@@ -18,6 +18,7 @@ const maxExplicitFreeSlotCalendars = 10
 
 func newFindFreeSlotsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("find_free_slots",
+		mcp.WithOutputSchema[freeSlotsResponse](),
 		mcp.WithDescription("Finds free slots locally across calendars, with recurrence, working hours, buffers, and DST. Busy event details are never returned."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

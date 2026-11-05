@@ -19,6 +19,7 @@ const maxExplicitSearchCalendars = 10
 
 func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("search_events",
+		mcp.WithOutputSchema[searchEventsResponse](),
 		mcp.WithDescription("Searches events over a range. Recurrence expands by default; occurrences include recurrenceId and calendar for follow-up calls. Results are sorted, capped at 400 and 256 KiB, and may report truncation or partial calendar failures."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

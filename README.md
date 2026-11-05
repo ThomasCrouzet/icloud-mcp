@@ -97,13 +97,16 @@ from discovery. The MCP interface provides tools over **stdio**.
 | `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
-
 Run `icloud-mcp -doctor` for concise read-only domain checks. Add
 `-doctor-format=json` for machine-readable output. The command validates local
 configuration, then probes enabled domains with a 10-second timeout each. It
 never creates, updates, moves, trashes, or sends. Exit status is 0 when every
 enabled domain is ready and 1 when a probe fails. Disabled domains stay
 `disabled`; enabled domains are never reported ready before a successful probe.
+
+Representative read tools also publish output schemas and `structuredContent`.
+Their text content remains for older hosts. Both forms come from the same
+redacted values.
 Discover their argument schemas with the host's tool list. Domain failures set
 the MCP error flag and include a JSON `code` in text content. Follow the
 [error and recovery reference](docs/error-codes.md).
