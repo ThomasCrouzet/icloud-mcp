@@ -30,6 +30,7 @@ func listCalendarsHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return errResult(deps.Redactor, "listing calendars", err), nil
 		}
+		cals = filterCalendarReads(cals, deps.ResourceScopes)
 		if cals == nil {
 			cals = []icloud.Calendar{}
 		}

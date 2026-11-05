@@ -56,6 +56,10 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")
 			return errResult(deps.Redactor, "calendar parameter", err), nil
 		}
+		if err := authorizeCalendarDelete(deps.ResourceScopes, calendarPath); err != nil {
+			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")
+			return errResult(deps.Redactor, "authorization", err), nil
+		}
 
 		deny := func(context string, err error) (*mcp.CallToolResult, error) {
 			logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, "denied")

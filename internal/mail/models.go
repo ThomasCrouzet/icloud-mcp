@@ -34,6 +34,7 @@ type Config struct {
 	Password        string          `json:"-"`
 	RecipientPolicy RecipientPolicy `json:"-"`
 	EnableSentCopy  bool            `json:"-"`
+	ArchiveScope    []string        `json:"-"`
 }
 
 // Mailbox is one bounded LIST response item. Delimiter is empty when the

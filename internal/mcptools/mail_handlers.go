@@ -39,6 +39,11 @@ func listMailboxesHandler(deps MailDeps) server.ToolHandlerFunc {
 		if err != nil {
 			return mailServiceErrorResult(deps, "listing mailboxes", err), nil
 		}
+		before := len(result.Mailboxes)
+		result.Mailboxes = filterMailboxes(result.Mailboxes, deps.ResourceScopes)
+		if len(result.Mailboxes) < before {
+			result.Truncated = true
+		}
 		if result.Mailboxes == nil {
 			result.Mailboxes = []maildomain.Mailbox{}
 		}
@@ -57,6 +62,9 @@ func searchMessagesHandler(deps MailDeps) server.ToolHandlerFunc {
 		}
 		input, err := mailSearchInput(args)
 		if err != nil {
+			return mailValidationResult(deps, err), nil
+		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.read", input.Mailbox); err != nil {
 			return mailValidationResult(deps, err), nil
 		}
 		result, err := deps.Service.SearchMessages(ctx, input)
@@ -91,6 +99,9 @@ func getMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 		}
 		allowHTMLFallback, _, err := mailOptionalBool(args, "allow_html_fallback")
 		if err != nil {
+			return mailValidationResult(deps, err), nil
+		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.read", identity.Mailbox); err != nil {
 			return mailValidationResult(deps, err), nil
 		}
 		result, err := deps.Service.GetMessage(ctx, maildomain.GetMessageInput{
@@ -144,6 +155,10 @@ func setMessageFlagsHandler(deps MailDeps) server.ToolHandlerFunc {
 			mailAudit(deps, tool, "message", resource, "denied")
 			return mailValidationResult(deps, err), nil
 		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.mutate", identity.Mailbox); err != nil {
+			mailAudit(deps, tool, "message", resource, "denied")
+			return mailValidationResult(deps, err), nil
+		}
 		result, err := deps.Service.SetMessageFlags(ctx, maildomain.SetFlagsInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
 			Operation: maildomain.FlagOperation(operation), Flags: flags, ExpectedModSeq: expectedModSeq,
@@ -180,6 +195,14 @@ func moveMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 			mailAudit(deps, tool, "message", resource, "denied")
 			return mailValidationResult(deps, fmt.Errorf("destination must differ from mailbox")), nil
 		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.mutate", identity.Mailbox); err != nil {
+			mailAudit(deps, tool, "message", resource, "denied")
+			return mailValidationResult(deps, err), nil
+		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.mutate", destination); err != nil {
+			mailAudit(deps, tool, "message", resource, "denied")
+			return mailValidationResult(deps, err), nil
+		}
 		result, err := deps.Service.MoveMessage(ctx, maildomain.MoveInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID, Destination: destination,
 		})
@@ -206,6 +229,26 @@ func trashMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 			return mailValidationResult(deps, err), nil
 		}
 		resource := mailIdentityResource(identity)
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.mutate", identity.Mailbox); err != nil {
+			mailAudit(deps, tool, "message", resource, "denied")
+			return mailValidationResult(deps, err), nil
+		}
+		if _, restricted := deps.ResourceScopes.Mail("mail.mutate"); restricted {
+			listed, listErr := deps.Service.ListMailboxes(ctx)
+			if listErr != nil {
+				mailAudit(deps, tool, "message", resource, mailAuditErrorStatus(listErr))
+				return mailServiceErrorResult(deps, "resolving Trash mailbox", listErr), nil
+			}
+			trash, trashErr := uniqueTrashMailbox(listed.Mailboxes)
+			if trashErr != nil {
+				mailAudit(deps, tool, "message", resource, "denied")
+				return mailServiceErrorResult(deps, "resolving Trash mailbox", trashErr), nil
+			}
+			if err := authorizeMailbox(deps.ResourceScopes, "mail.mutate", trash); err != nil {
+				mailAudit(deps, tool, "message", resource, "denied")
+				return mailValidationResult(deps, err), nil
+			}
+		}
 		result, err := deps.Service.TrashMessage(ctx, maildomain.TrashInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
 		})

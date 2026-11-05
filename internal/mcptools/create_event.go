@@ -130,6 +130,9 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err := icloud.ValidateCalendarPath(calendarPath); err != nil {
 			return deny("calendar parameter", err)
 		}
+		if err := authorizeCalendarWrite(deps.ResourceScopes, calendarPath); err != nil {
+			return deny("authorization", err)
+		}
 		if err := icloud.ValidateTextField("title", title, icloud.MaxTitleLen); err != nil {
 			return deny("title parameter", err)
 		}

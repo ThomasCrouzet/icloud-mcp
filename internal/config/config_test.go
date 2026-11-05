@@ -19,6 +19,7 @@ func clearEnv(t *testing.T) {
 		"ICLOUD_PASSWORD",
 		"ICLOUD_MCP_READ_ONLY",
 		"ICLOUD_MCP_PERMISSIONS",
+		"ICLOUD_MCP_RESOURCE_SCOPES",
 		"ICLOUD_MCP_LOG_LEVEL",
 		"ICLOUD_MCP_DEFAULT_TZ",
 		"ICLOUD_MCP_ENABLE_CONTACTS",
@@ -980,5 +981,65 @@ func TestLoad_MailFallbackPasswordFromCalendarSecret(t *testing.T) {
 	}
 	if cfg.Email != "" {
 		t.Error("Mail-only config loaded ICLOUD_EMAIL")
+	}
+}
+
+func TestParseResourceScopes(t *testing.T) {
+	scopes, err := ParseResourceScopes("calendar.read=/cal/a/,/cal/b/;calendar.write=/cal/a/;contacts.read=Book A;mail.read=INBOX,Archive;mail.archive=Sent")
+	if err != nil {
+		t.Fatalf("ParseResourceScopes: %v", err)
+	}
+	if values, restricted := scopes.Calendar(ResourceCalendarRead); !restricted || len(values) != 2 {
+		t.Fatalf("calendar read = %v, %v", values, restricted)
+	}
+	if values, restricted := scopes.Calendar(ResourceCalendarDelete); !restricted || len(values) != 1 || values[0] != "/cal/a/" {
+		t.Fatalf("delete fallback = %v, %v", values, restricted)
+	}
+	if values, restricted := scopes.Contacts(ResourceContactsDelete); !restricted || values[0] != "Book A" {
+		t.Fatalf("contacts delete fallback = %v, %v", values, restricted)
+	}
+	if values, restricted := scopes.Mail(ResourceMailArchive); !restricted || values[0] != "Sent" {
+		t.Fatalf("mail archive = %v, %v", values, restricted)
+	}
+	if values, restricted := scopes.Mail(ResourceMailMutate); !restricted || len(values) != 2 {
+		t.Fatalf("mail mutation fallback = %v, %v", values, restricted)
+	}
+
+	all, err := ParseResourceScopes("mail.read=*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, restricted := all.Mail(ResourceMailRead); restricted {
+		t.Fatal("literal * did not disable restriction")
+	}
+
+	for _, value := range []string{
+		"unknown=value",
+		"calendar.read=/cal/a/;calendar.read=/cal/b/",
+		"calendar.read=",
+		"calendar.read=/cal/a/,/cal/a/",
+		"calendar.read=/cal/a/,*",
+		"calendar.read=relative/path",
+		"mail.read=INBOX,,Archive",
+		"mail.read=INBOX\nARCHIVE",
+	} {
+		if _, err := ParseResourceScopes(value); err == nil {
+			t.Errorf("ParseResourceScopes(%q) unexpectedly succeeded", value)
+		}
+	}
+}
+
+func TestLoad_ResourceScopes(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_RESOURCE_SCOPES", "calendar.read=/cal/home/;calendar.write=/cal/home/")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	values, restricted := cfg.ResourceScopes.Calendar(ResourceCalendarRead)
+	if !restricted || len(values) != 1 || values[0] != "/cal/home/" {
+		t.Fatalf("loaded calendar scope = %v, %v", values, restricted)
 	}
 }

@@ -71,6 +71,20 @@ See the [threat model and reporting policy](SECURITY.md) and
 write flag. Mail mutation and send have independent gates. A send policy is
 required whenever the send flag is set, including under global read-only.
 
+`ICLOUD_MCP_RESOURCE_SCOPES` optionally limits which calendars, address books,
+and mailboxes an agent may use. It is a semicolon-separated list of
+`action=value[,value]` entries. Actions are `calendar.read`, `calendar.write`,
+`calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
+`mail.read`, `mail.mutate`, and `mail.archive`. A literal `*` keeps an action
+unrestricted.
+
+Calendar values are paths. Contacts values are opaque identifiers or exact
+display names. Mail values are exact mailbox names. Omitted action scopes fall
+back to the read or write scope for that domain. Direct identifier injection is
+checked before the domain operation. Ambiguous or stale Contacts names fail
+closed. The variable is invalid if an action is unknown, duplicated, empty, or a
+Calendar path is malformed.
+
 `ICLOUD_MCP_PERMISSIONS` optionally replaces the implicit write rules. It takes
 a comma-separated list: `calendar.read`, `calendar.write`, `calendar.delete`,
 `contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`,
@@ -207,7 +221,7 @@ environment; its configuration format can differ. See
 <!-- readme:section configuration -->
 ## Configuration
 
-The binary reads exactly **13 product environment variables** from its process
+The binary reads exactly **14 product environment variables** from its process
 environment. It does not load `.env` files or host configuration files.
 [`.env.example`](.env.example) lists the supported keys. The host or launching
 shell must supply them; restart the process after a change.
@@ -218,6 +232,7 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_PASSWORD` | Yes | None | App-specific password; supports `file://` |
 | `ICLOUD_MCP_READ_ONLY` | No | `false` | Remove every mutation and send tool |
 | `ICLOUD_MCP_PERMISSIONS` | No | Legacy switches | Explicit comma-separated capability list |
+| `ICLOUD_MCP_RESOURCE_SCOPES` | No | All resources | Per-action Calendar, Contacts, and Mail resource allowlists |
 | `ICLOUD_MCP_LOG_LEVEL` | No | `info` | Operational stderr log level |
 | `ICLOUD_MCP_DEFAULT_TZ` | No | `UTC` | IANA zone for Calendar times without an offset and recurring-write fallback |
 | `ICLOUD_MCP_ENABLE_CONTACTS` | No | `false` | Enable Contacts; writes also require read-only to be off |

@@ -64,6 +64,9 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err := icloud.ValidateCalendarPath(calendarPath); err != nil {
 			return deny("calendar parameter", err)
 		}
+		if err := authorizeCalendarWrite(deps.ResourceScopes, calendarPath); err != nil {
+			return deny("authorization", err)
+		}
 
 		args := req.GetArguments()
 		etag, err := optionalStringArg(req, "etag", "")

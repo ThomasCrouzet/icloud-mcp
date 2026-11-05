@@ -373,7 +373,20 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 			}
 		}
 	}
+	scope, restricted := calendarReadScope(deps.ResourceScopes)
 	if len(paths) > 0 {
+		if restricted {
+			filtered := make([]string, 0, len(paths))
+			for _, path := range paths {
+				if scopeContains(scope, path) {
+					filtered = append(filtered, path)
+				}
+			}
+			if len(filtered) != len(paths) {
+				return nil, icloud.NewError(icloud.CodeAuthorization, 0, "calendar selection is outside the configured resource scope", nil)
+			}
+			paths = filtered
+		}
 		return paths, nil
 	}
 	cals, err := deps.Service.ListCalendars(ctx)
@@ -384,7 +397,13 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if restricted && !scopeContains(scope, c.Path) {
+			continue
+		}
 		paths = append(paths, c.Path)
+	}
+	if restricted && len(paths) == 0 {
+		return nil, icloud.NewError(icloud.CodeAuthorization, 0, "no calendars are within the configured resource scope", nil)
 	}
 	return paths, nil
 }

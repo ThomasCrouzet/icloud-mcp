@@ -333,6 +333,7 @@ type Config struct {
 	Password              string          // ICLOUD_PASSWORD (file:// supported), NEVER log it
 	ReadOnly              bool            // ICLOUD_MCP_READ_ONLY
 	Permissions           Permissions     // ICLOUD_MCP_PERMISSIONS explicit capability policy
+	ResourceScopes        ResourceScopes  // ICLOUD_MCP_RESOURCE_SCOPES resource allowlists
 	EnableContacts        bool            // ICLOUD_MCP_ENABLE_CONTACTS
 	EnableMail            bool            // ICLOUD_MCP_ENABLE_MAIL
 	EnableMailWrite       bool            // ICLOUD_MCP_ENABLE_MAIL_WRITE, configured value
@@ -388,6 +389,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	resourceScopes, err := ParseResourceScopes(os.Getenv(resourceScopesEnvVar))
+	if err != nil {
+		return nil, err
+	}
 
 	calendarRequested, contactsRequested, mailRequested := requestedDomains(enableContacts, enableMail, permissions)
 	var email, password string
@@ -438,6 +443,7 @@ func Load() (*Config, error) {
 		Password:              password,
 		ReadOnly:              readOnly,
 		Permissions:           permissions,
+		ResourceScopes:        resourceScopes,
 		EnableContacts:        enableContacts,
 		EnableMail:            enableMail,
 		EnableMailWrite:       enableMailWrite,

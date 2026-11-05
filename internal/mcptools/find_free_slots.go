@@ -233,9 +233,22 @@ func resolveCalendarPaths(ctx context.Context, deps Deps, req mcp.CallToolReques
 			return nil, err
 		}
 	}
+	scope, restricted := calendarReadScope(deps.ResourceScopes)
 	if hasCalendars || hasCalendar {
 		if len(paths) == 0 {
 			return nil, fmt.Errorf("calendar selection must contain at least one non-empty path")
+		}
+		if restricted {
+			filtered := make([]string, 0, len(paths))
+			for _, path := range paths {
+				if scopeContains(scope, path) {
+					filtered = append(filtered, path)
+				}
+			}
+			if len(filtered) != len(paths) {
+				return nil, icloud.NewError(icloud.CodeAuthorization, 0, "calendar selection is outside the configured resource scope", nil)
+			}
+			paths = filtered
 		}
 		return paths, nil
 	}

@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add `ICLOUD_MCP_RESOURCE_SCOPES` for per-action Calendar paths, Contacts
+  address books, and Mail mailboxes. Enforce scopes in list, search, direct
+  read, move source and destination, Trash destination, and Sent archival.
+  Ambiguous or stale Contacts names fail closed.
+
 ### Changed
 - Read multiple calendars concurrently with a four-worker bound in
   `search_events` and `find_free_slots`. Keep the domain-wide read semaphore,
