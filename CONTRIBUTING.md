@@ -21,20 +21,33 @@ refuse to replace existing output files. They also make SHA-256 checksums.
 ## Release procedure
 
 The release path is local and guarded. The tag, `server.json`, `CHANGELOG.md`,
-and the public registry must name the same version.
+and the public registry must name the same version. Metadata validation and
+published-state verification are separate checks.
 
-1. Set `version` in `server.json` and add a dated `CHANGELOG.md` section.
-2. Merge the change to `main`. The `registry` CI job fails until publication.
-   This failure is expected and proves the guard.
-3. Wait for CI and gitleaks to pass on `main`.
+1. Set `version` in `server.json` and add a dated, non-empty `CHANGELOG.md`
+   section for that version.
+2. Run `make check-release-metadata`. It validates local files and uses no
+   network. It passes before the tag exists or the registry contains the next
+   version.
+3. Merge the change to `main`. CI and gitleaks must pass. The `release metadata`
+   job runs on pull requests and `main`; it does not depend on the registry.
 4. Create and push the `vX.Y.Z` tag after the maintainer approves the version.
-   The tag job runs `make release-all`. It builds, signs, and publishes the
-   archives and checksums. It does not publish to the registry.
+   The tag job reruns CI, the secret scan, and release metadata. It then runs
+   `make release-all`, signs the archives, and publishes the GitHub Release.
+   It does not publish registry metadata.
 5. Verify the archives and signatures before publication.
 6. Authenticate the official publisher once: `mcp-publisher login github`.
 7. Publish the metadata: `mcp-publisher publish`.
-8. Run `make check-registry`. It must exit with status zero.
+8. Run `make check-registry`. It verifies the published registry state and must
+   exit with status zero. The manual `published registry verification` workflow
+   runs the same command.
 9. Read the registry API. Confirm the version and the `updatedAt` value.
+
+If publication fails or is incomplete, keep the tag and archives. Do not move
+the tag and do not publish again with a different version. Fix the registry
+account or metadata, rerun `mcp-publisher publish`, then rerun
+`make check-registry`. A missing record, a version mismatch, or an unreadable
+response is a failure, not a warning.
 
 Never publish a version without a verified release archive. Keep signing keys
 outside the repository and outside logs. Do not push a tag or publish to the

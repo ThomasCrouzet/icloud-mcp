@@ -247,15 +247,22 @@ Live iCloud credentials and the `integration` build tag are never used in CI.
 ## Release metadata and registry
 
 The release tag, `server.json`, `CHANGELOG.md`, and the public MCP Registry
-must agree. Run the guard from the repository root:
+must agree. The checks are separate.
 
 ```bash
-make check-registry
+make check-release-metadata   # server.json and the dated changelog section
+make check-registry           # published registry state, network required
 ```
 
-It fails when the latest Git tag, `server.json`, the changelog section, or the
-registry entry differ. It also fails on a network error. This command runs in
-CI on `main` in the `registry` job. It does not run on pull requests.
+`make check-release-metadata` does not use the network or require a tag. It runs
+on pull requests, `main`, and tags in the `release metadata` job. It fails on an
+invalid `server.json`, a missing or empty changelog section, or a tag that does
+not match the declared version on a tag push.
+
+`make check-registry` fails when the latest registry version differs from
+`server.json`, when the record is missing, or when the response is unreadable.
+It runs only through the manual `published registry verification` workflow or
+locally after publication. A pending next version does not fail `main`.
 
 The tag job in `ci.yml` builds archives with `make release-all`, signs them with
 cosign keyless, and creates the GitHub Release. It does not publish registry
