@@ -94,7 +94,7 @@ from discovery. The MCP interface provides tools over **stdio**.
 | `search_events` | `start`, `end`; optional calendar and filters | Sorted event page with `calendar`, recurrence occurrences, and truncation or failure warnings | None |
 | `update_event` | `calendar`, `uid`, changed fields; optional `etag`, `idempotency_key`, occurrence scope | Updated event or a structured error | Conditional Calendar write |
 | `get_message` | `mailbox`, `uid_validity`, `uid`; optional body limit | Message metadata and bounded plain text | None; EXAMINE and PEEK preserve read state |
-| `send_message` | `body`, optional `subject`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients |
+| `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
 
