@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Separate local release metadata checks from published registry verification.
+  A pending next version no longer fails `main`. Add
+  `make check-release-metadata` and keep `make check-registry` for published
+  state.
+
 ### Fixed
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays
   nominal, an elapsed DURATION stays elapsed, and a title-only update does not

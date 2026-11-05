@@ -16,3 +16,7 @@ coverage.html
 .DS_Store
 .idea/
 .vscode/
+
+# Python test caches.
+__pycache__/
+*.pyc
