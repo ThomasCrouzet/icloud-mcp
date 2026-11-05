@@ -61,6 +61,11 @@ The server trims log levels and ignores case. It accepts `debug` or `-4`,
 `info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized
 values use `info`.
 
+Enabled domains start independently. Calendar and Contacts discovery runs on the
+first call for that domain. A temporary Calendar outage does not stop Mail or
+Contacts. Mail-only operation does not require Calendar credentials or Calendar
+discovery.
+
 Use `-version` to print the version. The optional
 `-health 127.0.0.1:port` flag serves `/healthz` and `/status` on loopback. Both
 endpoints return JSON with domains and rate limits. The optional

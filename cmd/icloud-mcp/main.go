@@ -59,10 +59,6 @@ const toolTimeoutGrace = 2 * time.Second
 // cancellation cannot make abandoned work grow without bound.
 const maxInFlightHandlers = 32
 
-// discoveryTimeout bounds the iCloud discovery performed at boot to validate
-// the credentials before starting the MCP server.
-const discoveryTimeout = 20 * time.Second
-
 // handlerSlots bounds all in-flight handler goroutines. A slot remains held
 // after a client-visible timeout until the underlying handler actually exits.
 var handlerSlots = make(chan struct{}, maxInFlightHandlers)
@@ -93,14 +89,19 @@ func main() {
 	}
 
 	// Fixed production transports remain separate from the shared lifecycle.
-	calendarCredentials := security.CredentialPair{
-		Username: strings.Clone(cfg.Email),
-		Password: strings.Clone(cfg.Password),
+	// Disabled domains construct no client and make no network request.
+	capabilities := cfg.Capabilities()
+	var ic *icloud.Client
+	if capabilities.CalendarRead || capabilities.CalendarWrite || capabilities.CalendarDelete {
+		calendarCredentials := security.CredentialPair{
+			Username: strings.Clone(cfg.Email),
+			Password: strings.Clone(cfg.Password),
+		}
+		httpClient := security.NewICloudHTTPClient(cfg.Timeout)
+		authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
+		doer := icloud.NewRetryClassifier(authHTTP)
+		ic = icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
 	}
-	httpClient := security.NewICloudHTTPClient(cfg.Timeout)
-	authHTTP := webdav.HTTPClientWithBasicAuth(httpClient, calendarCredentials.Username, calendarCredentials.Password)
-	doer := icloud.NewRetryClassifier(authHTTP)
-	ic := icloud.NewClient(doer, security.ICloudBaseURL, security.IsICloudHost)
 	contactsService, mailService, err := newOptionalServices(cfg)
 	if err == nil {
 		err = runServer(cfg, auditFormat, *healthAddr, ic, contactsService, mailService, os.Stdin, os.Stdout)
@@ -136,21 +137,24 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 
 	plan := mcptools.NewCapabilityPlanFromConfig(cfg.ReadOnly, cfg.Capabilities())
 
-	// 4. iCloud service + boot-time discovery (validates the credentials
-	// before starting the MCP server).
-	discoverCtx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
-	err := ic.Discover(discoverCtx)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("iCloud discovery failed (check ICLOUD_EMAIL and the app-specific password): %w", err)
+	// 4. Calendar transports are constructed only when Calendar capabilities
+	// are effective. Discovery is lazy on the first Calendar tool call, so a
+	// remote Calendar outage cannot prevent Mail or Contacts from starting.
+	var calendarService icloud.Service
+	var guardedCalendar *icloud.GuardedService
+	if plan.CalendarReadEnabled() || plan.CalendarWritesEnabled() {
+		if ic == nil {
+			return fmt.Errorf("calendar capabilities are enabled but the Calendar client is missing")
+		}
+		guardedCalendar = icloud.NewGuardedService(ic, 2, 500*time.Millisecond)
+		calendarService = guardedCalendar
 	}
-	svc := icloud.NewGuardedService(ic, 2, 500*time.Millisecond)
 
 	// 5. MCP server.
 	s := newMCPServer(red)
 	healthEnabled := healthAddr != ""
 	mcptools.RegisterUnified(s, mcptools.Deps{
-		Service:         svc,
+		Service:         calendarService,
 		ContactsService: contactsService,
 		MailService:     mailService,
 		Audit:           audit,
@@ -163,12 +167,12 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	// 6. Optional healthcheck (off by default).
 	if healthEnabled {
 		domains := map[string]health.DomainStatus{
-			"calendar": {Status: "ok"},
-			"contacts": {Status: domainStatus(cfg.EnableContacts)},
-			"mail":     {Status: domainStatus(cfg.EnableMail)},
+			"calendar": {Status: domainStatus(plan.CalendarReadEnabled() || plan.CalendarWritesEnabled())},
+			"contacts": {Status: domainStatus(plan.ContactsEnabled())},
+			"mail":     {Status: domainStatus(plan.MailEnabled())},
 		}
 		h, err := health.Start(healthAddr, version, domains, func() any {
-			return collectRateLimits(svc, contactsService, mailService)
+			return collectRateLimits(guardedCalendar, contactsService, mailService)
 		})
 		if err != nil {
 			return fmt.Errorf("healthcheck startup failed: %w", err)
@@ -181,10 +185,11 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	}
 	slog.Info("server started",
 		"readOnly", cfg.ReadOnly,
-		"contactsEnabled", cfg.EnableContacts,
-		"mailEnabled", cfg.EnableMail,
-		"mailMutationsEnabled", cfg.EffectiveMailWrite(),
-		"mailSendEnabled", cfg.EffectiveMailSend(),
+		"calendarEnabled", plan.CalendarReadEnabled() || plan.CalendarWritesEnabled(),
+		"contactsEnabled", plan.ContactsEnabled(),
+		"mailEnabled", plan.MailEnabled(),
+		"mailMutationsEnabled", plan.MailMutationsEnabled() || plan.MailTrashEnabled(),
+		"mailSendEnabled", plan.MailSendEnabled(),
 		"healthcheckActive", healthEnabled,
 		"toolCount", plan.ToolCount(),
 	)
@@ -299,8 +304,9 @@ type rateLimitReporter interface {
 }
 
 func collectRateLimits(calendar *icloud.GuardedService, contactsService contacts.Service, mailService maildomain.Service) map[string]any {
-	out := map[string]any{
-		"calendar": calendar.RateLimitStatus(),
+	out := map[string]any{}
+	if calendar != nil {
+		out["calendar"] = calendar.RateLimitStatus()
 	}
 	if reporter, ok := contactsService.(rateLimitReporter); ok {
 		out["contacts"] = reporter.RateLimitStatus()
@@ -312,11 +318,16 @@ func collectRateLimits(calendar *icloud.GuardedService, contactsService contacts
 }
 
 func newBootRedactor(cfg *config.Config) *security.Redactor {
-	credentials := []security.CredentialPair{{
-		Username: cfg.Email,
-		Password: cfg.Password,
-	}}
-	if cfg.EnableMail {
+	capabilities := cfg.Capabilities()
+	var credentials []security.CredentialPair
+	if capabilities.CalendarRead || capabilities.CalendarWrite || capabilities.CalendarDelete ||
+		capabilities.ContactsRead || capabilities.ContactsWrite || capabilities.ContactsDelete {
+		credentials = append(credentials, security.CredentialPair{
+			Username: cfg.Email,
+			Password: cfg.Password,
+		})
+	}
+	if capabilities.MailRead || capabilities.MailMutate || capabilities.MailTrash || capabilities.MailSend {
 		credentials = append(credentials, security.CredentialPair{
 			Username: cfg.MailAddress,
 			Password: cfg.MailPassword,
@@ -326,8 +337,9 @@ func newBootRedactor(cfg *config.Config) *security.Redactor {
 }
 
 func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Service, error) {
+	capabilities := cfg.Capabilities()
 	var contactsService contacts.Service
-	if cfg.EnableContacts {
+	if capabilities.ContactsRead || capabilities.ContactsWrite || capabilities.ContactsDelete {
 		contactsCredentials := security.CredentialPair{
 			Username: strings.Clone(cfg.Email),
 			Password: strings.Clone(cfg.Password),
@@ -342,7 +354,7 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 	}
 
 	var mailService maildomain.Service
-	if cfg.EnableMail {
+	if capabilities.MailRead || capabilities.MailMutate || capabilities.MailTrash || capabilities.MailSend {
 		// Use the boot-validated recipient list only; do not re-parse the raw env.
 		var recipientPolicy maildomain.RecipientPolicy
 		var err error

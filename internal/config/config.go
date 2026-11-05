@@ -183,9 +183,46 @@ func (p Permissions) Capabilities(readOnly bool) CapabilitySet {
 	return set
 }
 
+// RequestsCalendar reports whether any Calendar capability is requested.
+func (p Permissions) RequestsCalendar() bool {
+	return p.calendarRead || p.calendarWrite || p.calendarDelete
+}
+
+// RequestsContacts reports whether any Contacts capability is requested.
+func (p Permissions) RequestsContacts() bool {
+	return p.contactsRead || p.contactsWrite || p.contactsDelete
+}
+
+// RequestsMail reports whether any Mail capability is requested.
+func (p Permissions) RequestsMail() bool {
+	return p.mailRead || p.mailMutate || p.mailTrash || p.mailSend
+}
+
 // RequestedMailSend reports whether the configuration requests SMTP send
 // before the global read-only switch is applied.
 func (p Permissions) RequestedMailSend() bool { return p.mailSend }
+
+func requestedDomains(enableContacts, enableMail bool, permissions Permissions) (calendar, contacts, mail bool) {
+	if permissions.Configured() {
+		return permissions.RequestsCalendar(), permissions.RequestsContacts(), permissions.RequestsMail()
+	}
+	return true, enableContacts, enableMail
+}
+
+func (c *Config) requestsCalendar() bool {
+	calendar, _, _ := requestedDomains(c.EnableContacts, c.EnableMail, c.Permissions)
+	return calendar
+}
+
+func (c *Config) requestsContacts() bool {
+	_, contacts, _ := requestedDomains(c.EnableContacts, c.EnableMail, c.Permissions)
+	return contacts
+}
+
+func (c *Config) requestsMail() bool {
+	_, _, mail := requestedDomains(c.EnableContacts, c.EnableMail, c.Permissions)
+	return mail
+}
 
 // RequestedCalendarRead reports whether Calendar read tools are requested.
 func (p Permissions) RequestedCalendarRead() bool { return p.calendarRead }
@@ -343,13 +380,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	email, err := loadCredential("ICLOUD_EMAIL")
-	if err != nil {
-		return nil, err
+	calendarRequested, contactsRequested, mailRequested := requestedDomains(enableContacts, enableMail, permissions)
+	var email, password string
+	if calendarRequested || contactsRequested || mailRequested && strings.TrimSpace(os.Getenv(mailPasswordEnvVar)) == "" {
+		password, err = loadCredential("ICLOUD_PASSWORD")
+		if err != nil {
+			return nil, err
+		}
 	}
-	password, err := loadCredential("ICLOUD_PASSWORD")
-	if err != nil {
-		return nil, err
+	if calendarRequested || contactsRequested {
+		email, err = loadCredential("ICLOUD_EMAIL")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	loc, err := loadDefaultLocation(os.Getenv(defaultTZEnvVar))
@@ -358,7 +401,7 @@ func Load() (*Config, error) {
 	}
 
 	var mailAddress, mailPassword string
-	if enableMail {
+	if mailRequested {
 		mailAddress, err = loadCredential(mailAddressEnvVar)
 		if err != nil {
 			return nil, err
@@ -425,19 +468,21 @@ func loadDefaultLocation(tz string) (*time.Location, error) {
 // use the logger before production installs the Redactor. Thus, each config
 // error must exclude credentials and the account identity.
 func (c *Config) Validate() error {
-	if len(c.Email) < minRedactableIdentityBytes || hasCredentialControl(c.Email) {
-		return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
-	}
-	normalizedEmail, err := normalizePlainAddress(c.Email)
-	if err != nil || len(normalizedEmail) < minRedactableIdentityBytes {
-		return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
-	}
-	c.Email = normalizedEmail
-	if hasCredentialControl(c.Password) {
-		return fmt.Errorf("invalid ICLOUD_PASSWORD: must not contain CR, LF, or NUL")
-	}
-	if len(c.Password) < 8 {
-		return fmt.Errorf("ICLOUD_PASSWORD must be at least 8 characters: use an app-specific password generated on appleid.apple.com")
+	if c.requestsCalendar() || c.requestsContacts() {
+		if len(c.Email) < minRedactableIdentityBytes || hasCredentialControl(c.Email) {
+			return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
+		}
+		normalizedEmail, err := normalizePlainAddress(c.Email)
+		if err != nil || len(normalizedEmail) < minRedactableIdentityBytes {
+			return fmt.Errorf("invalid ICLOUD_EMAIL: must be a valid email address")
+		}
+		c.Email = normalizedEmail
+		if hasCredentialControl(c.Password) {
+			return fmt.Errorf("invalid ICLOUD_PASSWORD: must not contain CR, LF, or NUL")
+		}
+		if len(c.Password) < 8 {
+			return fmt.Errorf("ICLOUD_PASSWORD must be at least 8 characters: use an app-specific password generated on appleid.apple.com")
+		}
 	}
 	if c.EnableMailWrite && !c.EnableMail {
 		return fmt.Errorf("%s requires %s=true", enableMailWriteEnvVar, enableMailEnvVar)
@@ -457,7 +502,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	if c.EnableMail {
+	if c.requestsMail() {
 		if hasCredentialControl(c.MailAddress) {
 			return fmt.Errorf("invalid %s: must be a full email address", mailAddressEnvVar)
 		}

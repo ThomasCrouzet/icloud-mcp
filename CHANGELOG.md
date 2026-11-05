@@ -14,6 +14,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read, write, delete, mutation, trash, and send capabilities. Global read-only
   still overrides every mutation. Unset values keep the documented legacy
   switches.
+- Start Calendar, Contacts, and Mail independently. Calendar and Contacts
+  discovery is lazy, a failing domain does not stop another, and Mail-only
+  operation does not require Calendar credentials.
 
 ### Changed
 - Separate local release metadata checks from published registry verification.

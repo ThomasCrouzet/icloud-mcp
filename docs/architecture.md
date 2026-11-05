@@ -40,8 +40,9 @@ protocol executable, plugin, or runtime-downloaded code.
 8. The server builds separate Calendar, Contacts, IMAP, and SMTP transports or
    dialers only for enabled capabilities. Calendar and Contacts receive separate
    credential objects and authenticated HTTP clients.
-9. Calendar runs eager two-step CalDAV discovery under a 20 second boot
-   deadline. Failure prevents stdio from starting.
+9. Calendar makes no boot network access. Its first call runs bounded two-step
+   CalDAV discovery. A failure affects only that domain and is retried on a
+   later call. Successful discovery state is immutable.
 10. Contacts makes no boot network access. Its first call starts discovery
     through a concurrency-safe gate with a 10 second attempt deadline.
 11. Contacts caches only a complete, validated discovery. It does not cache a
@@ -58,15 +59,15 @@ EOF cancels active handlers before the server waits for its workers. EOF and
 SIGTERM are normal shutdown conditions. Terminal input failures, including an
 oversized frame, remain errors even when cancellation interrupts the reader.
 
-After boot, a Contacts, IMAP, or SMTP failure affects only that tool call. It
-does not unregister tools or change another domain client. It also does not
-change a successful Contacts discovery cache.
+After boot, a Calendar, Contacts, IMAP, or SMTP failure affects only that tool
+call. It does not unregister tools or change another domain client. It also does
+not change a successful discovery cache.
 
 ## Packages
 
 | Package | Role |
 |---------|------|
-| `cmd/icloud-mcp` | Configuration wiring, domain construction, eager Calendar discovery, capability plan, timeouts, stdio |
+| `cmd/icloud-mcp` | Configuration wiring, independent domain construction, capability plan, timeouts, stdio |
 | `internal/config` | Strict booleans, environment validation, `file://` secrets (0600+, 4 KiB), Mail recipient policy |
 | `internal/security` | DAV and socket allowlists, TLS policy, redaction, process-local audit tokens |
 | `internal/icloud` | Calendar CalDAV, iCalendar, recurrence, free slots, and validation.<br>Calendar retry/rate policy; per-calendar materialization 2,500; multi-calendar materialization 10,000; imported-UID REPORT +/-50y. |
@@ -134,7 +135,7 @@ tool -> 25s context -> Calendar read/write limiter -> 4/2 semaphore -> retry pol
      -> Calendar Basic-auth client -> Calendar allowlist -> verified HTTPS
 ```
 
-Calendar discovery is eager. A successful discovery state is immutable. Reads
+Calendar discovery is lazy. A successful discovery state is immutable. Reads
 have bounded service retries. The HTTP classifier retries 429, 502, 503, and
 504. It uses bounded `Retry-After` or backoff and rewinds read request bodies. It
 does not retry transport errors.
@@ -315,8 +316,8 @@ responses in each session.
 | Mail | Rate: 60 reads, 20 mutations, and 20 sends per minute. Semaphores: 2 reads, 1 mutation, and 1 send. No mutation or send retry. |
 | Writes | No automatic replay of Calendar PUT/DELETE, Contacts writes, IMAP mutations, or SMTP. Ambiguous outcomes use `outcome_unknown`. |
 
-The server discovers Calendar at boot and Contacts when first used. Each call
-uses a fresh IMAP or SMTP session.
+The server discovers Calendar and Contacts when first used in each domain.
+Each Mail call uses a fresh IMAP or SMTP session.
 
 ## Direct dependencies
 

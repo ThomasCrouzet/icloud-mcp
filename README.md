@@ -160,7 +160,7 @@ Merge this entry into `mcpServers`, with your actual absolute paths:
 ```
 
 Keep optional domains off for this run. Fully quit and reopen Claude Desktop.
-The host launches the binary; Calendar discovery must succeed before MCP starts.
+The host launches the binary. Calendar discovery starts on the first Calendar call, so a remote Calendar outage does not block Mail or Contacts startup.
 Open the host's connector tool list and confirm the `icloud` tools appear.
 
 ### Run your first operation
@@ -234,7 +234,7 @@ for log-level forms and optional-domain examples.
 
 | Area | Behavior |
 |---|---|
-| Lifecycle | Configuration validates before network access. Calendar discovery runs at boot; Contacts discovery is lazy. Mail uses fresh sessions. EOF and SIGTERM stop the stdio process. Use a separate process for each account. |
+| Lifecycle | Configuration validates before network access. Calendar, Contacts, and Mail initialize independently. Calendar and Contacts discovery is lazy; Mail uses fresh sessions. A failing domain does not remove another domain. EOF and SIGTERM stop the stdio process. Use a separate process for each account. |
 | Logs | stdout is reserved for JSON-RPC. Operational logs and mutation audits go to stderr. `-audit-format=json` is the default; `text` is also supported. |
 | Health | Disabled by default. `-health 127.0.0.1:8797` enables loopback-only `/healthz` and `/status` with domain status and rate limits. These are monitoring endpoints; MCP remains stdio. |
 | Read retries | Calendar and Contacts retry bounded HTTP status failures. A transient IMAP read can use one replacement session. |

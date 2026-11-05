@@ -23,14 +23,11 @@ func TestVersionNonEmpty(t *testing.T) {
 	}
 }
 
-func TestToolAndDiscoveryTimeoutsOrdered(t *testing.T) {
-	// Production invariant: tool timeout < HTTP client timeout (30s) and
-	// discovery timeout < tool timeout so boot fails cleanly first.
+func TestToolTimeoutBelowHTTPTimeout(t *testing.T) {
+	// Production invariant: the tool deadline is less than the 30s HTTP
+	// client timeout, so a tool can fail cleanly before the request times out.
 	if toolTimeout >= 30*time.Second {
 		t.Fatalf("toolTimeout = %v, want < 30s HTTP timeout", toolTimeout)
-	}
-	if discoveryTimeout >= toolTimeout {
-		t.Fatalf("discoveryTimeout = %v, want < toolTimeout %v", discoveryTimeout, toolTimeout)
 	}
 }
 
