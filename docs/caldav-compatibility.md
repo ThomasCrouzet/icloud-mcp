@@ -74,6 +74,19 @@ MCP `update_event` can return a cached result for `idempotency_key`. This path
 sends no new CalDAV mutation. See the
 [update idempotency contract](architecture.md#update-idempotency).
 
+### Validated location cache
+
+The client keeps at most 1,024 process-local resource locations. A key is the
+validated calendar path plus the exact UID. Search populates it only from
+validated CalendarObject responses. A lookup first tries the cached location,
+then the `<uid>.ics` path, then the bounded REPORT fallback.
+
+A cached path returning 404 is evicted and uses the normal fallback. A UID
+mismatch or a resource outside its calendar fails closed. A confirmed series
+delete invalidates the entry. An ambiguous delete does not. The cache stores no
+ETag and grants no mutation permission: every write still reads and validates
+the complete object. Identical UIDs in different calendars stay isolated.
+
 ## Recurrence
 
 - Recurrence expansion preserves the RRULE TZID. It never calls `.UTC()` on
