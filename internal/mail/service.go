@@ -470,3 +470,43 @@ func publicFlags(in []string) []MessageFlag {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// ProbeResult is a read-only Mail diagnostic. It lists mailboxes and selects
+// one read-only to report server capabilities. It never changes flags or data.
+type ProbeResult struct {
+	Mailboxes  int
+	CondStore  bool
+	Move       bool
+	UIDPlus    bool
+	SpecialUse bool
+}
+
+// Probe runs one bounded read-only Mail diagnostic.
+func (s *Client) Probe(ctx context.Context) (ProbeResult, error) {
+	value, err := s.read(ctx, func(session imapSession) (any, error) {
+		items, err := session.List()
+		if err != nil {
+			return nil, err
+		}
+		result := ProbeResult{Mailboxes: len(items)}
+		for _, item := range items {
+			if !isSelectable(item) {
+				continue
+			}
+			if _, err := session.Select(item.Name, true); err != nil {
+				continue
+			}
+			caps := session.Capabilities()
+			result.CondStore = caps.CondStore
+			result.Move = caps.Move
+			result.UIDPlus = caps.UIDPlus
+			result.SpecialUse = caps.SpecialUse
+			break
+		}
+		return result, nil
+	})
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	return value.(ProbeResult), nil
+}

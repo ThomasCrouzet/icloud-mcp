@@ -68,9 +68,16 @@ discovery.
 
 Use `-version` to print the version. The optional
 `-health 127.0.0.1:port` flag serves `/healthz` and `/status` on loopback. Both
-endpoints return JSON with domains and rate limits. The optional
-`-audit-format=json|text` flag selects the mutation audit format on stderr.
-The default format is `json`.
+endpoints return JSON with domains and rate limits. Enabled domains start as
+`not_checked`; health polling does not create hidden network traffic. The
+optional `-audit-format=json|text` flag selects the mutation audit format on
+stderr. The default format is `json`.
+
+`-doctor` runs bounded, read-only probes and exits. `-doctor-format=json` emits
+machine-readable status. Probe timeouts are 10 seconds for each enabled domain.
+Exit status is 0 when every enabled domain is ready and 1 on a failed probe.
+`-doctor` makes no account changes and prints no identities, passwords, or
+secret paths.
 
 ### Optional domains
 

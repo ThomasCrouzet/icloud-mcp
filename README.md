@@ -97,6 +97,13 @@ from discovery. The MCP interface provides tools over **stdio**.
 | `send_message` | `body`, optional `subject`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
+
+Run `icloud-mcp -doctor` for concise read-only domain checks. Add
+`-doctor-format=json` for machine-readable output. The command validates local
+configuration, then probes enabled domains with a 10-second timeout each. It
+never creates, updates, moves, trashes, or sends. Exit status is 0 when every
+enabled domain is ready and 1 when a probe fails. Disabled domains stay
+`disabled`; enabled domains are never reported ready before a successful probe.
 Discover their argument schemas with the host's tool list. Domain failures set
 the MCP error flag and include a JSON `code` in text content. Follow the
 [error and recovery reference](docs/error-codes.md).
@@ -236,7 +243,7 @@ for log-level forms and optional-domain examples.
 |---|---|
 | Lifecycle | Configuration validates before network access. Calendar, Contacts, and Mail initialize independently. Calendar and Contacts discovery is lazy; Mail uses fresh sessions. A failing domain does not remove another domain. EOF and SIGTERM stop the stdio process. Use a separate process for each account. |
 | Logs | stdout is reserved for JSON-RPC. Operational logs and mutation audits go to stderr. `-audit-format=json` is the default; `text` is also supported. |
-| Health | Disabled by default. `-health 127.0.0.1:8797` enables loopback-only `/healthz` and `/status` with domain status and rate limits. These are monitoring endpoints; MCP remains stdio. |
+| Health | Disabled by default. `-health 127.0.0.1:8797` enables loopback-only `/healthz` and `/status` with domain status and rate limits. Enabled domains start as `not_checked`. Use `-doctor` for bounded read-only probes. These are monitoring endpoints; MCP remains stdio. |
 | Read retries | Calendar and Contacts retry bounded HTTP status failures. A transient IMAP read can use one replacement session. |
 | Mutations | Calendar/Contacts writes, IMAP mutations, and SMTP never replay automatically. An `outcome_unknown` result requires reconciliation before another mutation. |
 | Update keys | `update_event` and `update_contact` retain keyed results in memory. Known results last 15 minutes; uncertain results remain until process exit. Restart removes the cache without resolving outcomes. |

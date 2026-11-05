@@ -10,6 +10,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Include the validated calendar path in every `search_events` row so an agent
   can continue with `get_event` or `update_event` when a UID exists in several
   calendars.
+- Add `-doctor` with text or JSON output and bounded read-only probes for
+  enabled domains. Enabled domains start as `not_checked`; health polling stays
+  local. Report authentication and availability states without secrets.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.
