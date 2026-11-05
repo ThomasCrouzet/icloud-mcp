@@ -96,9 +96,10 @@ func htmlTagEnd(input string, start int) int {
 	quoted := byte(0)
 	for index := start + 1; index < len(input); index++ {
 		if input[index] == '\'' || input[index] == '"' {
-			if quoted == 0 {
+			switch quoted {
+			case 0:
 				quoted = input[index]
-			} else if quoted == input[index] {
+			case input[index]:
 				quoted = 0
 			}
 			continue
