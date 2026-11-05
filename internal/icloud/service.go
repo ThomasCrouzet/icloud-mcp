@@ -33,7 +33,8 @@ type Calendar struct {
 // recurring event). Path is never serialized to MCP clients.
 type Event struct {
 	UID        string    `json:"uid"`
-	Path       string    `json:"-"` // server path, internal, never exposed to the MCP client
+	Path       string    `json:"-"`                  // server path, internal, never exposed to the MCP client
+	Calendar   string    `json:"calendar,omitempty"` // validated calendar path for search provenance
 	Title      string    `json:"title"`
 	Location   string    `json:"location,omitempty"`
 	Notes      string    `json:"notes,omitempty"` // ical DESCRIPTION
