@@ -7,8 +7,9 @@
 //
 // Contacts and Mail additionally require ICLOUD_MCP_ENABLE_CONTACTS=true or
 // ICLOUD_MCP_ENABLE_MAIL=true. Destructive tests also require
-// ICLOUD_MCP_INTEGRATION_WRITES=true. Prefer file:// secrets (Docker-secret
-// layout):
+// ICLOUD_MCP_INTEGRATION_WRITES=true. Calendar CRUD also requires
+// ICLOUD_MCP_INTEGRATION_CALENDAR to select a disposable calendar. Prefer
+// file:// secrets (Docker-secret layout):
 //
 //	ICLOUD_EMAIL=file:///path/to/email ICLOUD_PASSWORD=file:///path/to/app-password \
 //	  go test -tags integration -count=1 -v -timeout=120s .
@@ -1029,4 +1030,251 @@ func TestIntegration_ValidateAndFreeSlotsLocal(t *testing.T) {
 	if len(slots) == 0 {
 		t.Fatal("expected at least one free slot")
 	}
+}
+
+const calendarPathEnv = "ICLOUD_MCP_INTEGRATION_CALENDAR"
+
+func integrationCalendarPath(t *testing.T) string {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv(calendarPathEnv))
+	if path == "" {
+		t.Skipf("%s must explicitly select a disposable calendar", calendarPathEnv)
+	}
+	if err := icloud.ValidateCalendarPath(path); err != nil {
+		t.Fatalf("invalid %s: %v", calendarPathEnv, err)
+	}
+	return path
+}
+
+func requireCalendarWrites(t *testing.T) *config.Config {
+	t.Helper()
+	requireIntegrationEnabled(t, writesEnabledEnv)
+	cfg := loadIntegrationConfig(t)
+	if cfg.ReadOnly {
+		t.Skipf("Calendar CRUD requires %s=false", readOnlyEnv)
+	}
+	return cfg
+}
+
+func TestIntegration_CalendarCreateUpdateDeleteAndOccurrence(t *testing.T) {
+	requireCalendarWrites(t)
+	calendarPath := integrationCalendarPath(t)
+	client := newIntegrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cleanup := newCalendarCleanup(t, client, calendarPath)
+	t.Cleanup(cleanup.cleanup)
+	nonce := integrationNonce(t)
+
+	timedStart := time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC)
+	timedUID, err := client.CreateEvent(ctx, calendarPath, &icloud.NewEvent{
+		Title: "integration timed " + nonce, StartTime: timedStart, EndTime: timedStart.Add(45 * time.Minute),
+		ClientUID: "integration-timed-" + nonce,
+	})
+	if err != nil {
+		t.Fatalf("create timed event: %v", err)
+	}
+	cleanup.add(timedUID)
+	timed, err := client.GetEvent(ctx, calendarPath, timedUID)
+	if err != nil {
+		t.Fatalf("get timed event: %v", err)
+	}
+	if timed.AllDay || !timed.StartTime.Equal(timedStart) || !timed.EndTime.Equal(timedStart.Add(45*time.Minute)) {
+		t.Fatalf("timed fixture shape mismatch: all_day=%v start_ok=%v end_ok=%v", timed.AllDay, timed.StartTime.Equal(timedStart), timed.EndTime.Equal(timedStart.Add(45*time.Minute)))
+	}
+	if timed.ETag == "" {
+		t.Fatal("timed fixture has no strong ETag")
+	}
+	t.Logf("calendar_timed_created=true etag_set=true")
+
+	allDay := time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC)
+	allDayUID, err := client.CreateEvent(ctx, calendarPath, &icloud.NewEvent{
+		Title: "integration all day " + nonce, StartTime: allDay, EndTime: allDay.AddDate(0, 0, 1), AllDay: true,
+		ClientUID: "integration-allday-" + nonce,
+	})
+	if err != nil {
+		t.Fatalf("create all-day event: %v", err)
+	}
+	cleanup.add(allDayUID)
+	allDayDetail, err := client.GetEvent(ctx, calendarPath, allDayUID)
+	if err != nil {
+		t.Fatalf("get all-day event: %v", err)
+	}
+	if !allDayDetail.AllDay || !allDayDetail.StartTime.Equal(allDay) || !allDayDetail.EndTime.Equal(allDay.AddDate(0, 0, 1)) {
+		t.Fatalf("all-day fixture shape mismatch: all_day=%v", allDayDetail.AllDay)
+	}
+	t.Logf("calendar_allday_created=true")
+
+	seriesStart := time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC)
+	seriesUID, err := client.CreateEvent(ctx, calendarPath, &icloud.NewEvent{
+		Title: "integration recurring " + nonce, StartTime: seriesStart, EndTime: seriesStart.Add(time.Hour),
+		Recurrence: "FREQ=DAILY;COUNT=4", Timezone: "Europe/Paris",
+		ClientUID: "integration-recurring-" + nonce,
+	})
+	if err != nil {
+		t.Fatalf("create recurring event: %v", err)
+	}
+	cleanup.add(seriesUID)
+	series, err := client.GetEvent(ctx, calendarPath, seriesUID)
+	if err != nil {
+		t.Fatalf("get recurring event: %v", err)
+	}
+	if !series.IsRecurring || series.ETag == "" {
+		t.Fatalf("recurring fixture shape mismatch: recurring=%v etag_set=%v", series.IsRecurring, series.ETag != "")
+	}
+	t.Logf("calendar_recurring_created=true etag_set=true")
+
+	newTitle := "integration timed updated " + nonce
+	if err := client.UpdateEvent(ctx, calendarPath, timedUID, &icloud.EventUpdate{
+		Title: &newTitle, IfMatchETag: timed.ETag,
+	}); err != nil {
+		t.Fatalf("update timed event: %v", err)
+	}
+	updated, err := client.GetEvent(ctx, calendarPath, timedUID)
+	if err != nil {
+		t.Fatalf("get timed event after update: %v", err)
+	}
+	if updated.Title != newTitle {
+		t.Fatal("timed update title_match=false")
+	}
+	if err := client.UpdateEvent(ctx, calendarPath, timedUID, &icloud.EventUpdate{
+		Title: &newTitle, IfMatchETag: timed.ETag,
+	}); !icloudHasCode(err, icloud.CodeConcurrentModification) {
+		t.Fatalf("stale ETag update error = %v, want concurrent_modification", err)
+	}
+	afterStale, err := client.GetEvent(ctx, calendarPath, timedUID)
+	if err != nil {
+		t.Fatalf("get timed event after stale update: %v", err)
+	}
+	if afterStale.Title != newTitle {
+		t.Fatal("stale ETag overwrote the successful update")
+	}
+	t.Logf("calendar_strong_etag=true stale_etag_rejected=true")
+
+	occurrence := series.StartTime
+	occurrenceTitle := "integration occurrence updated " + nonce
+	if err := client.UpdateEvent(ctx, calendarPath, seriesUID, &icloud.EventUpdate{
+		Title: &occurrenceTitle, Scope: icloud.ScopeOccurrence, RecurrenceID: &occurrence,
+	}); err != nil {
+		t.Fatalf("update occurrence across DST: %v", err)
+	}
+	occurrenceDetail, err := client.GetEvent(ctx, calendarPath, seriesUID)
+	if err != nil {
+		t.Fatalf("get series after occurrence update: %v", err)
+	}
+	if occurrenceDetail.OverrideCount == 0 {
+		t.Fatal("occurrence update created no override")
+	}
+	for _, override := range occurrenceDetail.Overrides {
+		if override.RecurrenceID.Equal(occurrence) {
+			if !override.EndTime.After(override.StartTime) {
+				t.Fatal("occurrence override duration is not positive")
+			}
+			t.Logf("calendar_occurrence_dst=true override_positive=true")
+			goto occurrenceUpdated
+		}
+	}
+	t.Fatal("occurrence override was not returned by get_event")
+
+occurrenceUpdated:
+	deleteOccurrence := occurrence.AddDate(0, 0, 1)
+	if _, err := client.DeleteEvent(ctx, calendarPath, seriesUID, &icloud.DeleteOptions{
+		Scope: icloud.ScopeOccurrence, RecurrenceID: &deleteOccurrence,
+	}); err != nil {
+		t.Fatalf("delete one occurrence: %v", err)
+	}
+	seriesAfter, err := client.GetEvent(ctx, calendarPath, seriesUID)
+	if err != nil {
+		t.Fatalf("series disappeared after occurrence delete: %v", err)
+	}
+	if !seriesAfter.IsRecurring {
+		t.Fatal("occurrence delete removed the series rule")
+	}
+	t.Logf("calendar_occurrence_deleted=true series_preserved=true")
+
+	latest, err := client.GetEvent(ctx, calendarPath, timedUID)
+	if err != nil {
+		t.Fatalf("get timed event before dry run: %v", err)
+	}
+	dry, err := client.DeleteEvent(ctx, calendarPath, timedUID, &icloud.DeleteOptions{
+		DryRun: true, IfMatchETag: latest.ETag,
+	})
+	if err != nil {
+		t.Fatalf("dry-run delete: %v", err)
+	}
+	if !dry.DryRun || !dry.WouldMutate {
+		t.Fatalf("dry-run result = %+v", dry)
+	}
+	if _, err := client.GetEvent(ctx, calendarPath, timedUID); err != nil {
+		t.Fatalf("dry run removed the resource: %v", err)
+	}
+	t.Logf("calendar_delete_dry_run_unchanged=true")
+
+	latest, err = client.GetEvent(ctx, calendarPath, timedUID)
+	if err != nil {
+		t.Fatalf("get timed event before delete: %v", err)
+	}
+	if _, err := client.DeleteEvent(ctx, calendarPath, timedUID, &icloud.DeleteOptions{IfMatchETag: latest.ETag}); err != nil {
+		t.Fatalf("delete timed event: %v", err)
+	}
+	cleanup.remove(timedUID)
+	if _, err := client.GetEvent(ctx, calendarPath, timedUID); !icloudHasCode(err, icloud.CodeNotFound) {
+		t.Fatalf("deleted event lookup error = %v, want not_found", err)
+	}
+	t.Logf("calendar_delete_verified_absent=true")
+}
+
+type calendarCleanup struct {
+	t      *testing.T
+	client *icloud.Client
+	path   string
+	uids   []string
+}
+
+func newCalendarCleanup(t *testing.T, client *icloud.Client, path string) *calendarCleanup {
+	return &calendarCleanup{t: t, client: client, path: path}
+}
+
+func (c *calendarCleanup) add(uid string) { c.uids = append(c.uids, uid) }
+
+func (c *calendarCleanup) remove(uid string) {
+	for index, candidate := range c.uids {
+		if candidate == uid {
+			c.uids = append(c.uids[:index], c.uids[index+1:]...)
+			return
+		}
+	}
+}
+
+func (c *calendarCleanup) cleanup() {
+	if len(c.uids) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	for _, uid := range c.uids {
+		detail, err := c.client.GetEvent(ctx, c.path, uid)
+		if icloudHasCode(err, icloud.CodeNotFound) {
+			continue
+		}
+		if err != nil {
+			c.t.Logf("calendar_cleanup_lookup=true error_class=%T", err)
+			continue
+		}
+		if _, err := c.client.DeleteEvent(ctx, c.path, uid, &icloud.DeleteOptions{IfMatchETag: detail.ETag}); err != nil {
+			if icloudHasCode(err, icloud.CodeOutcomeUnknown) {
+				c.t.Logf("calendar_cleanup_ambiguous=true")
+				continue
+			}
+			c.t.Logf("calendar_cleanup_delete=true error_class=%T", err)
+			continue
+		}
+	}
+	c.t.Logf("calendar_cleanup_fixtures=%d", len(c.uids))
+}
+
+func icloudHasCode(err error, code icloud.Code) bool {
+	typed := icloud.AsICloudError(err)
+	return typed != nil && typed.Code == code
 }
