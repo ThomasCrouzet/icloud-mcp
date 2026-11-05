@@ -12,6 +12,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   change start or end.
 - Write DATE bounds for an all-day occurrence without DTEND. Keep zero duration
   for a timed occurrence without an end or duration.
+- Accept a vCard 4.0 contact without N. Keep version 3.0 N and FN
+  cardinality, and select one deterministic display name from valid FN
+  alternatives.
 
 ## [0.4.3] - 2026-11-04
 
