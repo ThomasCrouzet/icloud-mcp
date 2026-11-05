@@ -1,0 +1,11 @@
+package fixture
+
+import (
+  "net"
+  "net/http"
+)
+
+func unresolved(address, target string) {
+  _, _ = net.Dial("tcp", address)
+  _, _ = http.Get(target)
+}
