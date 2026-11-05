@@ -333,6 +333,29 @@ go test -tags=integration -count=1 -v -timeout=120s .
 Without valid credentials, the integration test skips or fails during Calendar
 discovery. Never weaken TLS or an allowlist to pass a live test.
 
+### Calendar CRUD integration
+
+The Calendar lifecycle test requires explicit write enablement and a disposable
+calendar selected by the test harness. It creates timed, all-day, and recurring
+fixtures, checks a strong ETag, rejects a stale ETag, changes one occurrence
+across a DST transition, deletes one occurrence without deleting the series,
+checks that a dry-run delete leaves the resource unchanged, deletes the fixtures,
+and verifies absence. It skips without all gates.
+
+```bash
+export ICLOUD_EMAIL='file:///run/secrets/icloud-email'
+export ICLOUD_PASSWORD='file:///run/secrets/icloud-password'
+export ICLOUD_MCP_READ_ONLY='false'
+export ICLOUD_MCP_INTEGRATION_WRITES='true'
+export ICLOUD_MCP_INTEGRATION_CALENDAR='/123456789/calendars/disposable/'
+go test -tags=integration -count=1 -v -timeout=8m -run TestIntegration_CalendarCreateUpdateDeleteAndOccurrence .
+```
+
+`ICLOUD_MCP_INTEGRATION_CALENDAR` is a test-only selector. It is not a product
+variable and does not change production endpoints. Cleanup targets only the
+generated fixture UIDs in that calendar. An ambiguous delete outcome is reported
+and never replayed. Logs omit raw live UIDs.
+
 ### Optional-domain read integration
 
 Keep global read-only enabled and opt in only to the domain under test.

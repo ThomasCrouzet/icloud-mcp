@@ -6,6 +6,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add an opt-in live Calendar CRUD integration test for timed, all-day, and
+  recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
+  deletion, and conditional cleanup in an explicitly selected calendar.
+
 ### Changed
 - Separate local release metadata checks from published registry verification.
   A pending next version no longer fails `main`. Add
