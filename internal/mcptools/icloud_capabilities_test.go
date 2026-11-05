@@ -45,9 +45,9 @@ func TestICloudCapabilitiesMatchesPlanAndPerformsNoNetwork(t *testing.T) {
 		t.Errorf("domains = %#v", response.Domains)
 	}
 	wantGroups := icloudCapabilityGroups{
-		CalendarRead: true, CalendarWrite: true,
-		ContactsRead: true, ContactsWrite: true,
-		MailRead: true, MailMutation: true, MailSend: true,
+		CalendarRead: true, CalendarWrite: true, CalendarDelete: true,
+		ContactsRead: true, ContactsWrite: true, ContactsDelete: true,
+		MailRead: true, MailMutation: true, MailTrash: true, MailSend: true,
 	}
 	if response.CapabilityGroups != wantGroups {
 		t.Errorf("capability groups = %#v, want %#v", response.CapabilityGroups, wantGroups)

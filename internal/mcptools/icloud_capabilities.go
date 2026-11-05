@@ -23,13 +23,16 @@ type icloudDomains struct {
 }
 
 type icloudCapabilityGroups struct {
-	CalendarRead  bool `json:"calendarRead"`
-	CalendarWrite bool `json:"calendarWrite"`
-	ContactsRead  bool `json:"contactsRead"`
-	ContactsWrite bool `json:"contactsWrite"`
-	MailRead      bool `json:"mailRead"`
-	MailMutation  bool `json:"mailMutation"`
-	MailSend      bool `json:"mailSend"`
+	CalendarRead   bool `json:"calendarRead"`
+	CalendarWrite  bool `json:"calendarWrite"`
+	CalendarDelete bool `json:"calendarDelete"`
+	ContactsRead   bool `json:"contactsRead"`
+	ContactsWrite  bool `json:"contactsWrite"`
+	ContactsDelete bool `json:"contactsDelete"`
+	MailRead       bool `json:"mailRead"`
+	MailMutation   bool `json:"mailMutation"`
+	MailTrash      bool `json:"mailTrash"`
+	MailSend       bool `json:"mailSend"`
 }
 
 type icloudCapabilitiesResponse struct {
@@ -56,18 +59,21 @@ func icloudCapabilitiesHandler(deps Deps, plan CapabilityPlan) server.ToolHandle
 			ReadOnly:          plan.ReadOnly(),
 			HealthcheckActive: deps.HealthEnabled,
 			Domains: icloudDomains{
-				Calendar: true,
+				Calendar: plan.CalendarReadEnabled() || plan.CalendarWritesEnabled(),
 				Contacts: plan.ContactsEnabled(),
 				Mail:     plan.MailEnabled(),
 			},
 			CapabilityGroups: icloudCapabilityGroups{
-				CalendarRead:  true,
-				CalendarWrite: plan.CalendarWritesEnabled(),
-				ContactsRead:  plan.ContactsEnabled(),
-				ContactsWrite: plan.ContactsWritesEnabled(),
-				MailRead:      plan.MailEnabled(),
-				MailMutation:  plan.MailMutationsEnabled(),
-				MailSend:      plan.MailSendEnabled(),
+				CalendarRead:   plan.CalendarReadEnabled(),
+				CalendarWrite:  plan.CalendarCreateUpdateEnabled(),
+				CalendarDelete: plan.CalendarDeleteEnabled(),
+				ContactsRead:   plan.ContactsReadEnabled(),
+				ContactsWrite:  plan.ContactsCreateUpdateEnabled(),
+				ContactsDelete: plan.ContactsDeleteEnabled(),
+				MailRead:       plan.MailReadEnabled(),
+				MailMutation:   plan.MailMutationsEnabled(),
+				MailTrash:      plan.MailTrashEnabled(),
+				MailSend:       plan.MailSendEnabled(),
 			},
 			Tools:     tools,
 			ToolCount: len(tools),

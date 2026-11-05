@@ -20,13 +20,14 @@ enabled domains, capabilities, and tool list.
 
 ## Configuration reference
 
-Exactly **12** product environment variables:
+Exactly **13** product environment variables:
 
 | Variable | Default | Contract |
 |----------|---------|----------|
 | `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported (regular file, <=4 KiB, mode 0600+). |
 | `ICLOUD_PASSWORD` | none | Required app-specific password. Mail uses it as a fallback. `file://` as above. |
 | `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
+| `ICLOUD_MCP_PERMISSIONS` | legacy switches | Optional comma-separated capability list. It replaces the implicit write rules. |
 | `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
 | `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools. Writes require read-only mode to be off. |
@@ -47,6 +48,14 @@ Mail write or send without Mail causes a boot error. Mail without an address or
 password also causes a boot error. Send without a recipient policy causes a
 boot error, including in read-only mode. Global read-only can coexist with write
 and send flags, but it prevents their registration.
+
+`ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
+`calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
+`mail.read`, `mail.mutate`, `mail.trash`, and `mail.send`. Unknown, duplicate,
+or empty tokens cause a boot error. A Contacts or Mail token needs its domain
+switch. When the variable is set, it replaces `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
+`ICLOUD_MCP_ENABLE_MAIL_SEND`, and the implicit Calendar and Contacts write
+rules. Global read-only still removes every mutation and send tool.
 
 The server trims log levels and ignores case. It accepts `debug` or `-4`,
 `info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized
@@ -77,6 +86,23 @@ export ICLOUD_MCP_READ_ONLY=false
 # Mail send: requires an exact recipient allowlist even under global read-only
 export ICLOUD_MCP_ENABLE_MAIL_SEND=true
 export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com,bob@example.net'
+```
+
+### Minimal permission profiles
+
+```bash
+# Calendar reads and Mail send, without Calendar, Contacts, or Mail mutations.
+export ICLOUD_MCP_ENABLE_MAIL=true
+export ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS='alice@example.com'
+export ICLOUD_MCP_PERMISSIONS='calendar.read,mail.read,mail.send'
+
+# Contacts reads only.
+export ICLOUD_MCP_ENABLE_CONTACTS=true
+export ICLOUD_MCP_PERMISSIONS='calendar.read,contacts.read'
+
+# Create and update but no delete or trash.
+export ICLOUD_MCP_ENABLE_MAIL=true
+export ICLOUD_MCP_PERMISSIONS='calendar.read,calendar.write,contacts.read,contacts.write,mail.read,mail.mutate'
 ```
 
 ### Dates
@@ -126,7 +152,7 @@ ICLOUD_MCP_ENABLE_CONTACTS: "false"
 
 An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
 before the server starts. See the [configuration reference](#configuration-reference)
-for all 12 product variables.
+for all 13 product variables.
 
 ## Logs and health
 

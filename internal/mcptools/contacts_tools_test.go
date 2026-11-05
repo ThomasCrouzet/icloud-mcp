@@ -164,7 +164,7 @@ func TestContactsRegisterCountsSchemasAndAnnotations(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			mcpServer := server.NewMCPServer("contacts-test", "0", server.WithToolCapabilities(false))
-			names := RegisterContacts(mcpServer, contactsTestDeps(&fakeContactsService{}, nil), test.allowWrites)
+			names := RegisterContacts(mcpServer, contactsTestDeps(&fakeContactsService{}, nil), true, test.allowWrites, test.allowWrites)
 			tools := mcpServer.ListTools()
 			if len(names) != test.wantCount || len(tools) != test.wantCount {
 				t.Fatalf("registered names/tools = %d/%d, want %d", len(names), len(tools), test.wantCount)

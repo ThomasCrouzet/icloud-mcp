@@ -34,9 +34,9 @@ protocol executable, plugin, or runtime-downloaded code.
 5. The server builds a shared `security.Redactor` from the enabled credential
    pairs. The variants include Basic-auth and SASL PLAIN encodings.
 6. `RedactingWriter` receives all stderr and standard library logs.
-7. One immutable `CapabilityPlan` applies global read-only and the optional
-   domain gates. It is the source of both tool registration and
-   `icloud_capabilities` output.
+7. One immutable `CapabilityPlan` applies global read-only, the optional
+   domain gates, and `ICLOUD_MCP_PERMISSIONS`. It is the source of both tool
+   registration and `icloud_capabilities` output.
 8. The server builds separate Calendar, Contacts, IMAP, and SMTP transports or
    dialers only for enabled capabilities. Calendar and Contacts receive separate
    credential objects and authenticated HTTP clients.

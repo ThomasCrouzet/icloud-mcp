@@ -10,6 +10,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.
+- Add `ICLOUD_MCP_PERMISSIONS` for explicit Calendar, Contacts, and Mail
+  read, write, delete, mutation, trash, and send capabilities. Global read-only
+  still overrides every mutation. Unset values keep the documented legacy
+  switches.
 
 ### Changed
 - Separate local release metadata checks from published registry verification.
