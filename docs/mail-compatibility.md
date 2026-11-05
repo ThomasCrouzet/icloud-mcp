@@ -110,10 +110,17 @@ client treats attached `message/rfc822` parts and their descendants as
 attachments. It does not inspect them for body text.
 
 If no plain text exists, the result has metadata with `html_only` or
-`no_plain_text`. If wire or decoded text is too large, the client omits the body
-and adds a bounded warning. Unsafe decoding has the same result. The client can truncate an otherwise valid
-body at a valid UTF-8 boundary. This truncation keeps the result within 256 KiB.
-Metadata that cannot fit returns `payload_too_large`.
+`no_plain_text`, unless `allow_html_fallback` is true. That opt-in fetches only
+the first inline HTML part. A local converter excludes script, style, template,
+head, and comment content, decodes entities, and bounds nodes, depth, input
+bytes, and output. The result sets `bodySource: "html_fallback"` and reports
+`html_truncated` or `html_malformed`. It never fetches a link, image, style
+sheet, or attachment.
+
+If wire or decoded text is too large, the client omits the body and adds a
+bounded warning. Unsafe decoding has the same result. The client can truncate an
+otherwise valid body at a valid UTF-8 boundary. This truncation keeps the result
+within 256 KiB. Metadata that cannot fit returns `payload_too_large`.
 
 ## IMAP decode limits
 
