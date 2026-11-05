@@ -250,6 +250,12 @@ Local `make release` remains the digest-pinned container path for linux/arm64.
 CI also smoke-builds `windows/amd64`. GitHub Release archives do not contain
 that build.
 
+Tag and manual `native` CI runs extract the matching production archive on
+native GitHub-hosted runners. They verify checksums, version output, and an
+offline configuration failure. The matrix covers Linux amd64 and macOS arm64.
+Linux arm64 remains cross-compiled and archive-tested only. Windows remains
+compile-only and has no published archive or runtime support claim.
+
 Live iCloud credentials and the `integration` build tag are never used in CI.
 
 ## Release metadata and registry
