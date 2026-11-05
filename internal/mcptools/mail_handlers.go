@@ -797,3 +797,77 @@ func mailOptionalDate(args map[string]any, name string) (time.Time, bool, error)
 	}
 	return parsed, true, nil
 }
+
+func newReplyMessageTool() mcp.Tool {
+	return mcp.NewTool("reply_message",
+		mcp.WithDescription("Replies to one validated source message through iCloud SMTP. The default mode replies to Reply-To or From; reply_all adds To and Cc but never Bcc. In-Reply-To and References come only from the source, with bounded validation. Recipients use the same exact policy as send_message. It does not mark the source Answered, move it, or append a Sent copy. Submission is never automatically retried."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithSchemaAdditionalProperties(false),
+		mailMailboxProperty("mailbox", "Source mailbox name returned by list_mailboxes", true),
+		mailUint32Property("uid_validity", "Source UIDVALIDITY from search_messages or get_message", true),
+		mailUint32Property("uid", "Non-zero source message UID", true),
+		mcp.WithString("mode", mcp.Enum("sender", "reply_all"), mcp.Description("sender (default) or reply_all; Bcc is never copied")),
+		mcp.WithString("body", mcp.Required(), mcp.MaxLength(maildomain.MaxSendBodyBytes), mcp.Description("UTF-8 plain-text reply body, at most 102400 bytes; NUL is rejected")),
+		mcp.WithString("idempotency_key", mcp.MaxLength(255), mcp.Description("Optional process-local key. Identical replies reuse one submission and Message-ID; changed content conflicts.")),
+	)
+}
+
+func replyMessageHandler(deps MailDeps) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		const tool = "reply_message"
+		args, err := mailArguments(req, mailKeySet("mailbox", "uid_validity", "uid", "mode", "body", "idempotency_key"))
+		if err != nil {
+			mailAudit(deps, tool, "submission", "invalid", "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
+		identity, err := mailParseIdentity(args)
+		if err != nil {
+			mailAudit(deps, tool, "submission", mailAuditResource(args), "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
+		mode, _, err := mailOptionalString(args, "mode")
+		if err != nil {
+			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
+		body, err := mailRequiredString(args, "body")
+		if err != nil || len(body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(body) || strings.ContainsRune(body, '\x00') {
+			if err == nil {
+				err = fmt.Errorf("body contains invalid or excessive data")
+			}
+			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
+		key, _, err := mailOptionalString(args, "idempotency_key")
+		if err != nil || len(key) > 255 || strings.ContainsAny(key, "\r\n\x00") {
+			if err == nil {
+				err = fmt.Errorf("idempotency_key contains invalid or excessive data")
+			}
+			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
+		result, err := deps.Service.ReplyMessage(ctx, maildomain.ReplyInput{
+			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
+			Mode: mode, Body: body, IdempotencyKey: key,
+		})
+		resource := result.MessageID
+		if resource == "" {
+			resource = mailIdentityResource(identity)
+		}
+		if err != nil {
+			mailAudit(deps, tool, "submission", resource, mailAuditErrorStatus(err))
+			return mailSendErrorResult(deps, "replying to message", result, err), nil
+		}
+		status := "error"
+		switch result.Status {
+		case maildomain.SendAccepted:
+			status = "success"
+		case maildomain.SendOutcomeUnknown:
+			status = "outcome_unknown"
+		}
+		mailAudit(deps, tool, "submission", resource, status)
+		return writeJSON(mailRedactor(deps), result), nil
+	}
+}

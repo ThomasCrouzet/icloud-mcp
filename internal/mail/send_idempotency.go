@@ -61,6 +61,10 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	}
 	write(input.Subject)
 	write(input.Body)
+	write(input.InReplyTo)
+	for _, reference := range input.References {
+		write(reference)
+	}
 	var result sendFingerprint
 	copy(result[:], hash.Sum(nil))
 	return result

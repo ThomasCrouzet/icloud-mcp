@@ -250,6 +250,21 @@ Submission outcomes are:
 The client never retries SMTP. After `outcome_unknown`, inspect Sent and the
 recipients before another send.
 
+### Replies
+
+`reply_message` requires Mail read and Mail send. It reads the source by
+`(mailbox, UIDVALIDITY, UID)` and rejects a changed UIDVALIDITY before SMTP. The
+default mode replies to Reply-To, else From. `reply_all` adds To and Cc, but
+never Bcc. The client excludes its own address and deduplicates the final
+recipients.
+
+The source must have a valid Message-ID. In-Reply-To is that identifier.
+References is the validated source chain plus the Message-ID, with at most 20
+entries. The client rejects malformed values before SMTP. It adds `Re: ` to the
+subject only when absent. It does not accept caller-supplied headers, mark the
+message Answered, move it, or append a Sent copy. The same recipient policy,
+STARTTLS, no-retry, and idempotency rules apply.
+
 ### Send idempotency
 
 `send_message` accepts an optional `idempotency_key`. The first caller claims the

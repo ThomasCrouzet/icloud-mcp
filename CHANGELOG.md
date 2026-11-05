@@ -26,6 +26,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Implement conditional IMAP flag updates on CONDSTORE servers. A matching
   MODSEQ permits one UID STORE with UNCHANGEDSINCE; a stale MODSEQ returns
   `concurrent_modification` without changing flags.
+- Add `reply_message` with validated source identity, Reply-To or From
+  resolution, opt-in reply-all without Bcc, bounded In-Reply-To and References,
+  shared recipient authorization, and shared send idempotency.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.

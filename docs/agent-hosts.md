@@ -35,7 +35,7 @@ Exactly **13** product environment variables:
 | `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
 | `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Three IMAP mutation tools. |
-| `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` (independent of Mail write). |
+| `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` and `reply_message` (independent of Mail write). |
 | `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send is on. Use exact addresses or literal `*`. Literal `*` causes a boot warning. Use exact addresses when possible. |
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a

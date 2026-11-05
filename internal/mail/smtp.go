@@ -410,6 +410,9 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 	if len(input.Body) > MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
 		return preparedMessage{}, validationError("body contains invalid or excessive data")
 	}
+	if err := validateReplyHeaders(input.InReplyTo, input.References); err != nil {
+		return preparedMessage{}, err
+	}
 	messageID, err := generateMessageID(s.config.Address)
 	if err != nil {
 		return preparedMessage{}, newError(CodeInternalError, "could not generate a message identifier")
@@ -421,6 +424,16 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 	header.SetDate(s.now())
 	header.SetMessageID(messageID)
 	header.SetSubject(input.Subject)
+	if input.InReplyTo != "" {
+		header.SetMsgIDList("In-Reply-To", []string{strings.Trim(input.InReplyTo, "<>")})
+	}
+	if len(input.References) > 0 {
+		references := make([]string, len(input.References))
+		for i, reference := range input.References {
+			references[i] = strings.Trim(reference, "<>")
+		}
+		header.SetMsgIDList("References", references)
+	}
 	header.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 	var buffer bytes.Buffer
 	writer, err := msgmail.CreateSingleInlineWriter(&buffer, header)

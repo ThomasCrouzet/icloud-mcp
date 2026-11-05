@@ -143,7 +143,7 @@ func TestCapabilityPlanAllCombinationsAndRegistrationFormula(t *testing.T) {
 				wantCount += 3
 			}
 			if effectiveSend {
-				wantCount++
+				wantCount += 2
 			}
 
 			if plan.ToolCount() != wantCount {
