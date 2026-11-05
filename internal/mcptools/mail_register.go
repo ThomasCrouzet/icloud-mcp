@@ -6,15 +6,17 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	maildomain "github.com/ThomasCrouzet/icloud-mcp/internal/mail"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
 // MailDeps groups the dependencies shared by Mail tool handlers.
 type MailDeps struct {
-	Service  maildomain.Service
-	Audit    *security.AuditLogger
-	Redactor *security.Redactor
+	Service        maildomain.Service
+	Audit          *security.AuditLogger
+	Redactor       *security.Redactor
+	ResourceScopes config.ResourceScopes
 }
 
 // RegisterMail registers Mail reads and the independently gated mutation and

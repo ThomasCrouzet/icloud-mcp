@@ -54,6 +54,9 @@ func createContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		if err != nil {
 			return deny(err)
 		}
+		if err := authorizeContactBook(ctx, deps.ResourceScopes, deps.Service, "contacts.write", input.AddressBook); err != nil {
+			return deny(err)
+		}
 		result, err := deps.Service.CreateContact(ctx, input)
 		if err != nil {
 			contactsAudit(deps, "create_contact", resource, contactsAuditErrorStatus(err))
@@ -173,6 +176,9 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		}
 		input, err := parseUpdateContactInput(args)
 		if err != nil {
+			return deny(err)
+		}
+		if err := authorizeContactBook(ctx, deps.ResourceScopes, deps.Service, "contacts.write", input.AddressBook); err != nil {
 			return deny(err)
 		}
 		idemKey, _, err := contactsString(args, "idempotency_key", false, contactsMaxUIDBytes, true)
@@ -379,6 +385,9 @@ func deleteContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		}
 		dryRun, err := contactsOptionalBool(args, "dry_run", false)
 		if err != nil {
+			return deny(err)
+		}
+		if err := authorizeContactBook(ctx, deps.ResourceScopes, deps.Service, "contacts.delete", addressBook); err != nil {
 			return deny(err)
 		}
 		input := &contacts.DeleteContactInput{AddressBook: addressBook, UID: uid, ETag: etag, DryRun: dryRun}

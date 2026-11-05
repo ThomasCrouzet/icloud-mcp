@@ -160,6 +160,7 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 		DefaultLocation: cfg.DefaultLocation,
 		Version:         version,
 		HealthEnabled:   healthEnabled,
+		ResourceScopes:  cfg.ResourceScopes,
 	}, plan)
 
 	// 6. Optional healthcheck (off by default).
@@ -390,11 +391,13 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 				return security.DialSMTPContext(ctx, "tcp", security.SMTPAddress)
 			}
 		}
+		archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
 		mailService, err = maildomain.NewService(maildomain.Config{
 			Address:         strings.Clone(cfg.MailAddress),
 			Password:        strings.Clone(cfg.MailPassword),
 			RecipientPolicy: recipientPolicy,
 			EnableSentCopy:  capabilities.MailArchive,
+			ArchiveScope:    archiveScope,
 		}, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
 		if err != nil {
 			return nil, nil, fmt.Errorf("mail service initialization failed: %w", err)

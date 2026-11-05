@@ -36,7 +36,8 @@ protocol executable, plugin, or runtime-downloaded code.
 6. `RedactingWriter` receives all stderr and standard library logs.
 7. One immutable `CapabilityPlan` applies global read-only, the optional
    domain gates, and `ICLOUD_MCP_PERMISSIONS`. It is the source of both tool
-   registration and `icloud_capabilities` output.
+   registration and `icloud_capabilities` output. `ICLOUD_MCP_RESOURCE_SCOPES`
+   is a separate immutable allowlist checked in each domain operation path.
 8. The server builds separate Calendar, Contacts, IMAP, and SMTP transports or
    dialers only for enabled capabilities. Calendar and Contacts receive separate
    credential objects and authenticated HTTP clients.

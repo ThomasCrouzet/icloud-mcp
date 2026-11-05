@@ -37,6 +37,10 @@ func listAddressBooksHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		if err != nil {
 			return contactsErrorResult(deps.Redactor, "listing address books", err), nil
 		}
+		books, err = filterAddressBooks(ctx, books, deps.ResourceScopes, deps.Service)
+		if err != nil {
+			return contactsErrorResult(deps.Redactor, "listing address books", err), nil
+		}
 		if len(books) > contactsMaxAddressBooks {
 			return contactsErrorResult(deps.Redactor, "listing address books", &contacts.Error{
 				Code:    contacts.CodePayloadTooLarge,
@@ -102,7 +106,7 @@ func searchContactsHandler(deps ContactsDeps) server.ToolHandlerFunc {
 			return contactsValidationResult(deps, err), nil
 		}
 
-		result, err := deps.Service.SearchContacts(ctx, contacts.SearchOptions{
+		result, err := searchScopedContacts(ctx, deps.ResourceScopes, deps.Service, contacts.SearchOptions{
 			AddressBook:   addressBook,
 			Query:         query,
 			Email:         email,
@@ -180,6 +184,9 @@ func getContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		uid, err := contactsRequiredIdentifier(args, "uid", false)
 		if err != nil {
 			return contactsValidationResult(deps, err), nil
+		}
+		if err := authorizeContactBook(ctx, deps.ResourceScopes, deps.Service, "contacts.read", addressBook); err != nil {
+			return contactsErrorResult(deps.Redactor, "getting contact", err), nil
 		}
 		contact, err := deps.Service.GetContact(ctx, addressBook, uid)
 		if err != nil {

@@ -20,7 +20,7 @@ enabled domains, capabilities, and tool list.
 
 ## Configuration reference
 
-Exactly **13** product environment variables:
+Exactly **14** product environment variables:
 
 | Variable | Default | Contract |
 |----------|---------|----------|
@@ -28,6 +28,7 @@ Exactly **13** product environment variables:
 | `ICLOUD_PASSWORD` | none | Required app-specific password. Mail uses it as a fallback. `file://` as above. |
 | `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
 | `ICLOUD_MCP_PERMISSIONS` | legacy switches | Optional comma-separated capability list. It replaces the implicit write rules. |
+| `ICLOUD_MCP_RESOURCE_SCOPES` | all resources | Optional action resource allowlists for Calendar paths, Contacts address books, and Mail mailboxes. |
 | `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
 | `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools. Writes require read-only mode to be off. |
@@ -48,6 +49,16 @@ Mail write or send without Mail causes a boot error. Mail without an address or
 password also causes a boot error. Send without a recipient policy causes a
 boot error, including in read-only mode. Global read-only can coexist with write
 and send flags, but it prevents their registration.
+
+`ICLOUD_MCP_RESOURCE_SCOPES` uses `action=value[,value]` entries separated by
+`;`. Actions are `calendar.read`, `calendar.write`, `calendar.delete`,
+`contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`,
+`mail.mutate`, and `mail.archive`. A single value `*` means unrestricted.
+Calendar values are paths. Contacts values are opaque identifiers or exact
+display names. Mail values are exact mailbox names. A write, delete, or mutate
+scope falls back to the domain read scope when unset. Ambiguous or stale
+Contacts names fail closed. Unknown, duplicate, empty, or malformed entries fail
+before network access.
 
 `ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
 `calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
@@ -164,7 +175,7 @@ ICLOUD_MCP_ENABLE_CONTACTS: "false"
 
 An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
 before the server starts. See the [configuration reference](#configuration-reference)
-for all 13 product variables.
+for all 14 product variables.
 
 ## Logs and health
 

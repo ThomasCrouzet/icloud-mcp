@@ -1596,3 +1596,23 @@ func TestReplyMessageRejectsUnsafeSourceBeforeSMTP(t *testing.T) {
 		})
 	}
 }
+
+func TestArchiveSentHonorsResourceScope(t *testing.T) {
+	t.Parallel()
+	var log []string
+	imap := &fakeIMAP{
+		mailboxes:  []imapadapter.Mailbox{{Name: "Sent", Attributes: []string{"\\Sent"}}},
+		appendData: imapadapter.AppendData{UIDValidity: 9, UID: 42},
+	}
+	fake := &fakeSMTP{log: &log}
+	service := testService(t, imap, fake, false, true)
+	service.config.EnableSentCopy = true
+	service.config.ArchiveScope = []string{"Other Sent"}
+	result, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "body", ArchiveSent: true})
+	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalFailed || !result.SentCopyUnavailable {
+		t.Fatalf("scoped archive result = %+v, %v", result, err)
+	}
+	if imap.appendedMailbox != "" {
+		t.Fatalf("APPEND reached out-of-scope mailbox %q", imap.appendedMailbox)
+	}
+}

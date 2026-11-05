@@ -53,6 +53,9 @@ func (s *Client) archiveSent(ctx context.Context, message []byte) (string, strin
 	if len(sent) != 1 {
 		return ArchivalFailed, "", imapadapter.AppendData{}, errors.New("exactly one selectable SPECIAL-USE Sent mailbox is required")
 	}
+	if len(s.config.ArchiveScope) > 0 && !scopeAllows(s.config.ArchiveScope, sent[0]) {
+		return ArchivalFailed, sent[0], imapadapter.AppendData{}, errors.New("sent mailbox is outside the configured resource scope")
+	}
 	data, err := session.AppendSent(sent[0], message)
 	if err != nil {
 		var protocolErr *imapadapter.Error
@@ -62,6 +65,15 @@ func (s *Client) archiveSent(ctx context.Context, message []byte) (string, strin
 		return ArchivalFailed, sent[0], imapadapter.AppendData{}, err
 	}
 	return ArchivalStored, sent[0], data, nil
+}
+
+func scopeAllows(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func safeCloseIMAPSession(session imapSession, conn interface{ Close() error }) {

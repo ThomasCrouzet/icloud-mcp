@@ -37,8 +37,9 @@ type Deps struct {
 
 	// ReadOnly and HealthEnabled are surfaced by the local capability tools
 	// (never email, secrets, hosts, shards, or paths).
-	ReadOnly      bool
-	HealthEnabled bool
+	ReadOnly       bool
+	HealthEnabled  bool
+	ResourceScopes config.ResourceScopes
 }
 
 // CapabilityPlan is the immutable, effective registration plan. Its private
@@ -277,12 +278,12 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	}
 	if plan.ContactsEnabled() {
 		registered = append(registered, RegisterContacts(s, ContactsDeps{
-			Service: deps.ContactsService, Audit: deps.Audit, Redactor: deps.Redactor,
+			Service: deps.ContactsService, Audit: deps.Audit, Redactor: deps.Redactor, ResourceScopes: deps.ResourceScopes,
 		}, plan.ContactsReadEnabled(), plan.ContactsCreateUpdateEnabled(), plan.ContactsDeleteEnabled())...)
 	}
 	if plan.MailEnabled() {
 		registered = append(registered, RegisterMail(s, MailDeps{
-			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor,
+			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor, ResourceScopes: deps.ResourceScopes,
 		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled(), plan.MailReplyEnabled())...)
 	}
 	s.AddTool(newICloudCapabilitiesTool(), icloudCapabilitiesHandler(deps, plan))

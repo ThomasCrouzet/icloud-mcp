@@ -10,6 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/contacts"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
@@ -36,9 +37,10 @@ const (
 
 // ContactsDeps groups the dependencies used by Contacts tool handlers.
 type ContactsDeps struct {
-	Service  contacts.Service
-	Audit    *security.AuditLogger
-	Redactor *security.Redactor
+	Service        contacts.Service
+	Audit          *security.AuditLogger
+	Redactor       *security.Redactor
+	ResourceScopes config.ResourceScopes
 }
 
 type contactsRawArgs map[string]json.RawMessage
