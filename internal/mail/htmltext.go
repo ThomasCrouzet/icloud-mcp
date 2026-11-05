@@ -95,17 +95,16 @@ func htmlToText(input string, maxBytes int) (string, bool, error) {
 func htmlTagEnd(input string, start int) int {
 	quoted := byte(0)
 	for index := start + 1; index < len(input); index++ {
-		switch input[index] {
-		case '\'', '"':
+		if input[index] == '\'' || input[index] == '"' {
 			if quoted == 0 {
 				quoted = input[index]
 			} else if quoted == input[index] {
 				quoted = 0
 			}
-		case '>':
-			if quoted == 0 {
-				return index
-			}
+			continue
+		}
+		if input[index] == '>' && quoted == 0 {
+			return index
 		}
 	}
 	return -1
@@ -142,10 +141,11 @@ func normalizeHTMLText(value string) string {
 	space := false
 	newlines := 0
 	for _, character := range value {
-		switch {
-		case character == '\r' || character == '\t' || character == ' ':
+		if character == '\r' || character == '\t' || character == ' ' {
 			space = true
-		case character == '\n':
+			continue
+		}
+		if character == '\n' {
 			space = false
 			if newlines < 2 && out.Len() > 0 {
 				out.WriteByte('\n')
@@ -153,14 +153,14 @@ func normalizeHTMLText(value string) string {
 			if newlines < 2 {
 				newlines++
 			}
-		default:
-			if space && out.Len() > 0 {
-				out.WriteByte(' ')
-			}
-			space = false
-			newlines = 0
-			out.WriteRune(character)
+			continue
 		}
+		if space && out.Len() > 0 {
+			out.WriteByte(' ')
+		}
+		space = false
+		newlines = 0
+		out.WriteRune(character)
 	}
 	return strings.TrimSpace(out.String())
 }
