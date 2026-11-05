@@ -51,12 +51,15 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 		if item.Headers.MessageID != "" {
 			result.MessageID = item.Headers.MessageID
 		}
-		var selectedPart *imapadapter.BodyPart
+		var selectedPart, htmlPart *imapadapter.BodyPart
 		hasHTML := false
 		for i := range item.Parts {
 			part := &item.Parts[i]
 			if part.ContentType == "text/html" && !part.Attachment {
 				hasHTML = true
+				if htmlPart == nil {
+					htmlPart = part
+				}
 			}
 			if selectedPart == nil && part.InlinePlain {
 				selectedPart = part
@@ -72,6 +75,38 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 			}
 		}
 		if selectedPart == nil {
+			if hasHTML && input.AllowHTMLFallback && htmlPart != nil {
+				htmlData, htmlErr := session.FetchBodyPart(input.UID, htmlPart.Path)
+				if htmlErr != nil {
+					return nil, htmlErr
+				}
+				if htmlData.TooLarge {
+					result.BodyOmitted = true
+					result.BodyUnavailableReason = "html_only"
+					result.Warnings = append(result.Warnings, Warning{Code: "html_too_large", Message: "HTML body exceeded the wire-byte limit and was omitted"})
+					return fitMessageResult(result)
+				}
+				htmlBody, decodeErr := decodeHTMLBody(htmlData.MIMEHeader, htmlData.Body)
+				if decodeErr != nil {
+					result.BodyOmitted = true
+					result.BodyUnavailableReason = "html_only"
+					result.Warnings = append(result.Warnings, Warning{Code: "html_decode_failed", Message: "HTML body could not be safely decoded and was omitted"})
+					return fitMessageResult(result)
+				}
+				text, truncated, convertErr := htmlToText(htmlBody, maxBody)
+				if convertErr != nil {
+					result.BodyOmitted = true
+					result.BodyUnavailableReason = "html_only"
+					result.Warnings = append(result.Warnings, Warning{Code: "html_malformed", Message: "HTML body was malformed and was omitted"})
+					return fitMessageResult(result)
+				}
+				result.Body = text
+				result.BodySource = "html_fallback"
+				if truncated {
+					result.Warnings = append(result.Warnings, Warning{Code: "html_truncated", Message: "HTML text was truncated to max_body_bytes"})
+				}
+				return fitMessageResult(result)
+			}
 			if hasHTML {
 				result.BodyUnavailableReason = "html_only"
 			} else {
@@ -97,6 +132,7 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 			result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "decoded plain-text body exceeded max_body_bytes and was omitted"})
 		} else {
 			result.Body = body
+			result.BodySource = "plain_text"
 		}
 		return fitMessageResult(result)
 	})
@@ -175,7 +211,7 @@ func fitMessageResult(result Message) (Message, error) {
 		return result, nil
 	}
 	if result.Body != "" {
-		result.Warnings = append(result.Warnings, Warning{Code: "body_truncated", Message: "plain-text body was truncated to fit the result limit"})
+		result.Warnings = append(result.Warnings, Warning{Code: "body_truncated", Message: "message body was truncated to fit the result limit"})
 		for serializedSize(result) > MaxResultBytes && len(result.Body) > 0 {
 			over := serializedSize(result) - MaxResultBytes
 			cut := len(result.Body) - over - 1024
@@ -194,3 +230,39 @@ func fitMessageResult(result Message) (Message, error) {
 	}
 	return result, nil
 }
+
+func decodeHTMLBody(header, body []byte) (string, error) {
+	if len(header) > MaxHeaderBytes || len(body) > MaxWireBodyBytes {
+		return "", errTooLargeHTML
+	}
+	combined := make([]byte, 0, len(header)+len(body)+4)
+	combined = append(combined, header...)
+	if !bytes.HasSuffix(combined, []byte("\r\n\r\n")) && !bytes.HasSuffix(combined, []byte("\n\n")) {
+		if bytes.HasSuffix(combined, []byte("\r\n")) {
+			combined = append(combined, '\r', '\n')
+		} else if bytes.HasSuffix(combined, []byte("\n")) {
+			combined = append(combined, '\n')
+		} else {
+			combined = append(combined, '\r', '\n', '\r', '\n')
+		}
+	}
+	combined = append(combined, body...)
+	entity, err := message.ReadWithOptions(bytes.NewReader(combined), &message.ReadOptions{MaxHeaderBytes: MaxHeaderBytes})
+	if err != nil {
+		return "", err
+	}
+	mediaType, _, err := entity.Header.ContentType()
+	if err != nil || !strings.EqualFold(mediaType, "text/html") {
+		return "", errUnsafeMIME
+	}
+	decoded, err := io.ReadAll(io.LimitReader(entity.Body, int64(MaxWireBodyBytes)+1))
+	if err != nil {
+		return "", err
+	}
+	if len(decoded) > MaxWireBodyBytes {
+		return "", errTooLargeHTML
+	}
+	return strings.ToValidUTF8(string(decoded), "\uFFFD"), nil
+}
+
+var errTooLargeHTML = &Error{Code: CodePayloadTooLarge, Message: "HTML body exceeded its byte limit"}

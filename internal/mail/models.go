@@ -103,10 +103,11 @@ type SearchResult struct {
 }
 
 type GetMessageInput struct {
-	Mailbox      string `json:"mailbox"`
-	UIDValidity  uint32 `json:"uid_validity"`
-	UID          uint32 `json:"uid"`
-	MaxBodyBytes int    `json:"max_body_bytes,omitempty"`
+	Mailbox           string `json:"mailbox"`
+	UIDValidity       uint32 `json:"uid_validity"`
+	UID               uint32 `json:"uid"`
+	MaxBodyBytes      int    `json:"max_body_bytes,omitempty"`
+	AllowHTMLFallback bool   `json:"allow_html_fallback,omitempty"`
 }
 
 type Attachment struct {
@@ -128,6 +129,7 @@ type Message struct {
 	InReplyTo             []string     `json:"inReplyTo,omitempty"`
 	References            []string     `json:"references,omitempty"`
 	Body                  string       `json:"body,omitempty"`
+	BodySource            string       `json:"bodySource,omitempty"`
 	BodyOmitted           bool         `json:"bodyOmitted,omitempty"`
 	BodyUnavailableReason string       `json:"bodyUnavailableReason,omitempty"`
 	Attachments           []Attachment `json:"attachments,omitempty"`

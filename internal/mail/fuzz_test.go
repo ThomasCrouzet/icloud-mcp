@@ -345,3 +345,24 @@ func TestMailResultAndSMTPHelperBoundaries(t *testing.T) {
 func tlsServer(conn net.Conn, config *tls.Config) *tls.Conn {
 	return tls.Server(conn, config)
 }
+
+func FuzzHTMLToText(f *testing.F) {
+	f.Add("<p>Hello &amp; goodbye</p>", uint16(64))
+	f.Add("<script>alert(1)</script><div>text</div>", uint16(64))
+	f.Add("<!-- comment --><style>body{}</style>", uint16(8))
+	f.Add("<b><i>nested", uint16(16))
+	f.Add("plain text", uint16(4))
+	f.Fuzz(func(t *testing.T, input string, requested uint16) {
+		if len(input) > 64<<10 {
+			return
+		}
+		limit := int(requested)%4096 + 1
+		text, truncated, err := htmlToText(input, limit)
+		if err == nil && !truncated && len(text) > limit {
+			t.Fatalf("text length %d exceeds limit %d", len(text), limit)
+		}
+		if strings.Contains(text, "<script") || strings.Contains(text, "<style") {
+			t.Fatalf("markup survived conversion: %q", text)
+		}
+	})
+}

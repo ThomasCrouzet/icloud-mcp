@@ -549,6 +549,54 @@ func TestGetMessageUsesExaminePeekAndOmitsHTML(t *testing.T) {
 	if err != nil || message.BodyUnavailableReason != "html_only" || strings.Contains(strings.Join(html.log, ","), "body-peek") {
 		t.Fatalf("HTML-only handling failed: %+v, %v", message, err)
 	}
+
+	html.body = imapadapter.BodyData{
+		MIMEHeader: []byte("Content-Type: text/html; charset=utf-8\r\n\r\n"),
+		Body: []byte(`<html><head><title>ignored title</title><style>.secret{color:red}</style></head><body>` +
+			`<p>Hello&nbsp;<b>world</b></p><script>steal()</script><template>hidden</template><!-- comment --><div>Next line</div></body></html>`),
+	}
+	message, err = testService(t, html, nil, false, false).GetMessage(context.Background(), GetMessageInput{
+		Mailbox: "INBOX", UIDValidity: 9, UID: 2, AllowHTMLFallback: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.BodySource != "html_fallback" || !strings.Contains(message.Body, "Hello") || !strings.Contains(message.Body, "world") || !strings.Contains(message.Body, "Next line") {
+		t.Fatalf("HTML fallback body = %q source=%q", message.Body, message.BodySource)
+	}
+	for _, excluded := range []string{"ignored title", ".secret", "steal", "hidden", "comment", "<p>", "<script>"} {
+		if strings.Contains(message.Body, excluded) {
+			t.Fatalf("HTML fallback retained excluded content %q in %q", excluded, message.Body)
+		}
+	}
+
+	html.body = imapadapter.BodyData{MIMEHeader: []byte("Content-Type: text/html\r\n\r\n"), Body: []byte(`<script>unterminated`)}
+	message, err = testService(t, html, nil, false, false).GetMessage(context.Background(), GetMessageInput{
+		Mailbox: "INBOX", UIDValidity: 9, UID: 2, AllowHTMLFallback: true,
+	})
+	if err != nil || !message.BodyOmitted || len(message.Warnings) == 0 || message.Warnings[0].Code != "html_malformed" {
+		t.Fatalf("malformed HTML handling = %+v, %v", message, err)
+	}
+
+	html.body = imapadapter.BodyData{
+		MIMEHeader: []byte("Content-Type: text/html\r\n\r\n"),
+		Body:       []byte("<p>" + strings.Repeat("a", 256) + "</p>"),
+	}
+	message, err = testService(t, html, nil, false, false).GetMessage(context.Background(), GetMessageInput{
+		Mailbox: "INBOX", UIDValidity: 9, UID: 2, AllowHTMLFallback: true, MaxBodyBytes: 32,
+	})
+	if err != nil || len(message.Body) > 32 || !hasMailWarning(message.Warnings, "html_truncated") {
+		t.Fatalf("truncated HTML handling = %+v, %v", message, err)
+	}
+}
+
+func hasMailWarning(warnings []Warning, code string) bool {
+	for _, warning := range warnings {
+		if warning.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGetMessageUIDValidityAndBodyLimits(t *testing.T) {

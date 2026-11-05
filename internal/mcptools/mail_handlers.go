@@ -72,7 +72,7 @@ func searchMessagesHandler(deps MailDeps) server.ToolHandlerFunc {
 
 func getMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, err := mailArguments(req, mailKeySet("mailbox", "uid_validity", "uid", "max_body_bytes"))
+		args, err := mailArguments(req, mailKeySet("mailbox", "uid_validity", "uid", "max_body_bytes", "allow_html_fallback"))
 		if err != nil {
 			return mailValidationResult(deps, err), nil
 		}
@@ -89,9 +89,13 @@ func getMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 		if maxBody < 1 || maxBody > maildomain.MaxBodyBytes {
 			return mailValidationResult(deps, fmt.Errorf("max_body_bytes must be between 1 and %d", maildomain.MaxBodyBytes)), nil
 		}
+		allowHTMLFallback, _, err := mailOptionalBool(args, "allow_html_fallback")
+		if err != nil {
+			return mailValidationResult(deps, err), nil
+		}
 		result, err := deps.Service.GetMessage(ctx, maildomain.GetMessageInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
-			MaxBodyBytes: int(maxBody),
+			MaxBodyBytes: int(maxBody), AllowHTMLFallback: allowHTMLFallback,
 		})
 		if err != nil {
 			return mailServiceErrorResult(deps, "getting message", err), nil
