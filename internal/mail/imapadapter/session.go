@@ -114,6 +114,11 @@ func (s *Session) Capabilities() Capabilities { return s.caps }
 // SupportsModifiedDetection is false for beta.8: tagged MODIFIED is discarded.
 func (s *Session) SupportsModifiedDetection() bool { return false }
 
+// SupportsConditionalStore reports whether a single-UID conditional STORE can
+// be validated from the returned FETCH metadata. This does not require the
+// tagged MODIFIED response code.
+func (s *Session) SupportsConditionalStore() bool { return s.caps.CondStore }
+
 func (s *Session) List() ([]Mailbox, error) {
 	var options *imap.ListOptions
 	if s.caps.SpecialUse {
@@ -546,6 +551,64 @@ func (s *Session) StoreDelta(uid uint32, add bool, flags []string) error {
 	}
 	err := s.client.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{Op: op, Silent: true, Flags: imapFlags}, nil).Close()
 	return classify(err, true)
+}
+
+// ConditionalStoreDelta sends one UID STORE with UNCHANGEDSINCE. A failed
+// precondition is detected without the tagged MODIFIED response code: the
+// server returns no FETCH for the unchanged UID, or returns the same MODSEQ
+// without the requested delta. A single-UID operation makes this validation
+// complete and fail-closed.
+func (s *Session) ConditionalStoreDelta(uid uint32, add bool, flags []string, expectedModSeq uint64) (Message, error) {
+	if !s.caps.CondStore || expectedModSeq == 0 {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	op := imap.StoreFlagsDel
+	if add {
+		op = imap.StoreFlagsAdd
+	}
+	imapFlags := make([]imap.Flag, len(flags))
+	for i, flag := range flags {
+		imapFlags[i] = imap.Flag(flag)
+	}
+	buffers, err := s.client.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{
+		Op: op, Flags: imapFlags,
+	}, &imap.StoreOptions{UnchangedSince: expectedModSeq}).Collect()
+	if err != nil {
+		return Message{}, classify(err, true)
+	}
+	return validateConditionalStore(uid, add, flags, expectedModSeq, buffers)
+}
+
+func validateConditionalStore(uid uint32, add bool, flags []string, expectedModSeq uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
+	if len(buffers) == 0 {
+		return Message{}, &Error{Kind: ErrorConflict}
+	}
+	if len(buffers) != 1 || buffers[0].UID != imap.UID(uid) {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	buffer := buffers[0]
+	message := Message{UID: uid, ModSeq: buffer.ModSeq}
+	for _, flag := range buffer.Flags {
+		message.Flags = append(message.Flags, string(flag))
+	}
+	if buffer.ModSeq > expectedModSeq {
+		return message, nil
+	}
+	if buffer.ModSeq == 0 {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	// A no-op delta can succeed without a MODSEQ change. Validate the returned
+	// flags for the requested direction before treating it as success.
+	present := make(map[string]bool, len(message.Flags))
+	for _, flag := range message.Flags {
+		present[flag] = true
+	}
+	for _, flag := range flags {
+		if add != present[flag] {
+			return Message{}, &Error{Kind: ErrorConflict}
+		}
+	}
+	return message, nil
 }
 
 func (s *Session) FetchFlags(uid uint32) (Message, error) {

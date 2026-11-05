@@ -153,13 +153,17 @@ The result reports `conditionalUpdate: false`. Then, it tries to get the
 resulting flags.
 
 When the IMAP server advertises CONDSTORE, flag updates require `expected_modseq`.
-The reviewed go-imap beta.8 API cannot safely expose the tagged MODIFIED result.
-Thus, the adapter returns `protocol_error` before STORE. This rule applies even
-when `expected_modseq` is present. The adapter does not send an unconditional
-mutation. It does not report `concurrent_modification` on this path.
+The adapter sends one UID STORE with `UNCHANGEDSINCE`. It does not replace all
+flags. Because beta.8 discards tagged MODIFIED, the adapter validates the
+single-UID result from the returned FETCH metadata instead. A missing FETCH, an
+unrelated UID, a malformed response, or an unchanged MODSEQ without the requested
+delta maps to `concurrent_modification` or `protocol_error`. It never treats a
+tagged OK as success by itself.
 
-Conditional flag writes stay unavailable until the project proves MODIFIED
-detection.
+A matching MODSEQ reports `conditionalUpdate: true` and the new flags and MODSEQ.
+A stale MODSEQ changes no flags and returns `concurrent_modification`. The
+adapter never retries the conditional STORE. An ambiguous dispatched write still
+returns `outcome_unknown`.
 
 ## Move and trash
 

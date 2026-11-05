@@ -17,12 +17,14 @@ type SMTPDialFunc func(context.Context) (net.Conn, error)
 type imapSession interface {
 	Capabilities() imapadapter.Capabilities
 	SupportsModifiedDetection() bool
+	SupportsConditionalStore() bool
 	List() ([]imapadapter.Mailbox, error)
 	Select(mailbox string, readOnly bool) (imapadapter.SelectedMailbox, error)
 	Search(request imapadapter.SearchRequest) ([]uint32, error)
 	FetchMetadata(uids []uint32, includeHeaders bool) ([]imapadapter.Message, error)
 	FetchBodyPart(uid uint32, path []int) (imapadapter.BodyData, error)
 	StoreDelta(uid uint32, add bool, flags []string) error
+	ConditionalStoreDelta(uid uint32, add bool, flags []string, expectedModSeq uint64) (imapadapter.Message, error)
 	FetchFlags(uid uint32) (imapadapter.Message, error)
 	NativeMove(uid uint32, destination string) (imapadapter.CopyData, error)
 	Copy(uid uint32, destination string) (imapadapter.CopyData, error)

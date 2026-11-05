@@ -197,13 +197,10 @@ func TestMailToolSchemas(t *testing.T) {
 		t.Errorf("expected_modseq maximum = %#v", modSeq["maximum"])
 	}
 	flagsDescription := strings.ToLower(flagsTool.Description)
-	for _, required := range []string{"expected_modseq", "condstore", "beta.8", "cannot observe modified", "before store", "protocol_error"} {
+	for _, required := range []string{"expected_modseq", "condstore", "unchangedsince", "fetch metadata", "concurrent_modification", "never automatically retried"} {
 		if !strings.Contains(flagsDescription, required) {
 			t.Errorf("set_message_flags description missing %q: %q", required, flagsTool.Description)
 		}
-	}
-	if strings.Contains(flagsDescription, "returns concurrent_modification") {
-		t.Errorf("set_message_flags description makes a false concurrency promise: %q", flagsTool.Description)
 	}
 
 	trash := newTrashMessageTool()

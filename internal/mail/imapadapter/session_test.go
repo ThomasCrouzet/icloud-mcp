@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 )
 
 func TestLoginFallsBackToFullAddressAfterAuthenticationRejection(t *testing.T) {
@@ -531,4 +532,42 @@ func commandTag(line string) string {
 		return line[:space]
 	}
 	return "T0"
+}
+
+func TestValidateConditionalStoreSingleUID(t *testing.T) {
+	flags := []string{"\\Seen"}
+	success, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
+		{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}},
+	})
+	if err != nil || success.ModSeq != 12 || len(success.Flags) != 1 {
+		t.Fatalf("success = %+v, %v", success, err)
+	}
+	for _, test := range []struct {
+		name    string
+		add     bool
+		flags   []string
+		buffers []*imapclient.FetchMessageBuffer
+	}{
+		{name: "no fetch is conflict", add: true, flags: flags},
+		{name: "unrelated uid is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 3, ModSeq: 12}}},
+		{name: "duplicate fetch is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}, {UID: 2, ModSeq: 13}}},
+		{name: "same modseq without delta is conflict", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 11}}},
+		{name: "missing modseq is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := validateConditionalStore(2, test.add, test.flags, 11, test.buffers)
+			if err == nil {
+				t.Fatal("conditional STORE response was accepted")
+			}
+			if !isAdapterKind(err, ErrorConflict) && !isAdapterKind(err, ErrorProtocol) {
+				t.Fatalf("unexpected error kind: %v", err)
+			}
+		})
+	}
+	noOp, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
+		{UID: 2, ModSeq: 11, Flags: []imap.Flag{"\\Seen"}},
+	})
+	if err != nil || noOp.ModSeq != 11 {
+		t.Fatalf("no-op add already present = %+v, %v", noOp, err)
+	}
 }

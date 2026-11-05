@@ -34,22 +34,27 @@ func (a fakeAddr) Network() string { return "test" }
 func (a fakeAddr) String() string  { return string(a) }
 
 type fakeIMAP struct {
-	caps              imapadapter.Capabilities
-	modifiedDetection bool
-	mailboxes         []imapadapter.Mailbox
-	selected          imapadapter.SelectedMailbox
-	searchFn          func(imapadapter.SearchRequest) ([]uint32, error)
-	listFn            func() ([]imapadapter.Mailbox, error)
-	metadata          []imapadapter.Message
-	body              imapadapter.BodyData
-	flags             imapadapter.Message
-	copyData          imapadapter.CopyData
-	nativeMoveFn      func() (imapadapter.CopyData, error)
-	closeFn           func()
-	errors            map[string]error
-	log               []string
-	searches          []imapadapter.SearchRequest
-	mu                sync.Mutex
+	caps                 imapadapter.Capabilities
+	modifiedDetection    bool
+	conditionalSupported bool
+	conditionalUpdated   imapadapter.Message
+	conditionalErr       error
+	conditionalCalls     int
+	conditionalExpected  uint64
+	mailboxes            []imapadapter.Mailbox
+	selected             imapadapter.SelectedMailbox
+	searchFn             func(imapadapter.SearchRequest) ([]uint32, error)
+	listFn               func() ([]imapadapter.Mailbox, error)
+	metadata             []imapadapter.Message
+	body                 imapadapter.BodyData
+	flags                imapadapter.Message
+	copyData             imapadapter.CopyData
+	nativeMoveFn         func() (imapadapter.CopyData, error)
+	closeFn              func()
+	errors               map[string]error
+	log                  []string
+	searches             []imapadapter.SearchRequest
+	mu                   sync.Mutex
 }
 
 func (f *fakeIMAP) record(value string) {
@@ -67,6 +72,15 @@ func (f *fakeIMAP) operationError(name string) error {
 
 func (f *fakeIMAP) Capabilities() imapadapter.Capabilities { return f.caps }
 func (f *fakeIMAP) SupportsModifiedDetection() bool        { return f.modifiedDetection }
+func (f *fakeIMAP) SupportsConditionalStore() bool         { return f.conditionalSupported }
+func (f *fakeIMAP) ConditionalStoreDelta(_ uint32, _ bool, _ []string, expected uint64) (imapadapter.Message, error) {
+	f.record("conditional-store")
+	f.mu.Lock()
+	f.conditionalCalls++
+	f.conditionalExpected = expected
+	f.mu.Unlock()
+	return f.conditionalUpdated, f.conditionalErr
+}
 func (f *fakeIMAP) List() ([]imapadapter.Mailbox, error) {
 	f.record("list")
 	if f.listFn != nil {
@@ -556,14 +570,41 @@ func TestGetMessageUIDValidityAndBodyLimits(t *testing.T) {
 func TestSetFlagsCapabilityGateAndDeltaFallback(t *testing.T) {
 	t.Parallel()
 	input := SetFlagsInput{Mailbox: "INBOX", UIDValidity: 5, UID: 2, Operation: FlagOperationAdd, Flags: []MessageFlag{FlagSeen}, ExpectedModSeq: 11}
-	condstore := &fakeIMAP{caps: imapadapter.Capabilities{CondStore: true}, selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3}, flags: imapadapter.Message{UID: 2}}
-	_, err := testService(t, condstore, nil, true, false).SetMessageFlags(context.Background(), input)
-	if errorCode(t, err) != CodeProtocolError || strings.Contains(strings.Join(condstore.log, ","), "store-delta") {
-		t.Fatalf("unsafe CONDSTORE mutation: %v, %v", err, condstore.log)
+
+	unsupported := &fakeIMAP{caps: imapadapter.Capabilities{CondStore: true}, selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3}, flags: imapadapter.Message{UID: 2}}
+	_, err := testService(t, unsupported, nil, true, false).SetMessageFlags(context.Background(), input)
+	if errorCode(t, err) != CodeProtocolError || strings.Contains(strings.Join(unsupported.log, ","), "conditional-store") {
+		t.Fatalf("unsupported CONDSTORE mutation: %v, %v", err, unsupported.log)
+	}
+
+	conditional := &fakeIMAP{
+		caps: imapadapter.Capabilities{CondStore: true}, conditionalSupported: true,
+		selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3}, flags: imapadapter.Message{UID: 2},
+		conditionalUpdated: imapadapter.Message{UID: 2, Flags: []string{"\\Seen"}, ModSeq: 12},
+	}
+	result, err := testService(t, conditional, nil, true, false).SetMessageFlags(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ConditionalUpdate || result.ModSeq != 12 || conditional.conditionalCalls != 1 || conditional.conditionalExpected != 11 {
+		t.Fatalf("conditional result = %+v calls=%d expected=%d", result, conditional.conditionalCalls, conditional.conditionalExpected)
+	}
+	if len(result.Flags) != 1 || result.Flags[0] != FlagSeen {
+		t.Fatalf("conditional flags = %v", result.Flags)
+	}
+
+	stale := &fakeIMAP{
+		caps: imapadapter.Capabilities{CondStore: true}, conditionalSupported: true,
+		selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3}, flags: imapadapter.Message{UID: 2},
+		conditionalErr: &imapadapter.Error{Kind: imapadapter.ErrorConflict},
+	}
+	_, err = testService(t, stale, nil, true, false).SetMessageFlags(context.Background(), input)
+	if errorCode(t, err) != CodeConcurrentModification || strings.Contains(strings.Join(stale.log, ","), "store-delta") {
+		t.Fatalf("stale conditional mutation = %v, %v", err, stale.log)
 	}
 
 	fallback := &fakeIMAP{selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3}, flags: imapadapter.Message{UID: 2, Flags: []string{"\\Seen"}}}
-	result, err := testService(t, fallback, nil, true, false).SetMessageFlags(context.Background(), input)
+	result, err = testService(t, fallback, nil, true, false).SetMessageFlags(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -989,6 +1030,10 @@ type blockingIMAP struct {
 
 func (b *blockingIMAP) Capabilities() imapadapter.Capabilities { return imapadapter.Capabilities{} }
 func (b *blockingIMAP) SupportsModifiedDetection() bool        { return false }
+func (b *blockingIMAP) SupportsConditionalStore() bool         { return false }
+func (b *blockingIMAP) ConditionalStoreDelta(uint32, bool, []string, uint64) (imapadapter.Message, error) {
+	return imapadapter.Message{}, &imapadapter.Error{Kind: imapadapter.ErrorProtocol}
+}
 func (b *blockingIMAP) List() ([]imapadapter.Mailbox, error) {
 	b.started <- struct{}{}
 	<-b.release

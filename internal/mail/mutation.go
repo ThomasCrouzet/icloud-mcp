@@ -25,16 +25,27 @@ func (s *Client) SetMessageFlags(ctx context.Context, input SetFlagsInput) (SetF
 			return nil, err
 		}
 		caps := session.Capabilities()
+		flags := protocolFlags(input.Flags)
 		if caps.CondStore {
 			if input.ExpectedModSeq == 0 {
 				return nil, validationError("expected_modseq is required when CONDSTORE is available")
 			}
-			if !session.SupportsModifiedDetection() {
-				return nil, newError(CodeProtocolError, "conditional flag mutation is unavailable because MODIFIED cannot be safely detected")
+			if !session.SupportsConditionalStore() {
+				return nil, newError(CodeProtocolError, "conditional flag mutation is unavailable because the adapter cannot validate MODIFIED or the returned FETCH state")
 			}
-			return nil, newError(CodeProtocolError, "conditional flag mutation is not implemented by this adapter")
+			phase.dispatched = true
+			updated, err := session.ConditionalStoreDelta(input.UID, input.Operation == FlagOperationAdd, flags, input.ExpectedModSeq)
+			if err != nil {
+				if typed := new(imapadapter.Error); errors.As(err, &typed) && typed.Kind == imapadapter.ErrorConflict {
+					return nil, newError(CodeConcurrentModification, "mail message changed since the expected MODSEQ; re-read before mutating")
+				}
+				return nil, mapIMAPError(err, ctx, true, reconciliation)
+			}
+			return SetFlagsResult{
+				Mailbox: input.Mailbox, UIDValidity: input.UIDValidity, UID: input.UID,
+				Flags: publicFlags(updated.Flags), ModSeq: updated.ModSeq, ConditionalUpdate: true,
+			}, nil
 		}
-		flags := protocolFlags(input.Flags)
 		phase.dispatched = true
 		if err := session.StoreDelta(input.UID, input.Operation == FlagOperationAdd, flags); err != nil {
 			return nil, mapIMAPError(err, ctx, true, reconciliation)

@@ -321,8 +321,9 @@ Current limits to account for:
   plain text and attachment metadata, without HTML or attachment bodies.
   `move_message` rejects SPECIAL-USE Trash and Junk destinations; use
   `trash_message` for intentional deletion. When CONDSTORE is advertised,
-  conditional flag updates fail with `protocol_error` before STORE because the
-  beta IMAP adapter cannot safely observe tagged MODIFIED responses.
+  `set_message_flags` requires `expected_modseq`. The adapter validates one UID
+  STORE from the returned FETCH metadata, reports `concurrent_modification` for
+  a stale MODSEQ, and never retries the write.
 - **Scope.** Reminders, Notes, Photos, Drive, Find My, Keychain, Messages, and
   Home are outside the supported scope. Modern Reminders are not exposed by
   this CalDAV connector.
