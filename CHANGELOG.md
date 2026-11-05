@@ -25,6 +25,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the shared coverage floors. CI invokes the same guard and coverage scripts.
 
 ### Fixed
+- Make the concurrent ETag update regression deterministic by synchronizing
+  both initial reads before either conditional PUT.
+
+### Fixed
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays
   nominal, an elapsed DURATION stays elapsed, and a title-only update does not
   change start or end.
