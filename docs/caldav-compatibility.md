@@ -140,8 +140,13 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - PROPFIND and single-object GET bodies have an 8 MiB limit. REPORT has a 32 MiB
   limit.
 - A single-calendar search materializes at most 2,500 events.
-- Multi-calendar `search_events` still queries each selected calendar. It fails
-  closed when more than 10,000 filtered events materialize.
+- Multi-calendar `search_events` still queries each selected calendar. It uses
+  at most four concurrent reads in one request. The domain-wide semaphore still
+  caps all concurrent MCP requests at four. It fails closed when more than
+  10,000 filtered events materialize.
+- `find_free_slots` uses the same bounded reads and still fails closed on any
+  incomplete calendar or truncated recurrence.
+- Results, calendar-index warnings, and free-slot output keep input order.
 - Every search row carries the validated calendar path and the recurrence
   identifier when applicable. The internal resource href stays private.
 - Sort order is start, UID, calendar, then title. Identical events from

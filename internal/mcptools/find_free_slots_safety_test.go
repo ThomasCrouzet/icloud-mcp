@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ type freeSlotsTestService struct {
 	cancel     context.CancelFunc
 
 	listCalls int
+	mu        sync.Mutex
 	searches  []freeSlotsTestSearch
 }
 
@@ -37,8 +39,16 @@ func (s *freeSlotsTestService) ListCalendars(context.Context) ([]icloud.Calendar
 	return s.calendars, nil
 }
 
+func (s *freeSlotsTestService) searchSnapshot() []freeSlotsTestSearch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]freeSlotsTestSearch(nil), s.searches...)
+}
+
 func (s *freeSlotsTestService) SearchEvents(_ context.Context, path string, start, end time.Time, _ *icloud.SearchOptions) (icloud.SearchResult, error) {
+	s.mu.Lock()
 	s.searches = append(s.searches, freeSlotsTestSearch{path: path, start: start, end: end})
+	s.mu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -139,13 +149,14 @@ func TestFindFreeSlotsHandlerUsesBufferedQueryAndClipsOutput(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("err=%v result=%s", err, resultText(t, result))
 	}
-	if len(service.searches) != 1 {
-		t.Fatalf("searches = %d, want 1", len(service.searches))
+	searches := service.searchSnapshot()
+	if len(searches) != 1 {
+		t.Fatalf("searches = %d, want 1", len(searches))
 	}
-	if got, want := service.searches[0].start, start.Add(-30*time.Minute); !got.Equal(want) {
+	if got, want := searches[0].start, start.Add(-30*time.Minute); !got.Equal(want) {
 		t.Errorf("query start = %s, want %s", got, want)
 	}
-	if got, want := service.searches[0].end, end.Add(30*time.Minute); !got.Equal(want) {
+	if got, want := searches[0].end, end.Add(30*time.Minute); !got.Equal(want) {
 		t.Errorf("query end = %s, want %s", got, want)
 	}
 
@@ -186,8 +197,8 @@ func TestFindFreeSlotsHandlerRejectsUnsafeBufferedRange(t *testing.T) {
 	if !result.IsError || !strings.Contains(resultText(t, result), "buffered search range") {
 		t.Fatalf("expected buffered range error, got %s", resultText(t, result))
 	}
-	if len(service.searches) != 0 {
-		t.Fatalf("unsafe range performed %d searches", len(service.searches))
+	if searches := service.searchSnapshot(); len(searches) != 0 {
+		t.Fatalf("unsafe range performed %d searches", len(searches))
 	}
 }
 
@@ -289,8 +300,8 @@ func TestFindFreeSlotsCalendarSelectionHonorsCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("protocol error: %v", err)
 		}
-		if !result.IsError || len(service.searches) != 1 {
-			t.Fatalf("result=%s searches=%d, want cancellation after one search", resultText(t, result), len(service.searches))
+		if !result.IsError || len(service.searchSnapshot()) == 0 || len(service.searchSnapshot()) > 2 {
+			t.Fatalf("result=%s searches=%d, want cancellation with bounded started reads", resultText(t, result), len(service.searchSnapshot()))
 		}
 	})
 }

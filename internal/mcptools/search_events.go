@@ -164,8 +164,11 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		var partialFailure bool
 		var materializationOverflow bool
 		multi := len(calendarPaths) > 1 || !singleCalendar
-		for i, path := range calendarPaths {
-			result, err := deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
+		readResults := parallelCalendarReads(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+			return deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
+		})
+		for i := range calendarPaths {
+			result, err := readResults[i].value, readResults[i].err
 			if err != nil {
 				// Do not mask an authentication or security error as a warning.
 				if ie := icloud.AsICloudError(err); ie != nil {
@@ -191,8 +194,8 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 				truncatedByExpansion = true
 			}
 			batch := result.Events
-			for i := range batch {
-				batch[i].Calendar = path
+			for j := range batch {
+				batch[j].Calendar = calendarPaths[i]
 			}
 			if query != "" {
 				batch = filterByQuery(batch, query)
@@ -207,6 +210,9 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 					all = append(all, batch...)
 				}
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return errResult(deps.Redactor, "searching events", err), nil
 		}
 		if materializationOverflow {
 			return errResult(deps.Redactor, "searching events", icloud.NewError(

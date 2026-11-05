@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Read multiple calendars concurrently with a four-worker bound in
+  `search_events` and `find_free_slots`. Keep the domain-wide read semaphore,
+  deterministic result order, partial-failure rules, and free-slot fail-closed
+  behavior.
+
 ### Added
 - Include the validated calendar path in every `search_events` row so an agent
   can continue with `get_event` or `update_event` when a UID exists in several
