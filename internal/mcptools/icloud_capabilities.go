@@ -34,6 +34,7 @@ type icloudCapabilityGroups struct {
 	MailMutation   bool `json:"mailMutation"`
 	MailTrash      bool `json:"mailTrash"`
 	MailSend       bool `json:"mailSend"`
+	MailReply      bool `json:"mailReply"`
 }
 
 type icloudCapabilitiesResponse struct {
@@ -75,6 +76,7 @@ func icloudCapabilitiesHandler(deps Deps, plan CapabilityPlan) server.ToolHandle
 				MailMutation:   plan.MailMutationsEnabled(),
 				MailTrash:      plan.MailTrashEnabled(),
 				MailSend:       plan.MailSendEnabled(),
+				MailReply:      plan.MailReplyEnabled(),
 			},
 			Tools:     tools,
 			ToolCount: len(tools),

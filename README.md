@@ -64,7 +64,7 @@ See the [threat model and reporting policy](SECURITY.md) and
 | Contacts | List books; search and get contacts; create, update, and delete vCard 3.0 contacts | `ICLOUD_MCP_ENABLE_CONTACTS=true` |
 | Mail read | List mailboxes; search messages; get plain text and attachment metadata | `ICLOUD_MCP_ENABLE_MAIL=true` |
 | Mail mutation | Change flags; move or trash a message | Mail plus `ICLOUD_MCP_ENABLE_MAIL_WRITE=true` |
-| Mail send | Submit a plain-text message through SMTP | Mail plus `ICLOUD_MCP_ENABLE_MAIL_SEND=true` and a recipient policy |
+| Mail send | Submit a plain-text message, or reply to one with preserved conversation headers, through SMTP | Mail plus `ICLOUD_MCP_ENABLE_MAIL_SEND=true` and a recipient policy |
 
 `ICLOUD_MCP_READ_ONLY=true` removes every mutation and send tool from
 `tools/list`. It does not enable a disabled read domain. Contacts has no separate
@@ -84,7 +84,7 @@ Calendar, Contacts, or Mail mutation tools.
 ## MCP tools
 
 The server registers **10 tools by default**, **7 with global read-only and
-optional domains off**, and **23 with all gates on**. Disabled tools are absent
+optional domains off**, and **24 with all gates on**. Disabled tools are absent
 from discovery. The MCP interface provides tools over **stdio**.
 
 | Tool | Input | Result | Account changes |
@@ -95,6 +95,7 @@ from discovery. The MCP interface provides tools over **stdio**.
 | `update_event` | `calendar`, `uid`, changed fields; optional `etag`, `idempotency_key`, occurrence scope | Updated event or a structured error | Conditional Calendar write |
 | `get_message` | `mailbox`, `uid_validity`, `uid`; optional body limit and HTML fallback | Message metadata and bounded plain text | None; EXAMINE and PEEK preserve read state |
 | `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |
+| `reply_message` | source `mailbox`, `uid_validity`, `uid`; `body`; optional `mode` and `idempotency_key` | Submission status or a structured error | Replies to the resolved sender or reply-all recipients; never marks Answered or appends Sent |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
 Run `icloud-mcp -doctor` for concise read-only domain checks. Add

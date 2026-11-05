@@ -1492,3 +1492,107 @@ func TestArchiveSentRequiresUniqueSpecialUseMailbox(t *testing.T) {
 		t.Fatalf("ambiguous Sent result = %+v, %v", result, err)
 	}
 }
+
+func TestReplyMessagePreservesConversationHeaders(t *testing.T) {
+	t.Parallel()
+	var log []string
+	fake := &fakeSMTP{log: &log}
+	imap := &fakeIMAP{
+		selected: imapadapter.SelectedMailbox{UIDValidity: 7, UIDNext: 3},
+		metadata: []imapadapter.Message{{
+			UID: 2,
+			Envelope: imapadapter.Envelope{
+				Subject: "Original subject", MessageID: "<source@example.com>",
+				From:    []imapadapter.Address{{Address: "sender@example.com"}},
+				ReplyTo: []imapadapter.Address{{Address: "reply@example.com"}},
+				To:      []imapadapter.Address{{Address: "to@example.com"}, {Address: "sender@icloud.com"}},
+				Cc:      []imapadapter.Address{{Address: "cc@example.com"}},
+			},
+			Headers: imapadapter.CuratedHeaders{
+				MessageID:  "<source@example.com>",
+				ReplyTo:    []imapadapter.Address{{Address: "reply@example.com"}},
+				InReplyTo:  []string{"<parent@example.com>"},
+				References: []string{"<root@example.com>", "<parent@example.com>"},
+			},
+		}},
+	}
+	service := testService(t, imap, fake, false, true)
+
+	result, err := service.ReplyMessage(context.Background(), ReplyInput{
+		Mailbox: "INBOX", UIDValidity: 7, UID: 2, Body: "reply body",
+	})
+	if err != nil || result.Status != SendAccepted {
+		t.Fatalf("sender reply = %+v, %v", result, err)
+	}
+	joined := strings.Join(log, ",")
+	if !strings.Contains(joined, "rcpt:reply@example.com") || strings.Contains(joined, "rcpt:to@example.com") || strings.Contains(joined, "rcpt:cc@example.com") {
+		t.Fatalf("default reply recipients = %s", joined)
+	}
+	message := string(fake.message)
+	for _, header := range []string{"In-Reply-To: <source@example.com>", "References: <root@example.com> <parent@example.com> <source@example.com>", "Subject: Re: Original subject"} {
+		if !strings.Contains(message, header) {
+			t.Fatalf("reply header missing %q:\n%s", header, message)
+		}
+	}
+
+	log = nil
+	fake.message = nil
+	service = testService(t, imap, fake, false, true)
+	result, err = service.ReplyMessage(context.Background(), ReplyInput{
+		Mailbox: "INBOX", UIDValidity: 7, UID: 2, Mode: "reply_all", Body: "reply all body",
+	})
+	if err != nil || result.Status != SendAccepted {
+		t.Fatalf("reply_all = %+v, %v", result, err)
+	}
+	joined = strings.Join(log, ",")
+	if !strings.Contains(joined, "rcpt:reply@example.com") || !strings.Contains(joined, "rcpt:to@example.com") || !strings.Contains(joined, "rcpt:cc@example.com") || strings.Contains(joined, "sender@icloud.com") {
+		t.Fatalf("reply_all recipients = %s", joined)
+	}
+}
+
+func TestReplyMessageRejectsUnsafeSourceBeforeSMTP(t *testing.T) {
+	t.Parallel()
+	source := func(headers imapadapter.CuratedHeaders, envelope imapadapter.Envelope) *fakeIMAP {
+		return &fakeIMAP{
+			selected: imapadapter.SelectedMailbox{UIDValidity: 7, UIDNext: 3},
+			metadata: []imapadapter.Message{{UID: 2, Envelope: envelope, Headers: headers}},
+		}
+	}
+	tests := []struct {
+		name  string
+		imap  *fakeIMAP
+		uid   uint32
+		valid uint32
+	}{
+		{
+			name: "missing message id",
+			imap: source(imapadapter.CuratedHeaders{}, imapadapter.Envelope{From: []imapadapter.Address{{Address: "from@example.com"}}}),
+			uid:  2, valid: 7,
+		},
+		{
+			name: "malformed references",
+			imap: source(imapadapter.CuratedHeaders{MessageID: "<source@example.com>", References: []string{"not-a-message-id"}}, imapadapter.Envelope{From: []imapadapter.Address{{Address: "from@example.com"}}}),
+			uid:  2, valid: 7,
+		},
+		{
+			name: "uidvalidity changed",
+			imap: source(imapadapter.CuratedHeaders{MessageID: "<source@example.com>"}, imapadapter.Envelope{From: []imapadapter.Address{{Address: "from@example.com"}}}),
+			uid:  2, valid: 6,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var log []string
+			fake := &fakeSMTP{log: &log}
+			_, err := testService(t, test.imap, fake, false, true).ReplyMessage(context.Background(), ReplyInput{
+				Mailbox: "INBOX", UIDValidity: test.valid, UID: test.uid, Body: "reply",
+			})
+			if err == nil || len(log) != 0 {
+				t.Fatalf("unsafe source was sent: %v, %v", err, log)
+			}
+			if test.name == "uidvalidity changed" && errorCode(t, err) != CodeConcurrentModification {
+				t.Fatalf("UIDVALIDITY error = %v", err)
+			}
+		})
+	}
+}

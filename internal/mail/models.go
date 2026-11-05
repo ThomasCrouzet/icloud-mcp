@@ -194,6 +194,10 @@ type SendInput struct {
 	Body           string   `json:"body"`
 	IdempotencyKey string   `json:"idempotency_key,omitempty"`
 	ArchiveSent    bool     `json:"archive_sent,omitempty"`
+	// InReplyTo and References are internal reply headers. send_message never
+	// accepts caller-supplied header values.
+	InReplyTo  string   `json:"-"`
+	References []string `json:"-"`
 }
 
 type SendStatus string
@@ -232,4 +236,16 @@ type Service interface {
 	MoveMessage(ctx context.Context, input MoveInput) (MoveResult, error)
 	TrashMessage(ctx context.Context, input TrashInput) (MoveResult, error)
 	SendMessage(ctx context.Context, input SendInput) (SendResult, error)
+	ReplyMessage(ctx context.Context, input ReplyInput) (SendResult, error)
+}
+
+// ReplyInput identifies a validated source message and a bounded reply body.
+type ReplyInput struct {
+	Mailbox        string `json:"mailbox"`
+	UIDValidity    uint32 `json:"uid_validity"`
+	UID            uint32 `json:"uid"`
+	Mode           string `json:"mode,omitempty"`
+	Subject        string `json:"subject,omitempty"`
+	Body           string `json:"body"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }

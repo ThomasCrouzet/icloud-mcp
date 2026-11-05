@@ -59,6 +59,7 @@ type CapabilityPlan struct {
 	mailMutate bool
 	mailTrash  bool
 	mailSend   bool
+	mailReply  bool
 }
 
 // NewCapabilityPlan applies the global read-only and domain enable gates to
@@ -76,6 +77,7 @@ func NewCapabilityPlan(readOnly, contactsEnabled, mailEnabled, mailMutations, ma
 		mailMutate:     mailEnabled && mailMutations && !readOnly,
 		mailTrash:      mailEnabled && mailMutations && !readOnly,
 		mailSend:       mailEnabled && mailSend && !readOnly,
+		mailReply:      mailEnabled && mailSend && !readOnly,
 	}
 }
 
@@ -99,6 +101,7 @@ func NewCapabilityPlanFromConfig(readOnly bool, set config.CapabilitySet) Capabi
 		mailMutate:     set.MailMutate,
 		mailTrash:      set.MailTrash,
 		mailSend:       set.MailSend,
+		mailReply:      set.MailRead && set.MailSend,
 	}
 }
 
@@ -159,6 +162,10 @@ func (p CapabilityPlan) MailTrashEnabled() bool { return p.mailTrash }
 // MailSendEnabled reports whether SMTP submission is effective.
 func (p CapabilityPlan) MailSendEnabled() bool { return p.mailSend }
 
+// MailReplyEnabled reports whether reply_message is effective. It requires
+// both Mail read and Mail send.
+func (p CapabilityPlan) MailReplyEnabled() bool { return p.mailReply }
+
 // RegisteredTools returns a sorted copy of the exact registration manifest.
 func (p CapabilityPlan) RegisteredTools() []string {
 	var names []string
@@ -191,6 +198,9 @@ func (p CapabilityPlan) RegisteredTools() []string {
 	}
 	if p.mailSend {
 		names = append(names, "send_message")
+	}
+	if p.mailReply {
+		names = append(names, "reply_message")
 	}
 	names = append(names, "icloud_capabilities")
 	sort.Strings(names)
@@ -273,7 +283,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if plan.MailEnabled() {
 		registered = append(registered, RegisterMail(s, MailDeps{
 			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor,
-		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled())...)
+		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled(), plan.MailReplyEnabled())...)
 	}
 	s.AddTool(newICloudCapabilitiesTool(), icloudCapabilitiesHandler(deps, plan))
 	registered = append(registered, "icloud_capabilities")

@@ -19,7 +19,7 @@ type MailDeps struct {
 
 // RegisterMail registers Mail reads and the independently gated mutation and
 // send tools. It returns tool names in registration order for capability plans.
-func RegisterMail(s *server.MCPServer, deps MailDeps, allowRead, allowMutations, allowTrash, allowSend bool) []string {
+func RegisterMail(s *server.MCPServer, deps MailDeps, allowRead, allowMutations, allowTrash, allowSend, allowReply bool) []string {
 	if deps.Redactor == nil {
 		panic("mcptools: Mail tools require a non-nil redactor")
 	}
@@ -46,6 +46,9 @@ func RegisterMail(s *server.MCPServer, deps MailDeps, allowRead, allowMutations,
 	}
 	if allowSend {
 		registrations = append(registrations, registration{newSendMessageTool(), sendMessageHandler(deps)})
+	}
+	if allowReply {
+		registrations = append(registrations, registration{newReplyMessageTool(), replyMessageHandler(deps)})
 	}
 
 	names := make([]string, 0, len(registrations))

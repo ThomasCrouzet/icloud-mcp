@@ -44,6 +44,10 @@ type mailToolsFakeService struct {
 	sendErr      error
 	sendInput    maildomain.SendInput
 	sendCalls    int
+	replyResult  maildomain.SendResult
+	replyErr     error
+	replyInput   maildomain.ReplyInput
+	replyCalls   int
 }
 
 func (f *mailToolsFakeService) ListMailboxes(context.Context) (maildomain.ListMailboxesResult, error) {
@@ -84,6 +88,12 @@ func (f *mailToolsFakeService) SendMessage(_ context.Context, input maildomain.S
 	f.sendCalls++
 	f.sendInput = input
 	return f.sendResult, f.sendErr
+}
+
+func (f *mailToolsFakeService) ReplyMessage(_ context.Context, input maildomain.ReplyInput) (maildomain.SendResult, error) {
+	f.replyCalls++
+	f.replyInput = input
+	return f.replyResult, f.replyErr
 }
 
 type mailToolsDiscardWriter struct{}
@@ -140,13 +150,13 @@ func TestRegisterMailCombinations(t *testing.T) {
 	}{
 		{"reads", false, false, []string{"list_mailboxes", "search_messages", "get_message"}},
 		{"mutations", true, false, []string{"list_mailboxes", "search_messages", "get_message", "set_message_flags", "move_message", "trash_message"}},
-		{"send_independent", false, true, []string{"list_mailboxes", "search_messages", "get_message", "send_message"}},
-		{"all", true, true, []string{"list_mailboxes", "search_messages", "get_message", "set_message_flags", "move_message", "trash_message", "send_message"}},
+		{"send_independent", false, true, []string{"list_mailboxes", "search_messages", "get_message", "send_message", "reply_message"}},
+		{"all", true, true, []string{"list_mailboxes", "search_messages", "get_message", "set_message_flags", "move_message", "trash_message", "send_message", "reply_message"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			s := server.NewMCPServer("mail-test", "test", server.WithToolCapabilities(false))
-			got := RegisterMail(s, mailToolsDeps(&mailToolsFakeService{}), true, test.mutations, test.mutations, test.send)
+			got := RegisterMail(s, mailToolsDeps(&mailToolsFakeService{}), true, test.mutations, test.mutations, test.send, test.send)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("RegisterMail names = %v, want %v", got, test.want)
 			}

@@ -92,11 +92,11 @@ The following table groups the complete surface:
 | Contacts | `list_address_books`, `search_contacts`, `get_contact` | `create_contact`, `update_contact`, `delete_contact` |
 | Mail read | `list_mailboxes`, `search_messages`, `get_message` | none |
 | Mail mutation | none | `set_message_flags`, `move_message`, `trash_message` |
-| Mail send | none | `send_message` |
+| Mail send | none | `send_message`, `reply_message` |
 
 Default registration has 10 tools: nine Calendar tools and the global capability
 tool. Global read-only with optional domains disabled has seven tools. The
-complete surface has 23 tools. Disabled tools have no handler. Disabled optional
+complete surface has 24 tools. Disabled tools have no handler. Disabled optional
 domains have no client.
 
 The same immutable registration plan generates the local
@@ -109,7 +109,7 @@ or runtime error. `calendar_capabilities` contains only Calendar data.
 
 ## Tool inventory
 
-The server exposes at most **23** tools. Disabled tools are absent from
+The server exposes at most **24** tools. Disabled tools are absent from
 `tools/list`. A disabled optional domain has no client.
 
 | Group | Tools |
@@ -121,10 +121,10 @@ The server exposes at most **23** tools. Disabled tools are absent from
 | Contacts write | `create_contact`, `update_contact`, `delete_contact` |
 | Mail read | `list_mailboxes`, `search_messages`, `get_message` |
 | Mail mutation | `set_message_flags`, `move_message`, `trash_message` |
-| Mail send | `send_message` |
+| Mail send | `send_message`, `reply_message` |
 
 The default surface has 10 tools. Global read-only with optional domains off
-has 7 tools. The complete surface has 23 tools.
+has 7 tools. The complete surface has 24 tools.
 
 ## Domain request paths
 
