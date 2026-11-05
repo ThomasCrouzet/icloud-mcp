@@ -928,3 +928,57 @@ func TestLoad_ExplicitPermissionsAndReadOnly(t *testing.T) {
 		t.Fatalf("global read-only did not disable mutations and send: %+v", set)
 	}
 }
+
+func TestLoad_MailOnlyDoesNotRequireCalendarCredentials(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+	t.Setenv("ICLOUD_MAIL_PASSWORD", "separate-mail-password")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "mail.read")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(Mail only): %v", err)
+	}
+	if cfg.Email != "" || cfg.Password != "" {
+		t.Errorf("Mail-only config populated unused Calendar credentials")
+	}
+	if cfg.MailAddress != "mailbox@example.com" || cfg.MailPassword != "separate-mail-password" {
+		t.Errorf("Mail credentials = %q / set=%t", cfg.MailAddress, cfg.MailPassword != "")
+	}
+	if cfg.Capabilities().CalendarRead || !cfg.Capabilities().MailRead {
+		t.Errorf("Mail-only capabilities = %+v", cfg.Capabilities())
+	}
+}
+
+func TestLoad_CalendarCapabilityStillNeedsCalendarCredentials(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+	t.Setenv("ICLOUD_MAIL_PASSWORD", "separate-mail-password")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,mail.read")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "ICLOUD_EMAIL") {
+		t.Fatalf("Calendar capability without credentials error = %v", err)
+	}
+}
+
+func TestLoad_MailFallbackPasswordFromCalendarSecret(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_PASSWORD", "shared-app-password")
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "mail.read")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(Mail fallback): %v", err)
+	}
+	if cfg.MailPassword != "shared-app-password" {
+		t.Error("Mail password did not fall back to ICLOUD_PASSWORD")
+	}
+	if cfg.Email != "" {
+		t.Error("Mail-only config loaded ICLOUD_EMAIL")
+	}
+}
