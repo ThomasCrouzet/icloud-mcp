@@ -51,7 +51,7 @@ and send flags, but it prevents their registration.
 
 `ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
 `calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
-`mail.read`, `mail.mutate`, `mail.trash`, and `mail.send`. Unknown, duplicate,
+`mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`. Unknown, duplicate,
 or empty tokens cause a boot error. A Contacts or Mail token needs its domain
 switch. When the variable is set, it replaces `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
 `ICLOUD_MCP_ENABLE_MAIL_SEND`, and the implicit Calendar and Contacts write

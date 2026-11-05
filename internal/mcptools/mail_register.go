@@ -162,6 +162,7 @@ func newSendMessageTool() mcp.Tool {
 		mcp.WithString("subject", mcp.MaxLength(maildomain.MaxSubjectBytes), mcp.Description("Optional UTF-8 subject, at most 998 bytes; CR, LF, NUL, and other controls are rejected")),
 		mcp.WithString("body", mcp.Required(), mcp.MaxLength(maildomain.MaxSendBodyBytes), mcp.Description("UTF-8 plain-text body, at most 102400 bytes; NUL is rejected")),
 		mcp.WithString("idempotency_key", mcp.MaxLength(255), mcp.Description("Optional process-local key. Identical calls reuse one submission and Message-ID; changed content conflicts. Accepted and uncertain outcomes stay until process exit; at most 128 keys.")),
+		mcp.WithBoolean("archive_sent", mcp.DefaultBool(false), mcp.Description("Append the exact accepted message to the unique SPECIAL-USE Sent mailbox. Requires the mail.archive permission; archival has a separate outcome and never resubmits mail")),
 	)
 	schema, err := json.Marshal(map[string]any{
 		"type":                 tool.InputSchema.Type,

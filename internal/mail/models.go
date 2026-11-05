@@ -33,6 +33,7 @@ type Config struct {
 	Address         string          `json:"-"`
 	Password        string          `json:"-"`
 	RecipientPolicy RecipientPolicy `json:"-"`
+	EnableSentCopy  bool            `json:"-"`
 }
 
 // Mailbox is one bounded LIST response item. Delimiter is empty when the
@@ -192,6 +193,7 @@ type SendInput struct {
 	Subject        string   `json:"subject,omitempty"`
 	Body           string   `json:"body"`
 	IdempotencyKey string   `json:"idempotency_key,omitempty"`
+	ArchiveSent    bool     `json:"archive_sent,omitempty"`
 }
 
 type SendStatus string
@@ -209,9 +211,12 @@ type RecipientStatus struct {
 }
 
 type SendResult struct {
-	Status     SendStatus        `json:"status"`
-	MessageID  string            `json:"messageId"`
-	Recipients []RecipientStatus `json:"recipients,omitempty"`
+	Status          SendStatus        `json:"status"`
+	MessageID       string            `json:"messageId"`
+	Recipients      []RecipientStatus `json:"recipients,omitempty"`
+	ArchivalStatus  string            `json:"archivalStatus,omitempty"`
+	SentDestination string            `json:"sentDestination,omitempty"`
+	ArchivalError   string            `json:"archivalError,omitempty"`
 	// SentCopyUnavailable is true because SMTP submission does not APPEND a
 	// copy to Sent and no server-side Sent-copy behavior is assumed.
 	SentCopyUnavailable bool   `json:"sentCopyUnavailable,omitempty"`

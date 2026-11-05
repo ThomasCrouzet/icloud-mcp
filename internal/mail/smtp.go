@@ -280,6 +280,9 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	if !s.sendEnabled {
 		return SendResult{}, newError(CodeAuthorization, "mail send is disabled")
 	}
+	if input.ArchiveSent && !s.config.EnableSentCopy {
+		return SendResult{}, validationError("Sent-copy archival is not enabled")
+	}
 	prepared, err := s.buildMessage(input)
 	if err != nil {
 		return SendResult{Status: SendRejected}, err
@@ -346,6 +349,22 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	}
 	result.Status = SendAccepted
 	result.SentCopyUnavailable = true
+	if input.ArchiveSent {
+		status, destination, _, archivalErr := s.archiveSent(ctx, prepared.bytes)
+		result.ArchivalStatus = status
+		result.SentDestination = destination
+		if status == ArchivalStored {
+			result.SentCopyUnavailable = false
+		} else if archivalErr != nil {
+			if public := AsError(archivalErr); public != nil {
+				result.ArchivalError = string(public.Code)
+			} else {
+				result.ArchivalError = "archive_failed"
+			}
+		}
+	} else if s.config.EnableSentCopy {
+		result.ArchivalStatus = ArchivalNotAttempted
+	}
 	return result, nil
 }
 

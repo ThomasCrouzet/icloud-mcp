@@ -13,6 +13,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   behavior.
 
 ### Added
+- Add optional `archive_sent` with a separate `mail.archive` permission. After
+  definitive SMTP acceptance, APPEND the exact message to the unique
+  SPECIAL-USE Sent mailbox. Report stored, failed, unknown, not attempted, or
+  disabled without resubmitting mail.
 - Include the validated calendar path in every `search_events` row so an agent
   can continue with `get_event` or `update_event` when a UID exists in several
   calendars.

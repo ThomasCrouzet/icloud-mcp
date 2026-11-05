@@ -394,6 +394,7 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 			Address:         strings.Clone(cfg.MailAddress),
 			Password:        strings.Clone(cfg.MailPassword),
 			RecipientPolicy: recipientPolicy,
+			EnableSentCopy:  capabilities.MailArchive,
 		}, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
 		if err != nil {
 			return nil, nil, fmt.Errorf("mail service initialization failed: %w", err)

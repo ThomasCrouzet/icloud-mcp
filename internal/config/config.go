@@ -61,10 +61,11 @@ type Permissions struct {
 	contactsWrite  bool
 	contactsDelete bool
 
-	mailRead   bool
-	mailMutate bool
-	mailTrash  bool
-	mailSend   bool
+	mailRead    bool
+	mailMutate  bool
+	mailTrash   bool
+	mailSend    bool
+	mailArchive bool
 }
 
 // ParsePermissions parses ICLOUD_MCP_PERMISSIONS. The value is a comma
@@ -107,6 +108,8 @@ func ParsePermissions(value string) (Permissions, error) {
 			permissions.mailTrash = true
 		case "mail.send":
 			permissions.mailSend = true
+		case "mail.archive":
+			permissions.mailArchive = true
 		default:
 			return Permissions{}, fmt.Errorf("invalid %s: unknown capability", permissionsEnvVar)
 		}
@@ -130,6 +133,7 @@ func (p Permissions) Effective(readOnly bool) Permissions {
 		p.mailMutate = false
 		p.mailTrash = false
 		p.mailSend = false
+		p.mailArchive = false
 	}
 	return p
 }
@@ -147,6 +151,7 @@ func LegacyPermissions(readOnly, contactsEnabled, mailEnabled, mailWrite, mailSe
 		mailMutate:     mailEnabled && mailWrite && !readOnly,
 		mailTrash:      mailEnabled && mailWrite && !readOnly,
 		mailSend:       mailEnabled && mailSend && !readOnly,
+		mailArchive:    false,
 	}
 }
 
@@ -161,10 +166,11 @@ type CapabilitySet struct {
 	ContactsWrite  bool
 	ContactsDelete bool
 
-	MailRead   bool
-	MailMutate bool
-	MailTrash  bool
-	MailSend   bool
+	MailRead    bool
+	MailMutate  bool
+	MailTrash   bool
+	MailSend    bool
+	MailArchive bool
 }
 
 // Capabilities resolves the effective permissions.
@@ -173,12 +179,12 @@ func (p Permissions) Capabilities(readOnly bool) CapabilitySet {
 	set := CapabilitySet{
 		CalendarRead: effective.calendarRead, CalendarWrite: effective.calendarWrite, CalendarDelete: effective.calendarDelete,
 		ContactsRead: effective.contactsRead, ContactsWrite: effective.contactsWrite, ContactsDelete: effective.contactsDelete,
-		MailRead: effective.mailRead, MailMutate: effective.mailMutate, MailTrash: effective.mailTrash, MailSend: effective.mailSend,
+		MailRead: effective.mailRead, MailMutate: effective.mailMutate, MailTrash: effective.mailTrash, MailSend: effective.mailSend, MailArchive: effective.mailArchive,
 	}
 	if readOnly {
 		set.CalendarWrite, set.CalendarDelete = false, false
 		set.ContactsWrite, set.ContactsDelete = false, false
-		set.MailMutate, set.MailTrash, set.MailSend = false, false, false
+		set.MailMutate, set.MailTrash, set.MailSend, set.MailArchive = false, false, false, false
 	}
 	return set
 }
@@ -195,8 +201,11 @@ func (p Permissions) RequestsContacts() bool {
 
 // RequestsMail reports whether any Mail capability is requested.
 func (p Permissions) RequestsMail() bool {
-	return p.mailRead || p.mailMutate || p.mailTrash || p.mailSend
+	return p.mailRead || p.mailMutate || p.mailTrash || p.mailSend || p.mailArchive
 }
+
+// RequestsMailArchive reports whether the explicit Sent-copy capability is requested.
+func (p Permissions) RequestsMailArchive() bool { return p.mailArchive }
 
 // RequestedMailSend reports whether the configuration requests SMTP send
 // before the global read-only switch is applied.
@@ -496,10 +505,13 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%s requires %s=true for Contacts capabilities", permissionsEnvVar, enableContactsEnvVar)
 			}
 		}
-		if c.Permissions.RequestedMailRead() || c.Permissions.RequestedMailMutation() || c.Permissions.RequestedMailSend() {
+		if c.Permissions.RequestedMailRead() || c.Permissions.RequestedMailMutation() || c.Permissions.RequestedMailSend() || c.Permissions.RequestsMailArchive() {
 			if !c.EnableMail {
 				return fmt.Errorf("%s requires %s=true for Mail capabilities", permissionsEnvVar, enableMailEnvVar)
 			}
+		}
+		if c.Permissions.RequestsMailArchive() && !c.Permissions.RequestedMailSend() {
+			return fmt.Errorf("%s requires mail.send for mail.archive", permissionsEnvVar)
 		}
 	}
 	if c.requestsMail() {

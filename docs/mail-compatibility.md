@@ -248,7 +248,7 @@ Submission outcomes are:
   have reached the server and no definitive final response is available.
 
 The client never retries SMTP. After `outcome_unknown`, inspect Sent and the
-recipients before another send. The client never uses APPEND for a Sent copy.
+recipients before another send.
 
 ### Send idempotency
 
@@ -264,6 +264,21 @@ outcomes until process exit. It has 128 keys. A full cache rejects a new claim
 original claim. A later call receives the original result, including
 `outcome_unknown`, and never submits again. Restart clears the cache, so this is
 not an exactly-once delivery guarantee.
+
+### Sent-copy archival
+
+`send_message` accepts `archive_sent`, default false. It requires the separate
+`mail.archive` permission and Mail send. A definitive SMTP acceptance can then
+produce one APPEND of the exact submitted message and Message-ID to the unique
+selectable SPECIAL-USE `\Sent` mailbox. Missing, duplicate, or non-selectable
+Sent targets fail archival without resubmitting mail.
+
+Submission and archival have separate outcomes: `stored`, `failed`, `unknown`,
+`not_attempted`, or `disabled`. SMTP rejection or ambiguity never triggers
+archival. A failed or lost APPEND acknowledgement leaves the accepted SMTP
+result intact. No failure path repeats SMTP or APPEND. The client never assumes
+that the provider created a Sent copy. A stored copy proves archival, not
+recipient delivery.
 Thus, accepted SMTP returns `sentCopyUnavailable: true`. This field means that
 the client did not make sure that a copy exists. iCloud can create one, but the
 client does not assume this behavior.
