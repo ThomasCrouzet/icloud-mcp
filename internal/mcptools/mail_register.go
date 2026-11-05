@@ -19,7 +19,7 @@ type MailDeps struct {
 
 // RegisterMail registers Mail reads and the independently gated mutation and
 // send tools. It returns tool names in registration order for capability plans.
-func RegisterMail(s *server.MCPServer, deps MailDeps, allowMutations, allowSend bool) []string {
+func RegisterMail(s *server.MCPServer, deps MailDeps, allowRead, allowMutations, allowTrash, allowSend bool) []string {
 	if deps.Redactor == nil {
 		panic("mcptools: Mail tools require a non-nil redactor")
 	}
@@ -27,17 +27,22 @@ func RegisterMail(s *server.MCPServer, deps MailDeps, allowMutations, allowSend 
 		tool    mcp.Tool
 		handler server.ToolHandlerFunc
 	}
-	registrations := []registration{
-		{newListMailboxesTool(), listMailboxesHandler(deps)},
-		{newSearchMessagesTool(), searchMessagesHandler(deps)},
-		{newGetMessageTool(), getMessageHandler(deps)},
+	var registrations []registration
+	if allowRead {
+		registrations = append(registrations,
+			registration{newListMailboxesTool(), listMailboxesHandler(deps)},
+			registration{newSearchMessagesTool(), searchMessagesHandler(deps)},
+			registration{newGetMessageTool(), getMessageHandler(deps)},
+		)
 	}
 	if allowMutations {
 		registrations = append(registrations,
 			registration{newSetMessageFlagsTool(), setMessageFlagsHandler(deps)},
 			registration{newMoveMessageTool(), moveMessageHandler(deps)},
-			registration{newTrashMessageTool(), trashMessageHandler(deps)},
 		)
+	}
+	if allowTrash {
+		registrations = append(registrations, registration{newTrashMessageTool(), trashMessageHandler(deps)})
 	}
 	if allowSend {
 		registrations = append(registrations, registration{newSendMessageTool(), sendMessageHandler(deps)})

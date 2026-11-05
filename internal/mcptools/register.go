@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/contacts"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 	maildomain "github.com/ThomasCrouzet/icloud-mcp/internal/mail"
@@ -44,68 +45,152 @@ type Deps struct {
 // fields prevent registration and capability reporting from being changed
 // independently after construction.
 type CapabilityPlan struct {
-	readOnly        bool
-	contactsEnabled bool
-	mailEnabled     bool
-	mailMutations   bool
-	mailSend        bool
+	readOnly bool
+
+	calendarRead   bool
+	calendarWrite  bool
+	calendarDelete bool
+
+	contactsRead   bool
+	contactsWrite  bool
+	contactsDelete bool
+
+	mailRead   bool
+	mailMutate bool
+	mailTrash  bool
+	mailSend   bool
 }
 
 // NewCapabilityPlan applies the global read-only and domain enable gates to
-// the configured capability booleans.
+// the legacy configured booleans.
 func NewCapabilityPlan(readOnly, contactsEnabled, mailEnabled, mailMutations, mailSend bool) CapabilityPlan {
 	return CapabilityPlan{
-		readOnly:        readOnly,
-		contactsEnabled: contactsEnabled,
-		mailEnabled:     mailEnabled,
-		mailMutations:   mailEnabled && mailMutations && !readOnly,
-		mailSend:        mailEnabled && mailSend && !readOnly,
+		readOnly:       readOnly,
+		calendarRead:   true,
+		calendarWrite:  !readOnly,
+		calendarDelete: !readOnly,
+		contactsRead:   contactsEnabled,
+		contactsWrite:  contactsEnabled && !readOnly,
+		contactsDelete: contactsEnabled && !readOnly,
+		mailRead:       mailEnabled,
+		mailMutate:     mailEnabled && mailMutations && !readOnly,
+		mailTrash:      mailEnabled && mailMutations && !readOnly,
+		mailSend:       mailEnabled && mailSend && !readOnly,
+	}
+}
+
+// NewCapabilityPlanFromConfig builds the plan from an effective capability
+// set. The set already includes the global read-only switch.
+func NewCapabilityPlanFromConfig(readOnly bool, set config.CapabilitySet) CapabilityPlan {
+	if readOnly {
+		set.CalendarWrite, set.CalendarDelete = false, false
+		set.ContactsWrite, set.ContactsDelete = false, false
+		set.MailMutate, set.MailTrash, set.MailSend = false, false, false
+	}
+	return CapabilityPlan{
+		readOnly:       readOnly,
+		calendarRead:   set.CalendarRead,
+		calendarWrite:  set.CalendarWrite,
+		calendarDelete: set.CalendarDelete,
+		contactsRead:   set.ContactsRead,
+		contactsWrite:  set.ContactsWrite,
+		contactsDelete: set.ContactsDelete,
+		mailRead:       set.MailRead,
+		mailMutate:     set.MailMutate,
+		mailTrash:      set.MailTrash,
+		mailSend:       set.MailSend,
 	}
 }
 
 // ReadOnly reports whether the global mutation kill switch is active.
 func (p CapabilityPlan) ReadOnly() bool { return p.readOnly }
 
-// ContactsEnabled reports whether the Contacts domain is configured.
-func (p CapabilityPlan) ContactsEnabled() bool { return p.contactsEnabled }
+// CalendarReadEnabled reports whether Calendar read tools are effective.
+func (p CapabilityPlan) CalendarReadEnabled() bool { return p.calendarRead }
 
-// MailEnabled reports whether the Mail domain is configured.
-func (p CapabilityPlan) MailEnabled() bool { return p.mailEnabled }
+// CalendarCreateUpdateEnabled reports whether Calendar create and update tools
+// are effective.
+func (p CapabilityPlan) CalendarCreateUpdateEnabled() bool { return p.calendarWrite }
 
-// CalendarWritesEnabled reports whether Calendar mutations are effective.
-func (p CapabilityPlan) CalendarWritesEnabled() bool { return !p.readOnly }
+// CalendarDeleteEnabled reports whether the Calendar delete tool is effective.
+func (p CapabilityPlan) CalendarDeleteEnabled() bool { return p.calendarDelete }
 
-// ContactsWritesEnabled reports whether Contacts mutations are effective.
-func (p CapabilityPlan) ContactsWritesEnabled() bool {
-	return p.contactsEnabled && !p.readOnly
+// CalendarWritesEnabled reports whether any Calendar mutation is effective.
+func (p CapabilityPlan) CalendarWritesEnabled() bool {
+	return p.calendarWrite || p.calendarDelete
 }
 
-// MailMutationsEnabled reports whether IMAP mutations are effective.
-func (p CapabilityPlan) MailMutationsEnabled() bool { return p.mailMutations }
+// ContactsReadEnabled reports whether Contacts read tools are effective.
+func (p CapabilityPlan) ContactsReadEnabled() bool { return p.contactsRead }
+
+// ContactsEnabled reports whether the Contacts domain is configured for reads
+// or mutations.
+func (p CapabilityPlan) ContactsEnabled() bool {
+	return p.contactsRead || p.contactsWrite || p.contactsDelete
+}
+
+// ContactsCreateUpdateEnabled reports whether Contacts create and update tools
+// are effective.
+func (p CapabilityPlan) ContactsCreateUpdateEnabled() bool { return p.contactsWrite }
+
+// ContactsDeleteEnabled reports whether the Contacts delete tool is effective.
+func (p CapabilityPlan) ContactsDeleteEnabled() bool { return p.contactsDelete }
+
+// ContactsWritesEnabled reports whether any Contacts mutation is effective.
+func (p CapabilityPlan) ContactsWritesEnabled() bool {
+	return p.contactsWrite || p.contactsDelete
+}
+
+// MailReadEnabled reports whether Mail read tools are effective.
+func (p CapabilityPlan) MailReadEnabled() bool { return p.mailRead }
+
+// MailEnabled reports whether the Mail domain is configured for reads or
+// mutations.
+func (p CapabilityPlan) MailEnabled() bool {
+	return p.mailRead || p.mailMutate || p.mailTrash || p.mailSend
+}
+
+// MailMutationsEnabled reports whether flag and move mutations are effective.
+func (p CapabilityPlan) MailMutationsEnabled() bool { return p.mailMutate }
+
+// MailTrashEnabled reports whether trash mutations are effective.
+func (p CapabilityPlan) MailTrashEnabled() bool { return p.mailTrash }
 
 // MailSendEnabled reports whether SMTP submission is effective.
 func (p CapabilityPlan) MailSendEnabled() bool { return p.mailSend }
 
 // RegisteredTools returns a sorted copy of the exact registration manifest.
 func (p CapabilityPlan) RegisteredTools() []string {
-	names := calendarReadToolNames()
-	if p.CalendarWritesEnabled() {
-		names = append(names, calendarWriteToolNames()...)
+	var names []string
+	if p.calendarRead {
+		names = append(names, calendarReadToolNames()...)
 	}
-	if p.contactsEnabled {
+	if p.calendarWrite {
+		names = append(names, "create_event", "update_event")
+	}
+	if p.calendarDelete {
+		names = append(names, "delete_event")
+	}
+	if p.contactsRead {
 		names = append(names, contactsReadToolNames()...)
-		if p.ContactsWritesEnabled() {
-			names = append(names, contactsWriteToolNames()...)
-		}
 	}
-	if p.mailEnabled {
+	if p.contactsWrite {
+		names = append(names, "create_contact", "update_contact")
+	}
+	if p.contactsDelete {
+		names = append(names, "delete_contact")
+	}
+	if p.mailRead {
 		names = append(names, mailReadToolNames()...)
-		if p.mailMutations {
-			names = append(names, mailMutationToolNames()...)
-		}
-		if p.mailSend {
-			names = append(names, "send_message")
-		}
+	}
+	if p.mailMutate {
+		names = append(names, "set_message_flags", "move_message")
+	}
+	if p.mailTrash {
+		names = append(names, "trash_message")
+	}
+	if p.mailSend {
+		names = append(names, "send_message")
 	}
 	names = append(names, "icloud_capabilities")
 	sort.Strings(names)
@@ -166,7 +251,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if s == nil {
 		panic("mcptools: cannot register tools on a nil MCP server")
 	}
-	if isNilDependency(deps.Service) {
+	if isNilDependency(deps.Service) && (plan.CalendarReadEnabled() || plan.CalendarWritesEnabled()) {
 		panic("mcptools: Calendar tools are enabled but Calendar service is nil")
 	}
 	if deps.Redactor == nil {
@@ -179,21 +264,24 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 		panic("mcptools: Mail tools are enabled but Mail service is nil")
 	}
 	mutationsEnabled := plan.CalendarWritesEnabled() || plan.ContactsWritesEnabled() ||
-		plan.MailMutationsEnabled() || plan.MailSendEnabled()
+		plan.MailMutationsEnabled() || plan.MailTrashEnabled() || plan.MailSendEnabled()
 	if mutationsEnabled && deps.Audit == nil {
 		panic("mcptools: enabled mutation tools require a non-nil audit logger")
 	}
 	deps.ReadOnly = plan.ReadOnly()
-	registered := registerCalendar(s, deps, plan.CalendarWritesEnabled())
+	var registered []string
+	if plan.CalendarReadEnabled() || plan.CalendarWritesEnabled() {
+		registered = registerCalendar(s, deps, plan.CalendarReadEnabled(), plan.CalendarCreateUpdateEnabled(), plan.CalendarDeleteEnabled())
+	}
 	if plan.ContactsEnabled() {
 		registered = append(registered, RegisterContacts(s, ContactsDeps{
 			Service: deps.ContactsService, Audit: deps.Audit, Redactor: deps.Redactor,
-		}, plan.ContactsWritesEnabled())...)
+		}, plan.ContactsReadEnabled(), plan.ContactsCreateUpdateEnabled(), plan.ContactsDeleteEnabled())...)
 	}
 	if plan.MailEnabled() {
 		registered = append(registered, RegisterMail(s, MailDeps{
 			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor,
-		}, plan.MailMutationsEnabled(), plan.MailSendEnabled())...)
+		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled())...)
 	}
 	s.AddTool(newICloudCapabilitiesTool(), icloudCapabilitiesHandler(deps, plan))
 	registered = append(registered, "icloud_capabilities")
@@ -227,19 +315,25 @@ func isNilDependency(dependency any) bool {
 	}
 }
 
-func registerCalendar(s *server.MCPServer, deps Deps, allowWrites bool) []string {
-	s.AddTool(newListCalendarsTool(), listCalendarsHandler(deps))
-	s.AddTool(newSearchEventsTool(deps.DefaultLocation), searchEventsHandler(deps))
-	s.AddTool(newGetEventTool(), getEventHandler(deps))
-	s.AddTool(newFindFreeSlotsTool(deps.DefaultLocation), findFreeSlotsHandler(deps))
-	s.AddTool(newValidateEventTool(deps.DefaultLocation), validateEventHandler(deps))
-	s.AddTool(newCalendarCapabilitiesTool(), calendarCapabilitiesHandler(deps))
-	names := calendarReadToolNames()
-	if !allowWrites {
-		return names
+func registerCalendar(s *server.MCPServer, deps Deps, allowRead, allowWrite, allowDelete bool) []string {
+	var names []string
+	if allowRead {
+		s.AddTool(newListCalendarsTool(), listCalendarsHandler(deps))
+		s.AddTool(newSearchEventsTool(deps.DefaultLocation), searchEventsHandler(deps))
+		s.AddTool(newGetEventTool(), getEventHandler(deps))
+		s.AddTool(newFindFreeSlotsTool(deps.DefaultLocation), findFreeSlotsHandler(deps))
+		s.AddTool(newValidateEventTool(deps.DefaultLocation), validateEventHandler(deps))
+		s.AddTool(newCalendarCapabilitiesTool(), calendarCapabilitiesHandler(deps))
+		names = append(names, calendarReadToolNames()...)
 	}
-	s.AddTool(newCreateEventTool(deps.DefaultLocation), createEventHandler(deps))
-	s.AddTool(newUpdateEventTool(deps.DefaultLocation), updateEventHandler(deps))
-	s.AddTool(newDeleteEventTool(deps.DefaultLocation), deleteEventHandler(deps))
-	return append(names, calendarWriteToolNames()...)
+	if allowWrite {
+		s.AddTool(newCreateEventTool(deps.DefaultLocation), createEventHandler(deps))
+		s.AddTool(newUpdateEventTool(deps.DefaultLocation), updateEventHandler(deps))
+		names = append(names, "create_event", "update_event")
+	}
+	if allowDelete {
+		s.AddTool(newDeleteEventTool(deps.DefaultLocation), deleteEventHandler(deps))
+		names = append(names, "delete_event")
+	}
+	return names
 }

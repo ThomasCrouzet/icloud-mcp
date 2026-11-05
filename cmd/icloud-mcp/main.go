@@ -134,13 +134,7 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 		slog.Warn("SMTP recipient policy is allow-all (*); any syntactically valid address may receive mail after AUTH")
 	}
 
-	plan := mcptools.NewCapabilityPlan(
-		cfg.ReadOnly,
-		cfg.EnableContacts,
-		cfg.EnableMail,
-		cfg.EffectiveMailWrite(),
-		cfg.EffectiveMailSend(),
-	)
+	plan := mcptools.NewCapabilityPlanFromConfig(cfg.ReadOnly, cfg.Capabilities())
 
 	// 4. iCloud service + boot-time discovery (validates the credentials
 	// before starting the MCP server).

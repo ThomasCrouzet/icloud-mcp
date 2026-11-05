@@ -18,6 +18,7 @@ func clearEnv(t *testing.T) {
 		"ICLOUD_EMAIL",
 		"ICLOUD_PASSWORD",
 		"ICLOUD_MCP_READ_ONLY",
+		"ICLOUD_MCP_PERMISSIONS",
 		"ICLOUD_MCP_LOG_LEVEL",
 		"ICLOUD_MCP_DEFAULT_TZ",
 		"ICLOUD_MCP_ENABLE_CONTACTS",
@@ -845,5 +846,85 @@ func TestConfig_EffectiveCapabilitiesPreserveConfiguredFlags(t *testing.T) {
 	cfg.ReadOnly = false
 	if !cfg.EffectiveContactsWrite() || !cfg.EffectiveMailWrite() || !cfg.EffectiveMailSend() {
 		t.Error("configured effective capabilities were not enabled")
+	}
+}
+
+func TestParsePermissions(t *testing.T) {
+	valid := "calendar.read,calendar.write,calendar.delete,contacts.read,contacts.write,contacts.delete,mail.read,mail.mutate,mail.trash,mail.send"
+	permissions, err := ParsePermissions(valid)
+	if err != nil {
+		t.Fatalf("ParsePermissions(valid): %v", err)
+	}
+	set := permissions.Capabilities(false)
+	if !set.CalendarRead || !set.CalendarWrite || !set.CalendarDelete ||
+		!set.ContactsRead || !set.ContactsWrite || !set.ContactsDelete ||
+		!set.MailRead || !set.MailMutate || !set.MailTrash || !set.MailSend {
+		t.Fatalf("valid permission set lost a capability: %+v", set)
+	}
+	for _, value := range []string{"calendar", "calendar.write,calendar.write", "calendar.write,", ",mail.read", "mail.delete", "calendar.write,unknown"} {
+		if _, err := ParsePermissions(value); err == nil {
+			t.Errorf("ParsePermissions(%q) unexpectedly succeeded", value)
+		}
+	}
+	if _, err := ParsePermissions(""); err != nil {
+		t.Fatalf("empty permissions must keep the legacy policy: %v", err)
+	}
+}
+
+func TestLoad_ExplicitPermissionsProfiles(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+	t.Setenv("ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS", "allowed@example.com")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,mail.read,mail.send")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(calendar read + mail send): %v", err)
+	}
+	set := cfg.Capabilities()
+	if !set.CalendarRead || set.CalendarWrite || set.CalendarDelete {
+		t.Errorf("Calendar capabilities = %+v, want read only", set)
+	}
+	if !set.MailRead || !set.MailSend || set.MailMutate || set.MailTrash {
+		t.Errorf("Mail capabilities = %+v, want read and send only", set)
+	}
+	if !cfg.EffectiveMailSend() {
+		t.Error("mail send is not effective")
+	}
+
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,calendar.write,calendar.delete,contacts.read")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "ICLOUD_MCP_ENABLE_CONTACTS") {
+		t.Fatalf("Contacts capability without the domain gate error = %v", err)
+	}
+
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "mail.read")
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "false")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "ICLOUD_MCP_ENABLE_MAIL") {
+		t.Fatalf("Mail capability without the domain gate error = %v", err)
+	}
+}
+
+func TestLoad_ExplicitPermissionsAndReadOnly(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+	t.Setenv("ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS", "allowed@example.com")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,calendar.write,calendar.delete,mail.send")
+	t.Setenv("ICLOUD_MCP_READ_ONLY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	set := cfg.Capabilities()
+	if !set.CalendarRead || set.CalendarWrite || set.CalendarDelete || set.MailSend {
+		t.Fatalf("global read-only did not disable mutations and send: %+v", set)
 	}
 }

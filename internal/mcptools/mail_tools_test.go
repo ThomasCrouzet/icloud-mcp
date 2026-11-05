@@ -146,7 +146,7 @@ func TestRegisterMailCombinations(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			s := server.NewMCPServer("mail-test", "test", server.WithToolCapabilities(false))
-			got := RegisterMail(s, mailToolsDeps(&mailToolsFakeService{}), test.mutations, test.send)
+			got := RegisterMail(s, mailToolsDeps(&mailToolsFakeService{}), true, test.mutations, test.mutations, test.send)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("RegisterMail names = %v, want %v", got, test.want)
 			}

@@ -38,6 +38,7 @@ const defaultTZEnvVar = "ICLOUD_MCP_DEFAULT_TZ"
 
 const (
 	readOnlyEnvVar              = "ICLOUD_MCP_READ_ONLY"
+	permissionsEnvVar           = "ICLOUD_MCP_PERMISSIONS"
 	enableContactsEnvVar        = "ICLOUD_MCP_ENABLE_CONTACTS"
 	enableMailEnvVar            = "ICLOUD_MCP_ENABLE_MAIL"
 	enableMailWriteEnvVar       = "ICLOUD_MCP_ENABLE_MAIL_WRITE"
@@ -46,6 +47,164 @@ const (
 	mailPasswordEnvVar          = "ICLOUD_MAIL_PASSWORD"
 	smtpAllowedRecipientsEnvVar = "ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS"
 )
+
+// Permissions is an immutable explicit capability policy. Its zero value
+// means "not configured"; legacy domain switches then apply.
+type Permissions struct {
+	configured bool
+
+	calendarRead   bool
+	calendarWrite  bool
+	calendarDelete bool
+
+	contactsRead   bool
+	contactsWrite  bool
+	contactsDelete bool
+
+	mailRead   bool
+	mailMutate bool
+	mailTrash  bool
+	mailSend   bool
+}
+
+// ParsePermissions parses ICLOUD_MCP_PERMISSIONS. The value is a comma
+// separated list of domain.action tokens. An empty value disables the explicit
+// policy and keeps the legacy switches.
+func ParsePermissions(value string) (Permissions, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return Permissions{}, nil
+	}
+	permissions := Permissions{configured: true}
+	seen := make(map[string]struct{})
+	for _, token := range strings.Split(value, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return Permissions{}, fmt.Errorf("invalid %s: empty capability", permissionsEnvVar)
+		}
+		if _, duplicate := seen[token]; duplicate {
+			return Permissions{}, fmt.Errorf("invalid %s: duplicate capability", permissionsEnvVar)
+		}
+		seen[token] = struct{}{}
+		switch token {
+		case "calendar.read":
+			permissions.calendarRead = true
+		case "calendar.write":
+			permissions.calendarWrite = true
+		case "calendar.delete":
+			permissions.calendarDelete = true
+		case "contacts.read":
+			permissions.contactsRead = true
+		case "contacts.write":
+			permissions.contactsWrite = true
+		case "contacts.delete":
+			permissions.contactsDelete = true
+		case "mail.read":
+			permissions.mailRead = true
+		case "mail.mutate":
+			permissions.mailMutate = true
+		case "mail.trash":
+			permissions.mailTrash = true
+		case "mail.send":
+			permissions.mailSend = true
+		default:
+			return Permissions{}, fmt.Errorf("invalid %s: unknown capability", permissionsEnvVar)
+		}
+	}
+	return permissions, nil
+}
+
+// Configured reports whether an explicit permission list was set.
+func (p Permissions) Configured() bool { return p.configured }
+
+// Effective applies the global read-only kill switch.
+func (p Permissions) Effective(readOnly bool) Permissions {
+	if !p.configured {
+		return p
+	}
+	if readOnly {
+		p.calendarWrite = false
+		p.calendarDelete = false
+		p.contactsWrite = false
+		p.contactsDelete = false
+		p.mailMutate = false
+		p.mailTrash = false
+		p.mailSend = false
+	}
+	return p
+}
+
+// LegacyPermissions derives the documented pre-policy behavior.
+func LegacyPermissions(readOnly, contactsEnabled, mailEnabled, mailWrite, mailSend bool) Permissions {
+	return Permissions{
+		calendarRead:   true,
+		calendarWrite:  !readOnly,
+		calendarDelete: !readOnly,
+		contactsRead:   contactsEnabled,
+		contactsWrite:  contactsEnabled && !readOnly,
+		contactsDelete: contactsEnabled && !readOnly,
+		mailRead:       mailEnabled,
+		mailMutate:     mailEnabled && mailWrite && !readOnly,
+		mailTrash:      mailEnabled && mailWrite && !readOnly,
+		mailSend:       mailEnabled && mailSend && !readOnly,
+	}
+}
+
+// CapabilitySet is the effective, immutable permission set after the global
+// read-only switch. It contains no secrets.
+type CapabilitySet struct {
+	CalendarRead   bool
+	CalendarWrite  bool
+	CalendarDelete bool
+
+	ContactsRead   bool
+	ContactsWrite  bool
+	ContactsDelete bool
+
+	MailRead   bool
+	MailMutate bool
+	MailTrash  bool
+	MailSend   bool
+}
+
+// Capabilities resolves the effective permissions.
+func (p Permissions) Capabilities(readOnly bool) CapabilitySet {
+	effective := p.Effective(readOnly)
+	set := CapabilitySet{
+		CalendarRead: effective.calendarRead, CalendarWrite: effective.calendarWrite, CalendarDelete: effective.calendarDelete,
+		ContactsRead: effective.contactsRead, ContactsWrite: effective.contactsWrite, ContactsDelete: effective.contactsDelete,
+		MailRead: effective.mailRead, MailMutate: effective.mailMutate, MailTrash: effective.mailTrash, MailSend: effective.mailSend,
+	}
+	if readOnly {
+		set.CalendarWrite, set.CalendarDelete = false, false
+		set.ContactsWrite, set.ContactsDelete = false, false
+		set.MailMutate, set.MailTrash, set.MailSend = false, false, false
+	}
+	return set
+}
+
+// RequestedMailSend reports whether the configuration requests SMTP send
+// before the global read-only switch is applied.
+func (p Permissions) RequestedMailSend() bool { return p.mailSend }
+
+// RequestedCalendarRead reports whether Calendar read tools are requested.
+func (p Permissions) RequestedCalendarRead() bool { return p.calendarRead }
+
+// RequestedContactsRead reports whether Contacts read tools are requested.
+func (p Permissions) RequestedContactsRead() bool { return p.contactsRead }
+
+// RequestedMailRead reports whether Mail read tools are requested.
+func (p Permissions) RequestedMailRead() bool { return p.mailRead }
+
+// RequestedContactsMutation reports whether any Contacts mutation is requested.
+func (p Permissions) RequestedContactsMutation() bool {
+	return p.contactsWrite || p.contactsDelete
+}
+
+// RequestedMailMutation reports whether any Mail mutation is requested.
+func (p Permissions) RequestedMailMutation() bool {
+	return p.mailMutate || p.mailTrash
+}
 
 // RecipientPolicy is an immutable exact-address SMTP recipient policy. Its
 // zero value denies every recipient.
@@ -127,6 +286,7 @@ type Config struct {
 	Email                 string          // ICLOUD_EMAIL (file:// supported)
 	Password              string          // ICLOUD_PASSWORD (file:// supported), NEVER log it
 	ReadOnly              bool            // ICLOUD_MCP_READ_ONLY
+	Permissions           Permissions     // ICLOUD_MCP_PERMISSIONS explicit capability policy
 	EnableContacts        bool            // ICLOUD_MCP_ENABLE_CONTACTS
 	EnableMail            bool            // ICLOUD_MCP_ENABLE_MAIL
 	EnableMailWrite       bool            // ICLOUD_MCP_ENABLE_MAIL_WRITE, configured value
@@ -178,6 +338,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	permissions, err := ParsePermissions(os.Getenv(permissionsEnvVar))
+	if err != nil {
+		return nil, err
+	}
 
 	email, err := loadCredential("ICLOUD_EMAIL")
 	if err != nil {
@@ -221,6 +385,7 @@ func Load() (*Config, error) {
 		Email:                 email,
 		Password:              password,
 		ReadOnly:              readOnly,
+		Permissions:           permissions,
 		EnableContacts:        enableContacts,
 		EnableMail:            enableMail,
 		EnableMailWrite:       enableMailWrite,
@@ -280,6 +445,18 @@ func (c *Config) Validate() error {
 	if c.EnableMailSend && !c.EnableMail {
 		return fmt.Errorf("%s requires %s=true", enableMailSendEnvVar, enableMailEnvVar)
 	}
+	if c.Permissions.Configured() {
+		if c.Permissions.RequestedContactsRead() || c.Permissions.RequestedContactsMutation() {
+			if !c.EnableContacts {
+				return fmt.Errorf("%s requires %s=true for Contacts capabilities", permissionsEnvVar, enableContactsEnvVar)
+			}
+		}
+		if c.Permissions.RequestedMailRead() || c.Permissions.RequestedMailMutation() || c.Permissions.RequestedMailSend() {
+			if !c.EnableMail {
+				return fmt.Errorf("%s requires %s=true for Mail capabilities", permissionsEnvVar, enableMailEnvVar)
+			}
+		}
+	}
 	if c.EnableMail {
 		if hasCredentialControl(c.MailAddress) {
 			return fmt.Errorf("invalid %s: must be a full email address", mailAddressEnvVar)
@@ -306,26 +483,50 @@ func (c *Config) Validate() error {
 	}
 	c.SMTPRecipientPolicy = policy
 	c.SMTPAllowedRecipients = policy.Recipients()
-	if c.EnableMailSend && !policy.Configured() {
-		return fmt.Errorf("%s is required when %s=true", smtpAllowedRecipientsEnvVar, enableMailSendEnvVar)
+	requestedSend := c.EnableMailSend
+	if c.Permissions.Configured() {
+		requestedSend = c.Permissions.RequestedMailSend()
+	}
+	if requestedSend && !policy.Configured() {
+		return fmt.Errorf("%s is required when mail send is requested", smtpAllowedRecipientsEnvVar)
 	}
 	return nil
 }
 
-// EffectiveContactsWrite reports whether Contacts mutation tools may be
+// EffectivePermissions returns the capability set after the global read-only
+// switch. An unset ICLOUD_MCP_PERMISSIONS keeps the legacy domain switches.
+func (c *Config) EffectivePermissions() Permissions {
+	if c.Permissions.Configured() {
+		return c.Permissions.Effective(c.ReadOnly)
+	}
+	return LegacyPermissions(c.ReadOnly, c.EnableContacts, c.EnableMail, c.EnableMailWrite, c.EnableMailSend)
+}
+
+// Capabilities returns the effective capability set.
+func (c *Config) Capabilities() CapabilitySet {
+	return c.EffectivePermissions().Capabilities(c.ReadOnly)
+}
+
+// EffectiveContactsWrite reports whether Contacts create/update tools may be
 // registered after applying the global read-only switch.
 func (c *Config) EffectiveContactsWrite() bool {
-	return c.EnableContacts && !c.ReadOnly
+	return c.Capabilities().ContactsWrite
+}
+
+// EffectiveContactsDelete reports whether Contacts delete tools may be
+// registered after applying the global read-only switch.
+func (c *Config) EffectiveContactsDelete() bool {
+	return c.Capabilities().ContactsDelete
 }
 
 // EffectiveMailWrite reports whether Mail mutation tools may be registered.
 func (c *Config) EffectiveMailWrite() bool {
-	return c.EnableMail && c.EnableMailWrite && !c.ReadOnly
+	return c.Capabilities().MailMutate || c.Capabilities().MailTrash
 }
 
 // EffectiveMailSend reports whether SMTP submission may be registered.
 func (c *Config) EffectiveMailSend() bool {
-	return c.EnableMail && c.EnableMailSend && !c.ReadOnly && c.SMTPRecipientPolicy.Configured()
+	return c.Capabilities().MailSend && c.SMTPRecipientPolicy.Configured()
 }
 
 func recipientPolicyFromAddresses(addresses []string) (RecipientPolicy, error) {
