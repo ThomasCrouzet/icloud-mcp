@@ -151,6 +151,9 @@ install: build ## Build a host-compatible binary and copy it to INSTALL_DIR.
 	cp $(BIN_DIR)/$(PROJECT) $(INSTALL_DIR)/$(PROJECT)
 	@echo "Installed: $(INSTALL_DIR)/$(PROJECT)"
 
+check: ## Run gofmt, vet, guards, race tests, protocol evidence, and coverage floors.
+	bash scripts/check.sh
+
 test: ## Run Go tests with race detection and coverage.
 	$(GO) test ./... -race -cover
 

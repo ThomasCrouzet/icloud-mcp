@@ -16,6 +16,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A pending next version no longer fails `main`. Add
   `make check-release-metadata` and keep `make check-registry` for published
   state.
+- Extract the security AST guards into versioned tools under `scripts/guards/`.
+  Add `make check` for gofmt, vet, guards, race tests, protocol evidence, and
+  the shared coverage floors. CI invokes the same guard and coverage scripts.
 
 ### Fixed
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays

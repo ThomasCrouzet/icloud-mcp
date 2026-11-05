@@ -1,0 +1,325 @@
+package main
+
+import (
+  "fmt"
+  "go/ast"
+  "go/parser"
+  "go/token"
+  "io/fs"
+  "os"
+  "path/filepath"
+  "strconv"
+  "strings"
+)
+
+const (
+  securityPackage = "github.com/ThomasCrouzet/icloud-mcp/internal/security"
+  webdavPackage = "github.com/emersion/go-webdav"
+  imapPackage = "github.com/emersion/go-imap/v2"
+  imapClientPackage = "github.com/emersion/go-imap/v2/imapclient"
+)
+
+var filesystemCalls = map[string]map[string]bool{
+  "os": {
+    "Chdir": true, "Chmod": true, "Chown": true, "Chtimes": true,
+    "Create": true, "CreateTemp": true, "DirFS": true, "Lchown": true,
+    "Link": true, "Lstat": true, "Mkdir": true, "MkdirAll": true,
+    "MkdirTemp": true, "Open": true, "OpenFile": true, "OpenInRoot": true,
+    "OpenRoot": true, "ReadDir": true, "ReadFile": true, "Readlink": true,
+    "Remove": true, "RemoveAll": true, "Rename": true, "Stat": true,
+    "Symlink": true, "Truncate": true, "WriteFile": true,
+  },
+  "io/ioutil": {
+    "ReadDir": true, "ReadFile": true, "TempDir": true,
+    "TempFile": true, "WriteFile": true,
+  },
+  "path/filepath": {
+    "EvalSymlinks": true, "Glob": true, "Walk": true, "WalkDir": true,
+  },
+  "syscall": {
+    "Chdir": true, "Chmod": true, "Chown": true, "Creat": true,
+    "Link": true, "Mkdir": true, "Open": true, "Readlink": true,
+    "Rename": true, "Rmdir": true, "Stat": true, "Symlink": true,
+    "Truncate": true, "Unlink": true,
+  },
+  "golang.org/x/sys/unix": {
+    "Chdir": true, "Chmod": true, "Chown": true, "Creat": true,
+    "Link": true, "Mkdir": true, "Open": true, "Openat": true,
+    "Readlink": true, "Rename": true, "Renameat": true, "Rmdir": true,
+    "Stat": true, "Symlink": true, "Truncate": true, "Unlink": true,
+    "Unlinkat": true,
+  },
+}
+
+func importedPackages(source *ast.File) map[string]string {
+  packages := make(map[string]string)
+  for _, spec := range source.Imports {
+    imported, err := strconv.Unquote(spec.Path.Value)
+    if err != nil {
+      continue
+    }
+    name := filepath.Base(imported)
+    if spec.Name != nil {
+      name = spec.Name.Name
+    } else {
+      switch imported {
+      case webdavPackage:
+        name = "webdav"
+      case imapPackage:
+        name = "imap"
+      }
+    }
+    packages[name] = imported
+  }
+  return packages
+}
+
+func selectedPackage(expression ast.Expr, packages map[string]string) (string, string, bool) {
+  selector, ok := expression.(*ast.SelectorExpr)
+  if !ok {
+    return "", "", false
+  }
+  packageName, ok := selector.X.(*ast.Ident)
+  if !ok {
+    return "", "", false
+  }
+  imported, ok := packages[packageName.Name]
+  return imported, selector.Sel.Name, ok
+}
+
+func isNil(expression ast.Expr) bool {
+  identifier, ok := expression.(*ast.Ident)
+  return ok && identifier.Name == "nil"
+}
+
+func filesystemViolation(path, function string, call *ast.CallExpr, packages map[string]string) string {
+  imported, name, ok := selectedPackage(call.Fun, packages)
+  if !ok || !filesystemCalls[imported][name] {
+    return ""
+  }
+  if filepath.ToSlash(path) == "internal/config/config.go" && function == "readCredentialFile" && imported == "os" {
+    if name == "Stat" || name == "OpenFile" {
+      return ""
+    }
+  }
+  return fmt.Sprintf("production filesystem access %s.%s is forbidden", imported, name)
+}
+
+func constructorDomain(expression ast.Expr, known map[string]string, packages map[string]string) string {
+  if identifier, ok := expression.(*ast.Ident); ok {
+    return known[identifier.Name]
+  }
+  call, ok := expression.(*ast.CallExpr)
+  if !ok {
+    return ""
+  }
+  imported, name, ok := selectedPackage(call.Fun, packages)
+  if !ok || imported != securityPackage {
+    return ""
+  }
+  switch name {
+  case "NewICloudHTTPClient":
+    return "calendar"
+  case "NewContactsHTTPClient":
+    return "contacts"
+  default:
+    return ""
+  }
+}
+
+func isScalarUIDSet(expression ast.Expr, packages map[string]string) bool {
+  uidSet, ok := expression.(*ast.CallExpr)
+  if !ok || len(uidSet.Args) != 1 {
+    return false
+  }
+  imported, name, ok := selectedPackage(uidSet.Fun, packages)
+  if !ok || imported != imapPackage || name != "UIDSetNum" {
+    return false
+  }
+  uid, ok := uidSet.Args[0].(*ast.CallExpr)
+  if !ok || len(uid.Args) != 1 {
+    return false
+  }
+  imported, name, ok = selectedPackage(uid.Fun, packages)
+  return ok && imported == imapPackage && name == "UID"
+}
+
+func fieldName(expression ast.Expr) string {
+  switch field := expression.(type) {
+  case *ast.Ident:
+    return field.Name
+  case *ast.SelectorExpr:
+    return field.Sel.Name
+  default:
+    return ""
+  }
+}
+
+func inspectFunction(path string, declaration *ast.FuncDecl, packages map[string]string, files *token.FileSet) int {
+  if declaration.Body == nil {
+    return 0
+  }
+  violations := 0
+  clients := make(map[string]string)
+  report := func(position token.Pos, message string) {
+    fmt.Printf("%s: %s\n", files.Position(position), message)
+    violations++
+  }
+  ast.Inspect(declaration.Body, func(node ast.Node) bool {
+    switch value := node.(type) {
+    case *ast.AssignStmt:
+      for index, left := range value.Lhs {
+        if index >= len(value.Rhs) {
+          continue
+        }
+        if identifier, ok := left.(*ast.Ident); ok {
+          if domain := constructorDomain(value.Rhs[index], clients, packages); domain != "" {
+            clients[identifier.Name] = domain
+          }
+        }
+        selector, ok := left.(*ast.SelectorExpr)
+        if !ok || isNil(value.Rhs[index]) {
+          continue
+        }
+        switch selector.Sel.Name {
+        case "Proxy":
+          report(left.Pos(), "non-nil HTTP proxy configuration is forbidden")
+        case "DebugWriter":
+          report(left.Pos(), "protocol debug writers are forbidden")
+        }
+      }
+    case *ast.DeclStmt:
+      general, ok := value.Decl.(*ast.GenDecl)
+      if !ok {
+        break
+      }
+      for _, item := range general.Specs {
+        spec, ok := item.(*ast.ValueSpec)
+        if !ok {
+          continue
+        }
+        for index, name := range spec.Names {
+          if index < len(spec.Values) {
+            if domain := constructorDomain(spec.Values[index], clients, packages); domain != "" {
+              clients[name.Name] = domain
+            }
+          }
+        }
+      }
+    case *ast.CompositeLit:
+      imported, typeName, protocolOptions := selectedPackage(value.Type, packages)
+      if protocolOptions && imported == imapClientPackage && typeName == "Options" {
+        for _, element := range value.Elts {
+          if _, keyed := element.(*ast.KeyValueExpr); !keyed {
+            report(element.Pos(), "unkeyed IMAP options could configure a protocol debug writer")
+          }
+        }
+      }
+      for _, element := range value.Elts {
+        field, ok := element.(*ast.KeyValueExpr)
+        if !ok || isNil(field.Value) {
+          continue
+        }
+        switch fieldName(field.Key) {
+        case "Proxy":
+          report(field.Pos(), "non-nil HTTP proxy configuration is forbidden")
+        case "DebugWriter":
+          report(field.Pos(), "protocol debug writers are forbidden")
+        }
+      }
+    case *ast.SelectorExpr:
+      imported, name, packageSelector := selectedPackage(value, packages)
+      if packageSelector && imported == "net/http" && (name == "ProxyFromEnvironment" || name == "ProxyURL") {
+        report(value.Pos(), "HTTP proxy helpers are forbidden")
+      }
+    case *ast.CallExpr:
+      if message := filesystemViolation(path, declaration.Name.Name, value, packages); message != "" {
+        report(value.Pos(), message)
+      }
+      imported, name, packageCall := selectedPackage(value.Fun, packages)
+      if packageCall && imported == webdavPackage && name == "HTTPClientWithBasicAuth" {
+        if len(value.Args) == 0 || constructorDomain(value.Args[0], clients, packages) == "" {
+          report(value.Pos(), "authenticated HTTP clients must originate from one domain-specific constructor")
+        }
+      }
+      if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "SetBasicAuth" {
+        report(value.Pos(), "direct HTTP authentication bypasses domain-specific client isolation")
+      }
+      slashPath := filepath.ToSlash(path)
+      if slashPath == "internal/security/allowlist.go" {
+        if identifier, ok := value.Fun.(*ast.Ident); ok && identifier.Name == "newDAVTransport" {
+          allowed := false
+          if len(value.Args) == 1 {
+            predicate, isIdentifier := value.Args[0].(*ast.Ident)
+            allowed = isIdentifier && (predicate.Name == "IsICloudHost" || predicate.Name == "IsContactsHost")
+          }
+          if !allowed {
+            report(value.Pos(), "DAV transports must use one domain-specific host predicate")
+          }
+        }
+      }
+      if strings.HasPrefix(slashPath, "internal/mail/") {
+        if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Expunge" {
+          report(value.Pos(), "plain or mailbox-wide IMAP EXPUNGE is forbidden")
+        }
+      }
+      if strings.HasPrefix(slashPath, "internal/mail/imapadapter/") {
+        if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "UIDExpunge" {
+          if len(value.Args) != 1 || !isScalarUIDSet(value.Args[0], packages) {
+            report(value.Pos(), "UID EXPUNGE must use one scalar UID set")
+          }
+        }
+      }
+    }
+    return true
+  })
+  return violations
+}
+
+func main() {
+  root := "."
+  if len(os.Args) == 2 {
+    root = os.Args[1]
+  }
+  files := token.NewFileSet()
+  violations := 0
+  err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+    if walkErr != nil {
+      return walkErr
+    }
+    if entry.IsDir() {
+      if entry.Name() == ".git" || entry.Name() == "vendor" {
+        return filepath.SkipDir
+      }
+      return nil
+    }
+    if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+      return nil
+    }
+    source, parseErr := parser.ParseFile(files, path, nil, 0)
+    if parseErr != nil {
+      return parseErr
+    }
+    packages := importedPackages(source)
+    for _, declaration := range source.Decls {
+      switch item := declaration.(type) {
+      case *ast.FuncDecl:
+        violations += inspectFunction(path, item, packages, files)
+      case *ast.GenDecl:
+        initializer := &ast.FuncDecl{
+          Name: ast.NewIdent("package_initializer"),
+          Body: &ast.BlockStmt{List: []ast.Stmt{&ast.DeclStmt{Decl: item}}},
+        }
+        violations += inspectFunction(path, initializer, packages, files)
+      }
+    }
+    return nil
+  })
+  if err != nil {
+    fmt.Fprintln(os.Stderr, err)
+    os.Exit(1)
+  }
+  if violations != 0 {
+    os.Exit(1)
+  }
+}

@@ -219,7 +219,15 @@ runs race tests with a 78% total coverage threshold. It also runs
 Release-tag CI runs a fuzz smoke test for each target in all five packages. A
 manual workflow dispatch can run the same tests. CI builds for multiple
 architectures and applies a 20 MiB binary limit. It also runs gitleaks and
-security source guards. Package coverage floors are:
+versioned security AST guards.
+
+`make check` runs the same guards, protocol evidence, and coverage floors as CI.
+The guard sources live in `scripts/guards/`. The runner keeps a negative network
+fixture: unresolved direct dial and HTTP destinations must fail with both
+diagnostics. CI-only checks remain golangci-lint, govulncheck, multi-architecture
+builds, fuzz smoke, gitleaks, and release publication.
+
+Package coverage floors are:
 
 | Package | Floor |
 |---------|-------|

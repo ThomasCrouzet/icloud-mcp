@@ -3,10 +3,15 @@
 ## Development
 
 ```bash
+make check   # gofmt, vet, guards, race tests, protocol evidence, coverage floors
 make test    # go test ./... -race -cover
 make lint    # go vet + golangci-lint (pinned in Makefile / CI)
 make build   # local binary under bin/
 ```
+
+`make check` uses the same versioned guard tools, protocol evidence runner, and
+coverage policy as CI. The guards fail with the file, location, and violated
+rule. `scripts/security_guards.py .` runs only the guards.
 
 You must use Go 1.26.0 or newer. `make release VERSION=v1.2.3` uses a
 digest-pinned Go 1.26.10 image. It builds and packages static linux/arm64.
