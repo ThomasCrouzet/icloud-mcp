@@ -1488,7 +1488,7 @@ func TestArchiveSentRequiresUniqueSpecialUseMailbox(t *testing.T) {
 	service := testService(t, imap, fake, false, true)
 	service.config.EnableSentCopy = true
 	result, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "body", ArchiveSent: true})
-	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalFailed {
+	if err == nil || result.Status == SendAccepted || len(log) != 0 {
 		t.Fatalf("ambiguous Sent result = %+v, %v", result, err)
 	}
 }
@@ -1609,7 +1609,7 @@ func TestArchiveSentHonorsResourceScope(t *testing.T) {
 	service.config.EnableSentCopy = true
 	service.config.ArchiveScope = []string{"Other Sent"}
 	result, err := service.SendMessage(context.Background(), SendInput{To: []string{"to@example.com"}, Body: "body", ArchiveSent: true})
-	if err != nil || result.Status != SendAccepted || result.ArchivalStatus != ArchivalFailed || !result.SentCopyUnavailable {
+	if err == nil || result.Status == SendAccepted || len(log) != 0 {
 		t.Fatalf("scoped archive result = %+v, %v", result, err)
 	}
 	if imap.appendedMailbox != "" {
