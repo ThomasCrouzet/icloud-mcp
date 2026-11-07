@@ -49,6 +49,7 @@ policies. See [CardDAV compatibility](carddav-compatibility.md) and
 
 - Event reads decode iCalendar TEXT in SUMMARY, LOCATION, and DESCRIPTION as
   title, location, and notes. This includes recurrence overrides.
+- Explicit TEXT value types are case-insensitive. Reading does not change stored properties.
 - Escaped commas, semicolons, backslashes, and newlines become ordinary text.
   Unicode stays unchanged. Missing and empty properties produce empty fields.
 - `search_events` matches query text against these decoded fields.

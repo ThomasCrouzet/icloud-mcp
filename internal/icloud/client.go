@@ -713,7 +713,7 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		return DeleteResult{}, NewValidationError("scope=occurrence requires a recurring master (RRULE)")
 	}
 
-	title, err := master.Props.Text(ical.PropSummary)
+	title, err := eventText(master.Props, ical.PropSummary)
 	if err != nil {
 		return DeleteResult{}, NewError(CodeProtocolError, 0, "Calendar event title is invalid", nil)
 	}

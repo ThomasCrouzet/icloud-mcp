@@ -233,18 +233,62 @@ func TestProtocolCalendarTextEmptyAndMissing(t *testing.T) {
 	}
 }
 
+func TestProtocolCalendarTextValueTypeCase(t *testing.T) {
+	for _, valueType := range []string{"TEXT", "text", "TeXt"} {
+		for _, property := range []string{"SUMMARY", "LOCATION", "DESCRIPTION"} {
+			t.Run(valueType+"/"+property, func(t *testing.T) {
+				properties := "SUMMARY:Title\\, caf\u00e9\\; \\\\n\nLOCATION:Room\\, west\nDESCRIPTION:First\\nsecond\n"
+				properties = strings.Replace(properties, property+":", property+";VALUE="+valueType+":", 1)
+				f := newCalendarTextProtocol(t, calendarTextObject(properties, ""))
+				t.Run("get", func(t *testing.T) {
+					var got getEventDTO
+					f.call(t, "get_event", nil, false, &got)
+					if got.Title != "Title, caf\u00e9; \\n" || got.Location != "Room, west" || got.Notes != "First\nsecond" {
+						t.Errorf("decoded explicit TEXT mismatch: %+v", got)
+					}
+				})
+				t.Run("search", func(t *testing.T) {
+					var got searchEventsResponse
+					f.call(t, "search_events", map[string]any{"query": "Room, west"}, false, &got)
+					if got.Count != 1 || got.Events[0].Title != "Title, caf\u00e9; \\n" || got.Events[0].Location != "Room, west" || got.Events[0].Notes != "First\nsecond" {
+						t.Errorf("explicit TEXT search mismatch: %+v", got)
+					}
+				})
+				if property == "SUMMARY" {
+					for _, dryRun := range []bool{true, false} {
+						t.Run(fmt.Sprintf("delete_dry_run_%v", dryRun), func(t *testing.T) {
+							var got deleteEventResponse
+							f.call(t, "delete_event", map[string]any{"dry_run": dryRun}, false, &got)
+							wantDeletes := int32(1)
+							if dryRun {
+								wantDeletes = 0
+							}
+							if !got.Success || got.DeletedTitle != "Title, caf\u00e9; \\n" || got.DryRun != dryRun || f.deletes.Load() != wantDeletes {
+								t.Errorf("explicit TEXT delete mismatch: %+v, deletes=%d", got, f.deletes.Load())
+							}
+						})
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestProtocolCalendarTextMalformed(t *testing.T) {
 	for _, test := range []struct {
 		name, property string
 	}{
 		{"title_escape", "SUMMARY:private-text\\q\n"},
+		{"title_value_type", "SUMMARY;VALUE=uri:private-text\n"},
 		{"location_trailing_backslash", "LOCATION:private-text\\\n"},
+		{"location_value_type", "LOCATION;VALUE=UrI:private-text\n"},
 		{"notes_value_type", "DESCRIPTION;VALUE=URI:private-text\n"},
+		{"notes_text_escape", "DESCRIPTION;VALUE=TeXt:private-text\\q\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newCalendarTextProtocol(t, calendarTextObject(test.property, ""))
 			tools := []string{"get_event", "search_events"}
-			if test.name == "title_escape" {
+			if strings.HasPrefix(test.name, "title_") {
 				tools = append(tools, "delete_event")
 			}
 			for _, tool := range tools {
