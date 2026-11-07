@@ -29,11 +29,38 @@ const (
 // Error is a sanitized Mail failure. It never includes server response text,
 // protocol payloads, account identities, recipients, or credentials.
 type Error struct {
-	Code           Code          `json:"code"`
-	Message        string        `json:"message"`
-	Retryable      bool          `json:"retryable,omitempty"`
-	RetryAfter     time.Duration `json:"-"`
-	Reconciliation string        `json:"reconciliation,omitempty"`
+	Code             Code          `json:"code"`
+	Message          string        `json:"message"`
+	Retryable        bool          `json:"retryable,omitempty"`
+	RetryAfter       time.Duration `json:"-"`
+	Reconciliation   string        `json:"reconciliation,omitempty"`
+	diagnosticStage  string
+	diagnosticReason string
+}
+
+// Diagnostic returns a closed pair from an observed IMAP setup failure.
+// Absent, unknown-stage, and malformed metadata is omitted, not echoed.
+func (e *Error) Diagnostic() (stage, reason string) {
+	if e == nil {
+		return "", ""
+	}
+	switch e.diagnosticStage {
+	case "connect":
+		switch e.diagnosticReason {
+		case "dns", "connection_failed", "deadline", "canceled", "unknown":
+			return e.diagnosticStage, e.diagnosticReason
+		}
+	case "tls":
+		switch e.diagnosticReason {
+		case "eof", "certificate_verification", "deadline", "canceled", "unknown":
+			return e.diagnosticStage, e.diagnosticReason
+		}
+	case "authentication":
+		if e.diagnosticReason == "rejected" {
+			return "authentication", "rejected"
+		}
+	}
+	return "", ""
 }
 
 func (e *Error) Error() string {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mail/imapadapter"
+	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 	"golang.org/x/time/rate"
 )
 
@@ -216,6 +217,24 @@ func safeCloseConn(conn net.Conn) {
 }
 
 func mapIMAPError(err error, ctx context.Context, mutation bool, reconciliation string) error {
+	mapped := mapIMAPErrorCode(err, ctx, mutation, reconciliation)
+	public := AsError(mapped)
+	if public == nil {
+		return mapped
+	}
+	stage, reason := security.IMAPFailureDetails(err)
+	if stage == "" && imapadapter.IsLoginRejected(err) {
+		stage, reason = "authentication", "rejected"
+	}
+	if stage == "" {
+		return mapped
+	}
+	copy := *public
+	copy.diagnosticStage, copy.diagnosticReason = stage, reason
+	return &copy
+}
+
+func mapIMAPErrorCode(err error, ctx context.Context, mutation bool, reconciliation string) error {
 	if err == nil {
 		return nil
 	}

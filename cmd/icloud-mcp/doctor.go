@@ -20,6 +20,8 @@ type doctorDomain struct {
 	Status         string   `json:"status"`
 	CheckedAt      string   `json:"checkedAt,omitempty"`
 	ErrorCode      string   `json:"errorCode,omitempty"`
+	Stage          string   `json:"stage,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
 	Mailboxes      int      `json:"mailboxes,omitempty"`
 	CondStore      bool     `json:"condStore,omitempty"`
 	Move           bool     `json:"move,omitempty"`
@@ -37,6 +39,10 @@ type doctorReport struct {
 }
 
 func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
+	return runDoctorWithProbe(cfg, format, stdout, doctorProbe)
+}
+
+func runDoctorWithProbe(cfg *config.Config, format string, stdout io.Writer, probe func(*config.Config, string) doctorDomain) int {
 	if format != "text" && format != "json" {
 		_, _ = fmt.Fprintln(stdout, "doctor: format must be text or json")
 		return 2
@@ -47,7 +53,7 @@ func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
 	}
 	status := 0
 	for _, name := range []string{"calendar", "contacts", "mail"} {
-		domain := doctorProbe(cfg, name)
+		domain := probe(cfg, name)
 		if domain.Status != "disabled" && domain.Status != "ready" {
 			status = 1
 		}
@@ -65,6 +71,9 @@ func runDoctor(cfg *config.Config, format string, stdout io.Writer) int {
 			line := fmt.Sprintf("%s: %s", domain.Domain, domain.Status)
 			if domain.ErrorCode != "" {
 				line += " (" + domain.ErrorCode + ")"
+			}
+			if domain.Stage != "" && domain.Reason != "" {
+				line += " stage=" + domain.Stage + " reason=" + domain.Reason
 			}
 			if domain.Mailboxes > 0 {
 				line += fmt.Sprintf(" mailboxes=%d condstore=%t move=%t uidplus=%t special_use=%t", domain.Mailboxes, domain.CondStore, domain.Move, domain.UIDPlus, domain.SpecialUse)
@@ -88,6 +97,10 @@ func configuredCapabilities(cfg *config.Config) map[string]bool {
 }
 
 func doctorProbe(cfg *config.Config, name string) doctorDomain {
+	return doctorProbeWithServices(cfg, name, newOptionalServices)
+}
+
+func doctorProbeWithServices(cfg *config.Config, name string, optionalServices func(*config.Config) (contacts.Service, maildomain.Service, error)) doctorDomain {
 	set := cfg.Capabilities()
 	enabled := false
 	switch name {
@@ -109,7 +122,7 @@ func doctorProbe(cfg *config.Config, name string) doctorDomain {
 	case "calendar":
 		_, err = newCalendarClient(cfg).ListCalendars(ctx)
 	case "contacts":
-		contactsService, _, serviceErr := newOptionalServices(cfg)
+		contactsService, _, serviceErr := optionalServices(cfg)
 		if serviceErr != nil {
 			err = serviceErr
 		} else if contactsService == nil {
@@ -123,7 +136,7 @@ func doctorProbe(cfg *config.Config, name string) doctorDomain {
 			}
 		}
 	case "mail":
-		_, mailService, serviceErr := newOptionalServices(cfg)
+		_, mailService, serviceErr := optionalServices(cfg)
 		if serviceErr != nil {
 			err = serviceErr
 		} else if mailService == nil {
@@ -164,6 +177,7 @@ func doctorProbe(cfg *config.Config, name string) doctorDomain {
 			domain.Status = "authentication_failed"
 		}
 		domain.ErrorCode = string(mailError.Code)
+		domain.Stage, domain.Reason = mailError.Diagnostic()
 	}
 	if domain.ErrorCode == "" {
 		domain.ErrorCode = "probe_failed"

@@ -83,7 +83,7 @@ func NewSession(ctx context.Context, conn net.Conn, address, password string) (*
 	if err != nil {
 		_ = s.Close()
 		if loginRejection(err) {
-			return nil, &Error{Kind: ErrorAuthentication}
+			return nil, &loginRejectedError{cause: &Error{Kind: ErrorAuthentication}}
 		}
 		return nil, classify(err, false)
 	}
@@ -101,6 +101,18 @@ func NewSession(ctx context.Context, conn net.Conn, address, password string) (*
 		SpecialUse: caps.Has(imap.CapSpecialUse),
 	}
 	return s, nil
+}
+
+type loginRejectedError struct{ cause error }
+
+func (e *loginRejectedError) Error() string { return "sanitized IMAP login rejection" }
+func (e *loginRejectedError) Unwrap() error { return e.cause }
+
+// IsLoginRejected distinguishes observed LOGIN rejection from authentication
+// codes returned during greeting, capability discovery, or later operations.
+func IsLoginRejected(err error) bool {
+	var rejected *loginRejectedError
+	return errors.As(err, &rejected) && rejected != nil
 }
 
 func loginRejection(err error) bool {

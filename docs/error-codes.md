@@ -35,6 +35,21 @@ Contacts, and Mail use the same public codes.
 | `outcome_unknown` | no | The mutation might already have succeeded. Follow `reconciliation`. Read the resource before choosing a new update key. |
 | `internal_error` | no | Report the failure with redacted logs. If a mutation was possible, read the resource before another update. |
 
+## Mail doctor diagnostics (unreleased)
+
+Mail doctor adds optional `stage` and `reason` fields without changing public
+error codes. These fields are not added to MCP tool errors or health output.
+For example, `errorCode: unavailable`, `stage: tls`, and `reason: eof` identify
+a TLS failure before IMAP authentication, not a rejected password.
+
+Stages are `connect`, `tls`, or `authentication`. Reasons are fixed and validated
+per stage. No raw network or protocol details are exposed. Unclassified causes
+at observed connection or TLS boundaries use `unknown`; unobserved stages are omitted.
+The fields describe the final failed attempt. They do not change retry policy.
+See [the diagnostic pair table](mail-network-troubleshooting.md#unreleased-mail-failure-fields)
+for supported values and safe next actions. Mail doctor remains authenticated,
+read-only IMAP. It does not probe SMTP or provide a credential-free mode.
+
 ## Update idempotency and recovery
 
 Only `update_event` and `update_contact` use the process-local result cache
