@@ -891,6 +891,10 @@ func replyMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
 			return mailSendValidationResult(deps, err), nil
 		}
+		if err := authorizeMailbox(deps.ResourceScopes, "mail.read", identity.Mailbox); err != nil {
+			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
+			return mailSendValidationResult(deps, err), nil
+		}
 		result, err := deps.Service.ReplyMessage(ctx, maildomain.ReplyInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
 			Mode: mode, Body: body, IdempotencyKey: key,

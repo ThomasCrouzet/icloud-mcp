@@ -313,7 +313,7 @@ func TestProtocolMailReplyScopeSourceIdentity(t *testing.T) {
 					assertReplyScopePrivate(t, res, f.audit.String())
 					if tc.calls[0] != 0 {
 						payload := mailToolsJSON(t, res)
-						if len(payload) != 3 || payload["code"] != "validation" || payload["status"] != "rejected" || payload["message"] != "validation: mailbox is outside the configured resource scope" {
+						if len(payload) != 3 || payload["code"] != "validation" || payload["status"] != "rejected" || payload["message"] != "validation: authorization: mailbox is outside the configured resource scope" {
 							t.Errorf("denied source existence affected the response: %s", mailToolsText(t, res))
 						}
 					}

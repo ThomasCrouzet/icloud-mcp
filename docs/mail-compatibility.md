@@ -257,11 +257,14 @@ recipients before another send.
 
 ### Replies
 
-`reply_message` requires Mail read and Mail send. It reads the source by
-`(mailbox, UIDVALIDITY, UID)` and rejects a changed UIDVALIDITY before SMTP. The
-default mode replies to Reply-To, else From. `reply_all` adds To and Cc, but
-never Bcc. The client excludes its own address and deduplicates the final
-recipients.
+`reply_message` requires Mail read and Mail send. It checks the source mailbox
+against `mail.read` resource scopes before calling the Mail service. A denied
+source causes no message lookup, recipient resolution, or SMTP connection.
+Mutation and archival mailbox scopes do not grant source read access.
+It reads the source by `(mailbox, UIDVALIDITY, UID)` and rejects a changed
+UIDVALIDITY before SMTP. The default mode replies to Reply-To, else From.
+`reply_all` adds To and Cc, but never Bcc. The client excludes its own address
+and deduplicates the final recipients.
 
 The source must have a valid Message-ID. In-Reply-To is that identifier.
 References is the validated source chain plus the Message-ID, with at most 20
