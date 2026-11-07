@@ -6,6 +6,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Enforce `calendar.read` scopes before implicit availability queries. Share
+  Calendar selection with search, reject explicit forbidden paths, and fail
+  safely when no permitted calendars remain.
+
 ## [0.5.1] - 2026-11-07
 
 This patch includes all 0.5.0 features and fixes without product behavior changes.

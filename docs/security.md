@@ -131,6 +131,19 @@ Global read-only removes the configured write and send tools. It keeps
 configuration validation.
 Requested Mail send still requires a recipient allowlist at boot.
 
+### Calendar read resource scopes
+
+`search_events` and `find_free_slots` share scope-aware Calendar selection.
+Without explicit paths, both filter discovery through `calendar.read` before any
+event query. Denied calendars cannot affect availability. A configured read scope
+with no permitted discovered calendar returns `authorization`, never free slots.
+
+Explicit selections reject the whole request if any path is outside the read
+scope. Rejection occurs before event queries, without echoing forbidden paths.
+The default unscoped configuration and an explicit `calendar.read=*` permit all
+discovered calendars. These read operations emit no mutation audit records.
+Local capability and health output does not contain Calendar paths.
+
 ## SMTP recipient authorization
 
 `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is the literal `*` or a comma-separated set
