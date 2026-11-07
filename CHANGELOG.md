@@ -7,6 +7,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Preserve sanitized IMAP connection, TLS, and explicit LOGIN rejection diagnostics
+  in Mail doctor output. Add fixed optional stage/reason fields without raw errors,
+  changed public codes, or broader probes. Clarify approved direct-egress stdio setup.
+  The hosted environment reported in #77 remains unverified.
 - Bound `find_free_slots` to 10,000 aggregate events for explicit and implicit
   calendar selections. Retain only four read batches beyond the bounded collector.
   Reject overflow without partial availability and advise narrowing the request.

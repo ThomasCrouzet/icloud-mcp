@@ -92,10 +92,11 @@ func TestIssue77DiagnosticProtocol(t *testing.T) {
 							return
 						}
 						_, _ = io.CopyN(io.Discard, remote, int64(header[3])<<8|int64(header[4]))
-						if tc.name == "tls-canceled" {
+						switch tc.name {
+						case "tls-canceled":
 							cancel()
 							<-ctx.Done()
-						} else if tc.name == "tls-deadline" {
+						case "tls-deadline":
 							<-ctx.Done()
 						}
 						return

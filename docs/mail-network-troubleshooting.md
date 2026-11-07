@@ -38,13 +38,15 @@ icloud-mcp -help
 | Version | Available diagnostics |
 |---|---|
 | v0.4.3 | No `-doctor` or `-doctor-format` flags. Use the credential-free checks below. |
-| Current source | `-doctor` and `-doctor-format=json` run bounded, authenticated, read-only domain probes. |
+| v0.5.0 and v0.5.1 | `-doctor` and `-doctor-format=json` run bounded, authenticated, read-only domain probes. Mail failures report a sanitized error code. |
+| Unreleased source | The same probes add optional Mail `stage` and `reason` fields for observed connection, TLS, or LOGIN rejection failures. |
 
 The v0.4.3 statement comes from its
 [tagged command source](https://github.com/ThomasCrouzet/icloud-mcp/blob/v0.4.3/cmd/icloud-mcp/main.go).
-Current source here means the
-[reviewed baseline](https://github.com/ThomasCrouzet/icloud-mcp/blob/95a0b04933431d5b69e585a0cd233a835c005e2b/cmd/icloud-mcp/doctor.go),
-not a promise about an installed release. Check `-help` before using these flags.
+The released doctor behavior appears in the
+[v0.5.1 command source](https://github.com/ThomasCrouzet/icloud-mcp/blob/v0.5.1/cmd/icloud-mcp/doctor.go).
+Unreleased source is not a promise about an installed binary.
+Check `-version` and `-help` before using these flags.
 
 With a supporting binary and your existing local credential configuration, run
 `icloud-mcp -doctor -doctor-format=json`. This is not a credential-free test.
@@ -56,6 +58,40 @@ The Mail probe authenticates to IMAP, lists mailboxes, and attempts a read-only
 selection to inspect capabilities. It never sends or changes mail. It does not
 test SMTP, even when Mail send is enabled. A Mail `ready` result therefore does
 not establish SMTP reachability or permission to send.
+
+### Unreleased Mail failure fields
+
+Doctor JSON includes optional `stage` and `reason` fields on the Mail domain.
+Text output uses the same labels, for example:
+
+```text
+mail: unavailable (unavailable) stage=tls reason=eof
+```
+
+Only these fixed pairs are supported:
+
+| Stage | Reason | Safe interpretation and next action |
+|---|---|---|
+| `connect` | `dns` | Name resolution failed during dialing. Ask the administrator to check approved DNS and direct egress. |
+| `connect` | `connection_failed` | The socket dial failed. Check approved access to IMAP port 993. |
+| `connect` or `tls` | `deadline` | The operation timed out at this boundary. Check the network path without changing credentials. |
+| `connect` or `tls` | `canceled` | The operation was canceled at this boundary. This does not identify a network defect. |
+| `tls` | `eof` | The peer closed before verified TLS completed. No IMAP authentication occurred on that attempt. |
+| `tls` | `certificate_verification` | Certificate or hostname validation failed. Repair the approved trust setup; never disable validation. |
+| `connect` or `tls` | `unknown` | This boundary failed, but its cause has no supported classification. Do not infer a gateway or credential fault. |
+| `authentication` | `rejected` | IMAP explicitly rejected LOGIN. Check the configured Mail identity and app-specific password locally. |
+
+Connection and TLS stages come from the fixed IMAP dialer. Authentication rejection
+comes from the observed LOGIN response, after the existing identity fallback.
+Other setup and operation failures have no new fields. Success also omits them.
+Absent fields mean no supported stage observation, not successful connectivity.
+The fields describe the final failed attempt, not a trace of earlier attempts.
+
+The labels never include DNS answers, socket addresses, certificates, mailbox
+names, account identities, secret paths, credentials, or server response text.
+Unknown or malformed metadata is omitted rather than echoed.
+Existing error codes, deadlines, and retries do not change.
+MCP errors and health output do not gain these doctor fields.
 
 The optional loopback health endpoint is for monitoring. Health polling does
 not perform these connection probes. See [host integration](agent-hosts.md).
@@ -141,6 +177,19 @@ Run the MCP host and `icloud-mcp` together on a trusted machine with approved,
 direct egress to the fixed iCloud destinations. Use the supported stdio setup
 in [host integration](agent-hosts.md). Keep account setup and credential files
 local to that machine. Start with read-only capabilities.
+
+1. Confirm that the MCP host can launch a local stdio process on that machine.
+2. Ask the administrator to approve direct IMAP TCP 993 and SMTP TCP 587 egress.
+3. Keep the fixed hostnames and system certificate validation. Do not substitute a gateway or IP address.
+4. Check the installed binary with `-version` and `-help`.
+5. Run the credential-free TLS checks from that same execution environment.
+6. Configure the host to launch the local binary using [the stdio configuration](agent-hosts.md).
+7. Use existing local Mail credentials for the authenticated read-only doctor only when account access is authorized.
+
+Keep `ICLOUD_MCP_READ_ONLY=true` during initial setup. Enable only the required
+read domains. Do not enable Mail send merely to test connectivity.
+Working direct egress elsewhere does not verify the inaccessible hosted runtime.
+The reported environment behavior in #77 remains unverified.
 
 A hosted-only client needs provider support for this stdio deployment and
 network access. Otherwise, use a compatible host on an approved network.

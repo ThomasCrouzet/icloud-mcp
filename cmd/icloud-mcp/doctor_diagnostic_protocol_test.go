@@ -114,11 +114,12 @@ func TestIssue77DoctorDiagnosticProtocol(t *testing.T) {
 					t.Error("doctor disclosed private data or accessed SMTP")
 				}
 				wantDials, wantLogins, wantLists := int32(1), int32(0), int32(0)
-				if mode == "dns" || mode == "tls-eof" {
+				switch mode {
+				case "dns", "tls-eof":
 					wantDials = 2
-				} else if mode == "rejected" {
+				case "rejected":
 					wantLogins = 2
-				} else if mode == "success" {
+				case "success":
 					wantLogins, wantLists = 1, 1
 				}
 				if dials.Load() != wantDials || logins.Load() != wantLogins || lists.Load() != wantLists {
