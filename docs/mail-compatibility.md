@@ -279,7 +279,8 @@ STARTTLS, no-retry, and idempotency rules apply.
 key before SMTP dispatch. Identical content reuses the active or retained result
 and the same Message-ID. Changed content for the same key returns `conflict`
 before dispatch. The fingerprint binds the sender, recipient groups, subject,
-body, and options.
+body, reply headers, and `archive_sent`. Omission and explicit false are equivalent.
+Changing the archival preference conflicts, even while the original call is active.
 
 The cache is process-local and retains accepted, rejected, and uncertain
 outcomes until process exit. It has 128 keys. A full cache rejects a new claim
@@ -290,21 +291,37 @@ not an exactly-once delivery guarantee.
 
 ### Sent-copy archival
 
-`send_message` accepts `archive_sent`, default false. It requires the separate
-`mail.archive` permission and Mail send. A definitive SMTP acceptance can then
-produce one APPEND of the exact submitted message and Message-ID to the unique
-selectable SPECIAL-USE `\Sent` mailbox. Missing, duplicate, or non-selectable
-Sent targets fail archival without resubmitting mail.
+`send_message` accepts only a JSON boolean for `archive_sent`, default false.
+Strings, numbers, null, arrays, and objects fail before service or network access.
+True requires the separate `mail.archive` permission and Mail send, not Mail mutation.
 
-Submission and archival have separate outcomes: `stored`, `failed`, `unknown`,
-`not_attempted`, or `disabled`. SMTP rejection or ambiguity never triggers
-archival. A failed or lost APPEND acknowledgement leaves the accepted SMTP
-result intact. No failure path repeats SMTP or APPEND. The client never assumes
-that the provider created a Sent copy. A stored copy proves archival, not
-recipient delivery.
-Thus, accepted SMTP returns `sentCopyUnavailable: true`. This field means that
-the client did not make sure that a copy exists. iCloud can create one, but the
-client does not assume this behavior.
+After local recipient validation, IMAP discovery resolves one selectable SPECIAL-USE
+`\Sent` mailbox. Its name must be valid and allowed by the `mail.archive` resource scope.
+This preflight completes before any SMTP connection. Missing, duplicate, invalid,
+non-selectable, or forbidden Sent targets reject the send without SMTP access.
+The client never includes a forbidden mailbox name in the error or audit record.
+
+After definitive SMTP acceptance, one APPEND uses the exact prepared message and
+Message-ID. It uses the preauthorized name without another LIST or replacement target.
+Both IMAP sessions and SMTP share the original request deadline and send concurrency budget.
+
+The SMTP `status` remains `accepted` regardless of the separate `archivalStatus`:
+
+- `stored`: APPEND received definitive success. `sentDestination` names the authorized mailbox.
+- `failed`: archival failed definitively, or its connection failed before APPEND.
+- `unknown`: APPEND might have succeeded, but its acknowledgement is unavailable.
+- `not_attempted`: archival is enabled, but the caller omitted the option or selected false.
+
+With archival disabled and no archival request, `archivalStatus` is omitted.
+SMTP rejection or ambiguity never triggers APPEND. A failed or lost APPEND
+acknowledgement leaves SMTP acceptance intact, with a bounded `archivalError` code.
+No failure path repeats SMTP or APPEND. Identical keyed calls return the retained
+combined result; changing the option cannot repair archival or trigger another send.
+Inspect the authorized Sent mailbox before any manual recovery of unknown archival.
+
+`sentCopyUnavailable: true` means the client did not confirm a stored copy.
+It is omitted after `stored`. The provider might independently create a copy;
+the client does not assume this behavior. A stored copy does not prove recipient delivery.
 
 ## Rates and concurrency
 
