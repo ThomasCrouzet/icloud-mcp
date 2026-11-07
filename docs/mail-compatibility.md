@@ -110,8 +110,13 @@ client treats attached `message/rfc822` parts and their descendants as
 attachments. It does not inspect them for body text.
 
 If no plain text exists, the result has metadata with `html_only` or
-`no_plain_text`, unless `allow_html_fallback` is true. That opt-in fetches only
-the first inline HTML part. A local converter excludes script, style, template,
+`no_plain_text`, unless `allow_html_fallback` is true. This opt-in also treats
+empty or whitespace-only decoded plain text as unavailable. It checks later
+inline plain parts for meaningful text before it uses HTML. Without this opt-in,
+the first plain part remains selected, even when blank. Malformed or oversized
+plain parts stop retrieval with the existing omission warnings or typed errors.
+They do not trigger fallback. The opt-in fetches only the first inline HTML part.
+A local converter excludes script, style, template,
 head, and comment content, decodes entities, and bounds nodes, depth, input
 bytes, and output. The result sets `bodySource: "html_fallback"` and reports
 `html_truncated` or `html_malformed`. It never fetches a link, image, style
