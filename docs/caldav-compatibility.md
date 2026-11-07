@@ -30,6 +30,20 @@ policies. See [CardDAV compatibility](carddav-compatibility.md) and
 - Discovery requires exactly one successful principal and one calendar home set.
   Multiple values return `protocol_error`.
 
+### Calendar selection for search and availability
+
+`search_events` and `find_free_slots` use the same `calendar.read` selection
+boundary. Implicit selection retains only permitted discovered paths before
+event queries. No permitted calendar returns `authorization`, not availability.
+An explicitly requested forbidden path rejects the entire selection before queries.
+Default unscoped and wildcard read scopes retain access to all discovered calendars.
+
+Explicit selections retain their ten-unique-path limit and remove duplicates.
+Discovery does not inherit that limit. Search processes `calendar` before
+`calendars`; availability processes `calendars` before `calendar`.
+Permitted discovery order stays unchanged. Search falls back to discovery for
+empty selections. Availability rejects explicitly empty selections.
+
 ## calendar-query REPORT
 
 - Partial `calendar-data` with nested `<comp>` returns empty VEVENTs on iCloud.
