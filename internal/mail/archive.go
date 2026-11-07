@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mail/imapadapter"
 )
@@ -16,55 +17,62 @@ const (
 	ArchivalUnknown      = "unknown"
 )
 
-// archiveSent appends the exact accepted message to the unique selectable
-// SPECIAL-USE Sent mailbox. It never retries APPEND.
-func (s *Client) archiveSent(ctx context.Context, message []byte) (string, string, imapadapter.AppendData, error) {
-	if !s.config.EnableSentCopy {
-		return ArchivalDisabled, "", imapadapter.AppendData{}, nil
-	}
-	ctx, cancel := boundedContext(ctx)
-	defer cancel()
-	conn, err := s.imapDial(ctx)
-	if err != nil {
-		return ArchivalFailed, "", imapadapter.AppendData{}, err
-	}
-	session, err := s.imapFactory(ctx, conn, s.config.Address, s.config.Password)
-	if err != nil {
-		safeCloseConn(conn)
-		return ArchivalFailed, "", imapadapter.AppendData{}, err
-	}
-	defer safeCloseIMAPSession(session, conn)
-	mailboxes, err := session.List()
-	if err != nil {
-		return ArchivalFailed, "", imapadapter.AppendData{}, err
-	}
-	var sent []string
-	for _, mailbox := range mailboxes {
-		if !isSelectable(mailbox) {
-			continue
+// resolveSentDestination must complete before any SMTP connection. The returned
+// name pins APPEND to the authorized mailbox, even if later discovery changes.
+func (s *Client) resolveSentDestination(ctx context.Context) (string, error) {
+	result, err := s.imapAttempt(ctx, nil, func(session imapSession) (any, error) {
+		mailboxes, err := session.List()
+		if err != nil {
+			return nil, err
 		}
-		for _, attribute := range mailbox.Attributes {
-			if strings.EqualFold(attribute, "\\Sent") {
-				sent = append(sent, mailbox.Name)
-				break
+		var sent []string
+		for _, mailbox := range mailboxes {
+			if !isSelectable(mailbox) {
+				continue
+			}
+			for _, attribute := range mailbox.Attributes {
+				if strings.EqualFold(attribute, "\\Sent") {
+					sent = append(sent, mailbox.Name)
+					break
+				}
 			}
 		}
+		if len(sent) != 1 {
+			return nil, newError(CodeProtocolError, "exactly one selectable SPECIAL-USE Sent mailbox is required")
+		}
+		if err := validateMailbox(sent[0]); err != nil {
+			return nil, newError(CodeProtocolError, "Sent mailbox name is invalid")
+		}
+		if len(s.config.ArchiveScope) > 0 && !scopeAllows(s.config.ArchiveScope, sent[0]) {
+			return nil, newError(CodeAuthorization, "Sent mailbox is outside the configured resource scope")
+		}
+		return sent[0], nil
+	})
+	if err != nil {
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || ok && !time.Now().Before(deadline) {
+			return "", contextError()
+		}
+		return "", mapIMAPError(err, ctx, false, "")
 	}
-	if len(sent) != 1 {
-		return ArchivalFailed, "", imapadapter.AppendData{}, errors.New("exactly one selectable SPECIAL-USE Sent mailbox is required")
-	}
-	if len(s.config.ArchiveScope) > 0 && !scopeAllows(s.config.ArchiveScope, sent[0]) {
-		return ArchivalFailed, sent[0], imapadapter.AppendData{}, errors.New("sent mailbox is outside the configured resource scope")
-	}
-	data, err := session.AppendSent(sent[0], message)
+	return result.(string), nil
+}
+
+// archiveSent uses only the preauthorized destination. Never retry APPEND or
+// substitute another mailbox after definitive SMTP acceptance.
+func (s *Client) archiveSent(ctx context.Context, destination string, message []byte) (string, string, imapadapter.AppendData, error) {
+	phase := &imapMutationPhase{}
+	result, err := s.imapAttempt(ctx, phase, func(session imapSession) (any, error) {
+		phase.dispatched = true
+		return session.AppendSent(destination, message)
+	})
 	if err != nil {
 		var protocolErr *imapadapter.Error
 		if errors.As(err, &protocolErr) && protocolErr.Ambiguous {
-			return ArchivalUnknown, sent[0], imapadapter.AppendData{}, err
+			return ArchivalUnknown, destination, imapadapter.AppendData{}, err
 		}
-		return ArchivalFailed, sent[0], imapadapter.AppendData{}, err
+		return ArchivalFailed, destination, imapadapter.AppendData{}, err
 	}
-	return ArchivalStored, sent[0], data, nil
+	return ArchivalStored, destination, result.(imapadapter.AppendData), nil
 }
 
 func scopeAllows(values []string, candidate string) bool {
@@ -74,14 +82,4 @@ func scopeAllows(values []string, candidate string) bool {
 		}
 	}
 	return false
-}
-
-func safeCloseIMAPSession(session imapSession, conn interface{ Close() error }) {
-	defer func() { _ = recover() }()
-	if session != nil {
-		_ = session.Close()
-	}
-	if conn != nil {
-		_ = conn.Close()
-	}
 }

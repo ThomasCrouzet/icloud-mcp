@@ -7,6 +7,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Wire the strict `archive_sent` boolean through `send_message` and keyed request
+  fingerprints. Authorize a unique valid Sent destination before SMTP access.
+  Pin APPEND to that destination and preserve separate archival outcomes without retries.
 - Enforce `mail.read` mailbox scopes before replies access the source message
   or resolve recipients. Denied replies perform no Mail service or SMTP calls.
 - Enforce `calendar.read` scopes before implicit availability queries. Share

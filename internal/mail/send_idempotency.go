@@ -65,6 +65,11 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	for _, reference := range input.References {
 		write(reference)
 	}
+	if input.ArchiveSent {
+		write("archive_sent=true")
+	} else {
+		write("archive_sent=false")
+	}
 	var result sendFingerprint
 	copy(result[:], hash.Sum(nil))
 	return result

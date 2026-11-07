@@ -141,6 +141,22 @@ resource. If that UID exists, another create returns `conflict`.
 For an update, use the recovery procedure above. The same key can return a
 cached `outcome_unknown`, even when a read shows that the write succeeded.
 
+## Send archival and recovery
+
+`send_message` validates `archive_sent` as a strict boolean, default false.
+Disabled archival returns `validation`. A forbidden Sent scope returns `authorization`.
+Missing, ambiguous, or invalid Sent discovery returns `protocol_error`.
+These archival preflight failures occur before SMTP access and report `status: rejected`.
+
+After SMTP acceptance, archival failure is not a rejected send or a tool error.
+The response keeps `status: accepted` and reports `archivalStatus: failed` or `unknown`.
+It also includes a bounded `archivalError`, not raw server text.
+Inspect Sent before recovery. Never resend or blindly repeat APPEND to repair archival.
+
+Identical keyed sends retain both submission and archival outcomes until process exit.
+Changing `archive_sent` with the same key returns `conflict` without another submission.
+Omission and false have the same preference. Restarting does not resolve an uncertain outcome.
+
 ## Internal retries
 
 The server already retries **safe Calendar and Contacts reads** after HTTP 429,

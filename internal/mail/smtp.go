@@ -297,6 +297,13 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	}
 	defer func() { <-s.sendSem }()
 	result = SendResult{Status: SendRejected, MessageID: prepared.messageID}
+	var sentDestination string
+	if input.ArchiveSent {
+		sentDestination, err = s.resolveSentDestination(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	conn, err = s.smtpDial(ctx)
 	if err != nil {
 		return result, mapSMTPError(err, ctx, false, "submission connection failed")
@@ -350,7 +357,7 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	result.Status = SendAccepted
 	result.SentCopyUnavailable = true
 	if input.ArchiveSent {
-		status, destination, _, archivalErr := s.archiveSent(ctx, prepared.bytes)
+		status, destination, _, archivalErr := s.archiveSent(ctx, sentDestination, prepared.bytes)
 		result.ArchivalStatus = status
 		result.SentDestination = destination
 		if status == ArchivalStored {
