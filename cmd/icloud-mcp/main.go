@@ -202,7 +202,7 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 }
 
 func newMCPServer(red *security.Redactor) *server.MCPServer {
-	return server.NewMCPServer("icloud-mcp", version,
+	s := server.NewMCPServer("icloud-mcp", version,
 		server.WithToolCapabilities(false),
 		server.WithInputSchemaValidation(),
 		server.WithStrictInputSchemaDefault(),
@@ -214,6 +214,8 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)
+	mcptools.ConfigureMailNumberValidation(s)
+	return s
 }
 
 // timeoutMiddleware bounds the execution time of each tool call. It cancels

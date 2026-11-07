@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -41,7 +42,7 @@ func contractProfiles(t *testing.T) []contractProfile {
 		{"contacts-only", "", replyScopePlan(t, "contacts.read,contacts.write,contacts.delete", false)},
 		{"mail-only", "", replyScopePlan(t, "mail.read,mail.mutate,mail.trash,mail.send,mail.archive", false)},
 		{"send-only", "", replyScopePlan(t, "mail.send", false)},
-		{"mixed-scoped", "calendar.read=/cal/allowed/;contacts.read=allowed-book;mail.read=INBOX;mail.mutate=INBOX;mail.archive=Sent",
+		{"mixed-scoped", "calendar.read=/cal/allowed/;contacts.read=allowed-book;mail.read=INBOX;mail.mutate=INBOX,Archive;mail.archive=Sent",
 			replyScopePlan(t, "calendar.read,contacts.read,mail.read,mail.mutate,mail.send,mail.archive", false)},
 		{"all-enabled", "", NewCapabilityPlan(false, true, true, true, true)},
 		{"all-read-only", "", NewCapabilityPlan(true, true, true, true, true)},
@@ -80,6 +81,7 @@ func contractManifestClient(t *testing.T, p contractProfile) (*client.Client, *c
 	s := server.NewMCPServer("contract-manifest", "test", server.WithToolCapabilities(false),
 		server.WithInputSchemaValidation(), server.WithStrictInputSchemaDefault(), server.WithRecovery(),
 		server.WithToolHandlerMiddleware(RecoverRedactMiddleware(red)))
+	ConfigureMailNumberValidation(s)
 	RegisterUnified(s, Deps{
 		Service:         icloud.NewClient(b, "https://caldav.icloud.com", func(h string) bool { return h == "caldav.icloud.com" }),
 		ContactsService: contacts.NewClient(b, "https://contacts.icloud.com", func(h string) bool { return h == "contacts.icloud.com" }),
@@ -129,10 +131,54 @@ func contractCompileSchema(t *testing.T, schema any) *jsonschema.Schema {
 func contractWireTool(t *testing.T, tool mcp.Tool) map[string]any {
 	t.Helper()
 	var wire map[string]any
-	if err := json.Unmarshal([]byte(contractReplayJSON(t, tool)), &wire); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(contractReplayJSON(t, tool)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&wire); err != nil {
 		t.Fatal(err)
 	}
 	return wire
+}
+
+// Preserve integer bounds from tools/list before the SDK's typed schema maps
+// decode numbers as float64. Requests still use its initialized session/dispatch.
+func contractListExact(t *testing.T, c *client.Client) *mcp.ListToolsResult {
+	t.Helper()
+	response, err := c.GetTransport().SendRequest(t.Context(), mcptransport.JSONRPCRequest{JSONRPC: "2.0", ID: mcp.NewRequestId(int64(-90)), Method: "tools/list", Params: map[string]any{}})
+	if err != nil || response == nil {
+		t.Fatalf("exact tools/list: %v", err)
+	}
+	if response.Error != nil {
+		t.Fatalf("exact tools/list: %+v", response.Error)
+	}
+	var wire struct {
+		Tools      []json.RawMessage `json:"tools"`
+		NextCursor string            `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(response.Result, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.NextCursor != "" {
+		t.Fatal("tools/list pagination needs complete traversal before contract coverage")
+	}
+	listed := &mcp.ListToolsResult{}
+	for _, raw := range wire.Tools {
+		var tool mcp.Tool
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			t.Fatal(err)
+		}
+		var schemas struct{ Input, Output json.RawMessage }
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		schemas.Input, schemas.Output = fields["inputSchema"], fields["outputSchema"]
+		tool.InputSchema = mcp.ToolInputSchema{}
+		tool.RawInputSchema = schemas.Input
+		tool.OutputSchema = mcp.ToolOutputSchema{}
+		tool.RawOutputSchema = schemas.Output
+		listed.Tools = append(listed.Tools, tool)
+	}
+	return listed
 }
 
 func contractValidateOutput(t *testing.T, tool mcp.Tool, result *mcp.CallToolResult) {
@@ -163,17 +209,11 @@ func contractCall(t *testing.T, c *client.Client, name string, args map[string]a
 func TestContractManifestProfiles(t *testing.T) {
 	profiles := contractProfiles(t)
 	allClient, _ := contractManifestClient(t, contractProfile{name: "universe", plan: NewCapabilityPlan(false, true, true, true, true)})
-	universe, err := allClient.ListTools(t.Context(), mcp.ListToolsRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	universe := contractListExact(t, allClient)
 	for _, p := range profiles {
 		t.Run(p.name, func(t *testing.T) {
 			c, backend := contractManifestClient(t, p)
-			listed, err := c.ListTools(t.Context(), mcp.ListToolsRequest{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			listed := contractListExact(t, c)
 			t.Logf("contract_manifest=%s", contractReplayJSON(t, map[string]any{"profile": p.name, "scopes": p.scopes, "tools": listed.Tools}))
 			names := make([]string, 0, len(listed.Tools))
 			for _, tool := range listed.Tools {

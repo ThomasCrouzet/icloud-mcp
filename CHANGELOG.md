@@ -7,6 +7,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Preserve the complete published Mail uint64 numeric range before SDK validation.
+  Normalize integral unsigned JSON number spellings exactly, with bounded exponent
+  work. Keep strict types, field limits, schemas, and validation unchanged.
+- Preserve canonical bracketed Mail threading identifiers after parsed header reads.
+  Keep absent fields, malformed-header refusal, metadata bounds, and strict reply
+  validation. Exercise actual replies through a verified STARTTLS synthetic peer.
 - Preserve sanitized IMAP connection, TLS, and explicit LOGIN rejection diagnostics
   in Mail doctor output. Add fixed optional stage/reason fields without raw errors,
   changed public codes, or broader probes. Clarify approved direct-egress stdio setup.
@@ -25,6 +31,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enforce `calendar.read` scopes before implicit availability queries. Share
   Calendar selection with search, reject explicit forbidden paths, and fail
   safely when no permitted calendars remain.
+
+### Added
+- Add manifest-driven offline MCP contract fixtures through real domain services.
+  Check published arguments, defaults, boundaries, capability profiles, counted
+  backend effects, declared structured outputs, and fixture-coverage controls.
 
 ## [0.5.1] - 2026-11-07
 

@@ -147,6 +147,75 @@ CI does not upload or archive reports on GitHub. It combines executable and Go
 test coverage before it checks existing floors. The executable coverage adds
 lifecycle evidence; no coverage threshold is reduced.
 
+## Manifest-driven MCP contracts
+
+Run the offline contract layer with the existing Go test runner:
+
+```bash
+go test ./internal/mcptools ./internal/mail/imapadapter -race -run 'TestContract|TestCuratedHeadersCanonical' -count=1 -v
+```
+
+Ordinary test discovery includes these cases in `make check`. No workflow,
+dependency, coverage threshold, or product switch is required.
+
+The initialized in-process client obtains actual `tools/list` schemas.
+Raw schema bytes preserve large integer bounds before typed SDK maps can round them.
+Production and fixture startup share a supported SDK prevalidation hook for
+`set_message_flags.expected_modseq`. It clones the decoded map and preserves the
+exact unsigned integer value as at most 20 canonical decimal digits. It does not
+change raw arguments, other fields, schemas, dependencies, or validation settings.
+The Mail raw-number parser also accepts exact integral JSON spellings such as
+`1.0`, `1e0`, and `10e-1`. Fractional values, wrong types, and unsigned overflow
+still fail before effects. Exponent work is bounded by token length, not magnitude.
+Both initialized in-process and bounded-stdio tests retain the full uint64 maximum,
+nearby values, overflow and refusal controls, with exact observed backend values.
+Production registration, strict SDK input validation, and real domain services handle
+the requests. Explicit business fixtures supply values, not replacement schemas.
+New tools, top-level properties, and nested properties require explicit fixture values.
+
+The cases exercise required and optional values, omission, declared defaults, wrong
+primitive types, unknown keys, enum values, array items, and published boundaries.
+Separate counterfactual fixtures contain enough data to observe default and maximum
+page caps. Successful writes are read back, or checked at the synthetic protocol peer.
+Idempotent repeats must not produce another mutation or SMTP DATA.
+
+Each case logs its request, public result, and backend counters.
+Contacts identifier discovery is recorded before measured dispatch.
+Schema-invalid and undeclared arguments must not add any backend request or mutation.
+Disabled tools must not dispatch. Permission profiles include default, read-only,
+single-domain, mixed scoped permissions, and all-enabled configurations.
+
+Every declared success output schema is compiled with the existing JSON Schema
+validator. Actual `structuredContent` must validate. Error results have a separate
+public error contract, not the success schema. Negative controls alter actual output
+field types, remove required fields, and introduce uncovered fixture properties.
+
+Distinguish schema refusal, business validation, and resource policy.
+A schema-valid timezone string can fail timezone lookup. A valid collection path
+can still produce an overlong complete resource path after a UID suffix is added.
+These cases must record the actual refusal and zero mutations, not claim success.
+Raw UTF-8 byte limits and the encoded message budget are independent.
+Valid raw content can exceed the encoded budget and fail before SMTP.
+
+DAV backends return in-memory data. IMAP uses in-memory connections.
+Only the `mcptools` Go test child trusts an ephemeral SMTP fixture root.
+The real SMTP adapter still verifies `smtp.mail.me.com`, its certificate chain,
+STARTTLS, and TLS 1.2 or newer. No system trust store changes.
+SMTP content comparisons account explicitly for DATA framing: `DotReader` converts
+CRLF to LF, and the SMTP writer supplies a final line ending.
+They do not trim arbitrary content or replace reply handling with send handling.
+
+The pinned header parser returns identifiers without angle brackets.
+The adapter restores canonical brackets on successfully parsed Message-ID,
+In-Reply-To, and References values before applying existing metadata limits.
+Absent identifiers stay absent. Malformed and oversized headers still fail closed.
+The real reply fixture checks accepted SMTP output and exact threading headers.
+
+These fixtures do not prove live Apple interoperability, production account access,
+or delivery outside the synthetic peer. Keep live integration tests separate.
+Store run commands, revisions, source hashes, logs, and coverage matrices outside
+the repository. Do not upload these reports.
+
 ## Capability matrix tests
 
 The five booleans are:
@@ -166,7 +235,7 @@ are:
 | Calendar global read-only | 7 |
 | Calendar plus Contacts read/write | 16 |
 | Calendar plus Mail read | 13 |
-| All domains and all mutation/send capabilities | 23 |
+| All domains and all mutation/send capabilities | 24 |
 
 `icloud_capabilities.tools` and `toolCount` must match the server inventory.
 Disabled tools must be absent. Do not install handlers that return
@@ -195,8 +264,13 @@ Mail:
 - Each message reference includes UIDVALIDITY. A mismatch occurs before mutation.
 - A CONDSTORE server cannot receive unconditional STORE when MODIFIED detection
   is unavailable.
-- The beta.8 path returns `protocol_error` before STORE. It does not report
-  `concurrent_modification`.
+- A fake without conditional-update support refuses before STORE. The real
+  adapter can send one conditional UID STORE with `UNCHANGEDSINCE`.
+- Conditional response validation checks the returned UID, flags, and MODSEQ.
+  A malformed FETCH can return `protocol_error` after one STORE.
+  Do not describe that result as proof that STORE was never dispatched.
+- An SDK schema refusal with zero service calls proves neither conditional
+  STORE behavior nor unsupported adapter capability.
 - Non-CONDSTORE flag writes are delta-only and cannot set Deleted or keywords.
 - Move uses native UID MOVE or a UIDPLUS-only one-message fallback; plain
   EXPUNGE is impossible.
