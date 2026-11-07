@@ -6,19 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
+
 ### Added
 - Add `ICLOUD_MCP_RESOURCE_SCOPES` for per-action Calendar paths, Contacts
   address books, and Mail mailboxes. Enforce scopes in list, search, direct
   read, move source and destination, Trash destination, and Sent archival.
   Ambiguous or stale Contacts names fail closed.
 
-### Changed
-- Read multiple calendars concurrently with a four-worker bound in
-  `search_events` and `find_free_slots`. Keep the domain-wide read semaphore,
-  deterministic result order, partial-failure rules, and free-slot fail-closed
-  behavior.
-
-### Added
 - Add optional `archive_sent` with a separate `mail.archive` permission. After
   definitive SMTP acceptance, APPEND the exact message to the unique
   SPECIAL-USE Sent mailbox. Report stored, failed, unknown, not attempted, or
@@ -35,6 +30,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add `reply_message` with validated source identity, Reply-To or From
   resolution, opt-in reply-all without Bcc, bounded In-Reply-To and References,
   shared recipient authorization, and shared send idempotency.
+- Add optional process-local `send_message` idempotency keys. Identical keyed
+  calls share one submission and result; changed content returns `conflict`.
+  Retain accepted, rejected, and uncertain outcomes until process exit.
+  Restart clears the cache; this is not an exactly-once delivery guarantee.
+- Add opt-in `get_message` HTML-to-text fallback with bounded local conversion.
+  Exclude active content and never fetch remote links, images, or attachments.
+- Publish output schemas and `structuredContent` for representative read tools,
+  including `search_events`, `search_contacts`, and `search_messages`.
+  Keep compatible redacted text output.
 - Add an opt-in live Calendar CRUD integration test for timed, all-day, and
   recurring fixtures, strong and stale ETags, occurrence DST behavior, dry-run
   deletion, and conditional cleanup in an explicitly selected calendar.
@@ -47,6 +51,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   operation does not require Calendar credentials.
 
 ### Changed
+- Cache validated Calendar resource locations by calendar path and exact UID.
+  Evict stale locations and preserve validated lookup fallbacks. Cached
+  locations do not replace full-object reads or authorize mutations.
+- Read multiple calendars concurrently with a four-worker bound in
+  `search_events` and `find_free_slots`. Keep the domain-wide read semaphore,
+  deterministic result order, partial-failure rules, and free-slot fail-closed
+  behavior.
 - Separate local release metadata checks from published registry verification.
   A pending next version no longer fails `main`. Add
   `make check-release-metadata` and keep `make check-registry` for published
@@ -54,9 +65,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Extract the security AST guards into versioned tools under `scripts/guards/`.
   Add `make check` for gofmt, vet, guards, race tests, protocol evidence, and
   the shared coverage floors. CI invokes the same guard and coverage scripts.
+- Add tag-triggered native archive smoke checks for Linux amd64 and macOS
+  arm64: checksums, extraction, version output, and offline configuration failure.
+  Linux arm64 remains cross-compiled; Windows remains compile-only.
+- Make the concurrent ETag regression check deterministic and expand lazy-domain
+  and protocol fixture coverage.
 
 ### Fixed
-- Decode iCalendar TEXT escapes in event titles, locations, notes, search matching, and successful delete responses (#78).
+- Decode iCalendar TEXT escapes in event titles, locations, notes, search
+  matching, and successful delete responses. Accept case-insensitive TEXT value
+  types without changing stored properties or text case (#78).
+- Sample one period for weekday-only WEEKLY recurrence selectors. Avoid false
+  aggregate-work rejection without raising recurrence limits (#76).
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays
   nominal, an elapsed DURATION stays elapsed, and a title-only update does not
   change start or end.
@@ -70,6 +90,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   byte truncation.
 - Allow `get_message` HTML fallback for blank decoded plain text when
   `allow_html_fallback` is true. Keep meaningful plain text preferred (#79).
+
+### Documentation
+- Document credential-free Mail TLS checks, fixed routing, proxy limitations,
+  and approved-network deployment (#77). The reported hosting behavior remains
+  unconfirmed; the issue stays open pending reporter feedback.
+- Record the v0.4.3 registry publication and refresh distribution references
+  and the dependency notice version label.
+
+### Removed
+- Remove unused tool-name helpers.
+
+### Acknowledgments
+- Thank Caleb Mennen (@cinnamennen) for the weekly recurrence contribution (#76).
+- Thank @dortega3000 and @dwlynch055 for their issue reports.
 
 ## [0.4.3] - 2026-11-04
 
