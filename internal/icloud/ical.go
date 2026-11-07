@@ -914,14 +914,14 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	if p := vevent.Props.Get(ical.PropUID); p != nil {
 		e.UID = p.Value
 	}
-	if p := vevent.Props.Get(ical.PropSummary); p != nil {
-		e.Title = p.Value
+	if e.Title, err = vevent.Props.Text(ical.PropSummary); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event title is invalid", nil)
 	}
-	if p := vevent.Props.Get(ical.PropLocation); p != nil {
-		e.Location = p.Value
+	if e.Location, err = vevent.Props.Text(ical.PropLocation); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event location is invalid", nil)
 	}
-	if p := vevent.Props.Get(ical.PropDescription); p != nil {
-		e.Notes = p.Value
+	if e.Notes, err = vevent.Props.Text(ical.PropDescription); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event notes are invalid", nil)
 	}
 
 	if p := vevent.Props.Get(ical.PropDateTimeStart); p != nil {
