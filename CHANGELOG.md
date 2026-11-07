@@ -7,6 +7,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Enforce `mail.read` mailbox scopes before replies access the source message
+  or resolve recipients. Denied replies perform no Mail service or SMTP calls.
 - Enforce `calendar.read` scopes before implicit availability queries. Share
   Calendar selection with search, reject explicit forbidden paths, and fail
   safely when no permitted calendars remain.
