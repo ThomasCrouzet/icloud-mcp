@@ -265,7 +265,12 @@ func TestProtocolArchiveOutcomesAndReplay(t *testing.T) {
 				t.Errorf("changed preference did not conflict: %v", err)
 			}
 			f.mu.Lock()
-			equal := bytes.Equal(bytes.ReplaceAll(f.appended, []byte("\r\n"), []byte("\n")), f.submitted)
+			// SMTP DATA terminates the last line; DotReader normalizes CRLF to LF.
+			expected := bytes.ReplaceAll(f.appended, []byte("\r\n"), []byte("\n"))
+			if !bytes.HasSuffix(expected, []byte("\n")) {
+				expected = append(expected, '\n')
+			}
+			equal := bytes.Equal(expected, f.submitted)
 			target := f.target
 			f.mu.Unlock()
 			if !equal || target != `"Private Sent"` {
@@ -355,5 +360,43 @@ func TestProtocolArchiveNoAppendWithoutAcceptance(t *testing.T) {
 				t.Fatal("SMTP failure was replayed")
 			}
 		})
+	}
+}
+
+func TestProtocolArchivePreflightDeadline(t *testing.T) {
+	f := newArchiveProtocol(t, archiveSentListing, "Private Sent", ArchivalStored, true)
+	f.client.imapDial = func(context.Context) (net.Conn, error) {
+		f.imap.Add(1)
+		local, remote := net.Pipe()
+		t.Cleanup(func() { _ = remote.Close() })
+		return local, nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err := f.client.SendMessage(ctx, archiveInput())
+	if public := AsError(err); public == nil || public.Code != CodeTimeout || f.smtp.Load() != 0 {
+		t.Fatalf("preflight did not respect request deadline: %v counts=%v", err, f.counts())
+	}
+}
+
+type panicArchiveSession struct{ imapSession }
+
+func (panicArchiveSession) AppendSent(string, []byte) (imapadapter.AppendData, error) {
+	panic("synthetic private parser panic")
+}
+
+func TestArchivePanicPreservesAcceptedAndUnknown(t *testing.T) {
+	var log []string
+	imap := &fakeIMAP{mailboxes: []imapadapter.Mailbox{{Name: "Sent", Attributes: []string{"\\Sent"}}}}
+	svc := testService(t, imap, &fakeSMTP{log: &log}, false, true)
+	svc.config.EnableSentCopy = true
+	svc.imapFactory = func(context.Context, net.Conn, string, string) (imapSession, error) {
+		return panicArchiveSession{imap}, nil
+	}
+	input := archiveInput()
+	first, err := svc.SendMessage(t.Context(), input)
+	second, secondErr := svc.SendMessage(t.Context(), input)
+	if err != nil || secondErr != nil || first.Status != SendAccepted || first.ArchivalStatus != ArchivalUnknown || second.ArchivalStatus != ArchivalUnknown || first.ArchivalError == "" || strings.Count(strings.Join(log, ","), "data") != 1 {
+		t.Fatalf("parser panic erased archival uncertainty or replayed SMTP: %+v %+v %v %v", first, second, err, secondErr)
 	}
 }
