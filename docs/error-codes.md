@@ -149,10 +149,15 @@ automatically. Check Sent and confirm with recipients before deciding on another
 An absent Sent copy does not prove failure, especially when archival was not requested.
 
 For keyed calls, keep the same `idempotency_key` and unchanged parameters in the same
-process to check the original outcome. An identical call shares pending work or returns
-its saved result without another SMTP submission. A changed key or process restart can
-submit again. Neither resolves the previous outcome. Unkeyed calls have no deduplication
-guarantee.
+process during reconciliation. The send cache can share pending work or return a retained
+outcome without another SMTP submission. However, `reply_message` first re-reads and
+validates its source, then derives the send request before reaching that cache.
+Source deletion, changed UIDVALIDITY, or changed derived fields can prevent retrieval
+of the earlier outcome or cause a conflict. Such an error does not prove that the
+original SMTP submission failed. Repeated replies are not a guaranteed status-query API.
+Keep the key and parameters, and reconcile before deciding on another send.
+A changed key or process restart can submit again. Neither resolves the previous
+outcome. Unkeyed calls have no deduplication guarantee.
 
 The tool deadline stays at 25 seconds with a two-second cancellation grace period.
 A definitive handler result within that grace period takes precedence over a synthetic
