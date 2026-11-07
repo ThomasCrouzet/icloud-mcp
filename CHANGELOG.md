@@ -7,6 +7,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Bound `find_free_slots` to 10,000 aggregate events for explicit and implicit
+  calendar selections. Retain only four read batches beyond the bounded collector.
+  Reject overflow without partial availability and advise narrowing the request.
 - Classify mutation timeouts from the registered capability manifests, including
   `reply_message`. Give send and reply timeouts SMTP-specific reconciliation
   guidance without automatic resend or a false failure claim from an absent Sent copy.

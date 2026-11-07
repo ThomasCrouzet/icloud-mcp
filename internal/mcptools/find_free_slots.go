@@ -159,20 +159,11 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			opts.DaysOfWeek = days
 		}
 
-		readResults := parallelCalendarReads(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+		allEvents, err := collectAvailabilityEvents(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
 			return deps.Service.SearchEvents(ctx, path, queryStart, queryEnd, nil)
 		})
-		var allEvents []icloud.Event
-		for _, read := range readResults {
-			if read.err != nil {
-				return errResult(deps.Redactor, "searching events", read.err), nil
-			}
-			if read.value.TruncatedByExpansion {
-				return errResult(deps.Redactor, "searching events", icloud.NewError(
-					icloud.CodePartialFailure, 0, "recurrence expansion was truncated; availability cannot be determined", nil,
-				)), nil
-			}
-			allEvents = append(allEvents, read.value.Events...)
+		if err != nil {
+			return errResult(deps.Redactor, "searching events", err), nil
 		}
 		if err := ctx.Err(); err != nil {
 			return errResult(deps.Redactor, "searching events", err), nil

@@ -154,6 +154,33 @@ materialized events cause `payload_too_large`. The per-calendar REPORT
 materialization limit is 2,500. When `<uid>.ics` is missing, imported-UID REPORT
 fallback uses a 50-year window on each side of now.
 
+#### Availability materialization
+
+`find_free_slots` filters calendar scopes before reads or event accounting.
+It accepts at most 10,000 returned events, including duplicates, transparent events,
+and all-day events excluded from busy time. Explicit and implicit selections share this budget.
+Overflow returns `payload_too_large` without slots and advises narrowing the range or calendars.
+
+An availability-specific collector reads ordered waves of at most four calendars.
+It joins each wave, checks batches in selection order, and stops before another wave on failure.
+This preserves deterministic errors without changing `search_events` fairness.
+The domain-wide read limiter and four-read semaphore remain in effect.
+
+The accumulator has a fixed capacity of 10,000 event records, allocated only for nonempty results.
+The collector retains at most four additional returned batches and four read workers.
+Each production search returns at most 2,500 records. Returned slice capacities can exceed their lengths.
+Batch references are cleared before the next wave. Cancellation joins the active reads before return.
+Cleanup depends on the service context and existing transport deadlines; no detached workers remain.
+
+These event counts are not an exact byte or RSS bound. REPORT bodies, parser state,
+recurrence temporaries, and batch backing arrays retain their separate client limits.
+Discovery and permitted path metadata still scale with calendar count.
+Concurrent MCP calls each own a collector, while the domain semaphore bounds active client reads.
+
+Busy interval conversion starts only after complete collection and processes at most 10,000 records.
+Time buffers extend the query and pad intervals; they do not expand the event budget.
+Existing buffered-range and recurrence limits remain unchanged. Any incomplete search fails without availability.
+
 ### Contacts
 
 ```text

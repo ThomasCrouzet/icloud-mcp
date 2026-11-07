@@ -170,8 +170,14 @@ the complete object. Identical UIDs in different calendars stay isolated.
   at most four concurrent reads in one request. The domain-wide semaphore still
   caps all concurrent MCP requests at four. It fails closed when more than
   10,000 filtered events materialize.
-- `find_free_slots` uses the same bounded reads and still fails closed on any
-  incomplete calendar or truncated recurrence.
+- `find_free_slots` accepts at most 10,000 returned events across permitted
+  calendars, for explicit and implicit selections. It counts before busy filtering.
+- Availability reads ordered waves of at most four calendars. It checks each
+  batch before accumulation and releases wave results before the next reads.
+- Overflow returns `payload_too_large` with guidance to narrow the range or calendars.
+  No partial availability is returned. Incomplete searches and truncated recurrence also fail closed.
+- Cancellation joins the active wave. Errors follow selected-calendar order,
+  not completion order. Availability stops before starting another wave on failure.
 - Results, calendar-index warnings, and free-slot output keep input order.
 - Every search row carries the validated calendar path and the recurrence
   identifier when applicable. The internal resource href stays private.
