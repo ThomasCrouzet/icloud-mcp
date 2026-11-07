@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 	_ "time/tzdata" // embed the IANA database: ICLOUD_MCP_DEFAULT_TZ and TZID parsing must not depend on the host/container having zoneinfo installed
@@ -275,20 +276,24 @@ func timeoutMiddlewareWithLimit(d, graceDuration time.Duration, slots chan struc
 
 func toolTimeoutResult(toolName string) *mcp.CallToolResult {
 	if isMutationToolName(toolName) {
+		if toolName == "send_message" || toolName == "reply_message" {
+			return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded after SMTP submission may have been dispatched","retryable":false,"reconciliation":"Do not resend automatically. Check Sent and confirm with recipients; absence from Sent does not prove submission failed. For keyed calls, keep the same idempotency_key and unchanged parameters in this process when checking the original outcome. Do not change keys or restart to retry an uncertain submission."}`)
+		}
 		return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded after a mutation may have been dispatched","retryable":false,"reconciliation":"Re-read the target before retrying. Prefer client_uid, idempotency_key, and etag on writes."}`)
 	}
 	return mcp.NewToolResultError(`{"code":"timeout","message":"tool deadline exceeded","retryable":false}`)
 }
 
+// The read-only registration gate removes every effectful tool, including SMTP.
+// Derive this set from the manifest so new mutations cannot miss timeout guidance.
+var mutationToolNames = func() []string {
+	all := mcptools.NewCapabilityPlan(false, true, true, true, true).RegisteredTools()
+	reads := mcptools.NewCapabilityPlan(true, true, true, true, true).RegisteredTools()
+	return slices.DeleteFunc(all, func(name string) bool { return slices.Contains(reads, name) })
+}()
+
 func isMutationToolName(name string) bool {
-	switch name {
-	case "create_event", "update_event", "delete_event",
-		"create_contact", "update_contact", "delete_contact",
-		"set_message_flags", "move_message", "trash_message", "send_message":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(mutationToolNames, name)
 }
 
 func domainStatus(enabled bool) string {

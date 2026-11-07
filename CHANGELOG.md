@@ -7,6 +7,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Classify mutation timeouts from the registered capability manifests, including
+  `reply_message`. Give send and reply timeouts SMTP-specific reconciliation
+  guidance without automatic resend or a false failure claim from an absent Sent copy.
 - Wire the strict `archive_sent` boolean through `send_message` and keyed request
   fingerprints. Authorize a unique valid Sent destination before SMTP access.
   Pin APPEND to that destination and preserve separate archival outcomes without retries.

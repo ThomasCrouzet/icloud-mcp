@@ -67,6 +67,11 @@ func TestProtocolTimeoutRegisteredManifest(t *testing.T) {
 	plans := map[string]mcptools.CapabilityPlan{
 		"legacy-all": mcptools.NewCapabilityPlan(false, true, true, true, true),
 		"read-only":  mcptools.NewCapabilityPlan(true, true, true, true, true),
+		"permissions-all": mcptools.NewCapabilityPlanFromConfig(false, config.CapabilitySet{
+			CalendarRead: true, CalendarWrite: true, CalendarDelete: true,
+			ContactsRead: true, ContactsWrite: true, ContactsDelete: true,
+			MailRead: true, MailMutate: true, MailTrash: true, MailSend: true, MailArchive: true,
+		}),
 		"send-only": mcptools.NewCapabilityPlanFromConfig(false, config.CapabilitySet{
 			MailSend: true,
 		}),
@@ -115,6 +120,9 @@ func TestProtocolTimeoutRegisteredManifest(t *testing.T) {
 					}
 					if isMutationToolName(tool.Name) != mutation {
 						t.Errorf("runtime classification disagrees with registered %s", tool.Name)
+					}
+					if tool.Name == "send_message" || tool.Name == "reply_message" {
+						assertMailTimeoutHint(t, payload)
 					}
 				})
 			}

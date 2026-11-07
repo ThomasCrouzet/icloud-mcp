@@ -143,6 +143,22 @@ cached `outcome_unknown`, even when a read shows that the write succeeded.
 
 ## Send archival and recovery
 
+Synthetic tool timeouts for `send_message` and `reply_message` include SMTP-specific
+reconciliation guidance. They are not evidence that submission failed. Never resend
+automatically. Check Sent and confirm with recipients before deciding on another send.
+An absent Sent copy does not prove failure, especially when archival was not requested.
+
+For keyed calls, keep the same `idempotency_key` and unchanged parameters in the same
+process to check the original outcome. An identical call shares pending work or returns
+its saved result without another SMTP submission. A changed key or process restart can
+submit again. Neither resolves the previous outcome. Unkeyed calls have no deduplication
+guarantee.
+
+The tool deadline stays at 25 seconds with a two-second cancellation grace period.
+A definitive handler result within that grace period takes precedence over a synthetic
+timeout. Otherwise, the handler can still finish and retains its slot until it exits.
+Do not treat a synthetic timeout as a definitive SMTP rejection or acceptance.
+
 `send_message` validates `archive_sent` as a strict boolean, default false.
 Disabled archival returns `validation`. A forbidden Sent scope returns `authorization`.
 Missing, ambiguous, or invalid Sent discovery returns `protocol_error`.

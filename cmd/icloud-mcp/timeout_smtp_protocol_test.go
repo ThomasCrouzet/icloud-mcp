@@ -10,15 +10,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/textproto"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,7 +90,7 @@ func (b *timeoutReplyBridge) ReplyMessage(ctx context.Context, input maildomain.
 	if n == 2 {
 		close(b.duplicate)
 	}
-	result, err := b.Service.SendMessage(ctx, maildomain.SendInput{
+	result, err := b.SendMessage(ctx, maildomain.SendInput{
 		To: []string{"recipient@example.invalid"}, Subject: "Synthetic reply bridge",
 		Body: input.Body, IdempotencyKey: input.IdempotencyKey,
 	})
@@ -177,27 +174,9 @@ func assertMailTimeoutHint(t *testing.T, payload map[string]any) {
 	}
 }
 
-// A child process confines the synthetic CA to these tests. The production
-// adapter still verifies smtp.mail.me.com and never uses InsecureSkipVerify.
+// TestMain confines the synthetic CA to this package's test process. The
+// production adapter still verifies the fixed smtp.mail.me.com authority.
 func TestProtocolReplyTimeoutSMTP(t *testing.T) {
-	const child = "GO_TEST_REPLY_TIMEOUT_CHILD"
-	if os.Getenv(child) != "1" {
-		executable, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, executable, "-test.run=^TestProtocolReplyTimeoutSMTP$", "-test.v", "-test.timeout=50s")
-		cmd.Env = append(os.Environ(), child+"=1")
-		output, err := cmd.CombinedOutput()
-		t.Logf("isolated SMTP protocol tests:\n%s", output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	serverTLS := timeoutSMTPTrust(t)
 	for _, phase := range []string{"before-dispatch", "data-ambiguous", "accepted-within-grace", "rejected-within-grace", "accepted-beyond-grace"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -218,7 +197,7 @@ func TestProtocolReplyTimeoutSMTP(t *testing.T) {
 			}, func(ctx context.Context) (net.Conn, error) {
 				dials.Add(1)
 				local, remote := net.Pipe()
-				go func() { wireDone <- timeoutSMTPPeer(ctx, remote, serverTLS, phase, &data, dataSeen) }()
+				go func() { wireDone <- timeoutSMTPPeer(ctx, remote, timeoutSMTPConfig, phase, &data, dataSeen) }()
 				return local, nil
 			}, false, true)
 			if err != nil {
@@ -258,9 +237,10 @@ func TestProtocolReplyTimeoutSMTP(t *testing.T) {
 			timeoutAwait(t, b.cancelSeen)
 			wantStatus := string(maildomain.SendAccepted)
 			wantCode := ""
-			if phase == "data-ambiguous" {
+			switch phase {
+			case "data-ambiguous":
 				wantStatus, wantCode = string(maildomain.SendOutcomeUnknown), "outcome_unknown"
-			} else if phase == "rejected-within-grace" {
+			case "rejected-within-grace":
 				wantStatus, wantCode = string(maildomain.SendRejected), "authorization"
 			}
 			if string(ready.Status) != wantStatus {
@@ -382,11 +362,12 @@ func timeoutSMTPPeer(ctx context.Context, conn net.Conn, config *tls.Config, pha
 	}
 }
 
-func timeoutSMTPTrust(t *testing.T) *tls.Config {
-	t.Helper()
+var timeoutSMTPConfig *tls.Config
+
+func timeoutSMTPTrust() error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	now := time.Now()
 	root := &x509.Certificate{
@@ -396,7 +377,7 @@ func timeoutSMTPTrust(t *testing.T) *tls.Config {
 	}
 	rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	leaf := &x509.Certificate{
 		SerialNumber: big.NewInt(2), DNSNames: []string{"smtp.mail.me.com"},
@@ -405,14 +386,26 @@ func timeoutSMTPTrust(t *testing.T) *tls.Config {
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, key)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "root.pem")
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER}), 0600); err != nil {
-		t.Fatal(err)
+	rootCert, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		return err
 	}
-	t.Setenv("SSL_CERT_FILE", path)
-	t.Setenv("SSL_CERT_DIR", dir)
-	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER, rootDER}, PrivateKey: key}}}
+	roots := x509.NewCertPool()
+	roots.AddCert(rootCert)
+	// Force the test-only pool on every platform without disabling verification.
+	if err := os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",x509usefallbackroots=1"); err != nil {
+		return err
+	}
+	x509.SetFallbackRoots(roots)
+	leafCert, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		return err
+	}
+	if _, err := leafCert.Verify(x509.VerifyOptions{DNSName: "smtp.mail.me.com"}); err != nil {
+		return fmt.Errorf("verify timeout fixture through default roots: %w", err)
+	}
+	timeoutSMTPConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER, rootDER}, PrivateKey: key}}}
+	return nil
 }

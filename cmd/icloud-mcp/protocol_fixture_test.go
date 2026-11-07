@@ -26,6 +26,10 @@ import (
 var protocolOutput io.Writer
 
 func TestMain(m *testing.M) {
+	if err := timeoutSMTPTrust(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "timeout SMTP trust fixture:", err)
+		os.Exit(1)
+	}
 	if os.Getenv("ICLOUD_MCP_PROTOCOL_FIXTURE") != "" {
 		protocolOutput = os.Stdout
 		// Go test diagnostics must not enter the JSON-RPC stream.
