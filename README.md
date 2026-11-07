@@ -119,6 +119,10 @@ never creates, updates, moves, trashes, or sends. Exit status is 0 when every
 enabled domain is ready and 1 when a probe fails. Disabled domains stay
 `disabled`; enabled domains are never reported ready before a successful probe.
 
+`-doctor` is not available in v0.4.3. It uses configured credentials and does
+not probe SMTP. For credential-free TLS checks and hosted-network limitations,
+see [Mail network troubleshooting](docs/mail-network-troubleshooting.md).
+
 Representative read tools also publish output schemas and `structuredContent`.
 Their text content remains for older hosts. Both forms come from the same
 redacted values.
@@ -292,6 +296,7 @@ for search, parser, recurrence, and concurrency bounds.
 | [CalDAV compatibility](docs/caldav-compatibility.md) | Calendar discovery, conditional writes, recurrence |
 | [CardDAV compatibility](docs/carddav-compatibility.md) | Contacts discovery, search, vCard formats and writes |
 | [Mail compatibility](docs/mail-compatibility.md) | IMAP identities, sessions, MIME bounds, mutations, SMTP |
+| [Mail network troubleshooting](docs/mail-network-troubleshooting.md) | Version-specific diagnostics, credential-free TLS checks, approved deployment networks |
 | [Security policy](SECURITY.md) and [implementation](docs/security.md) | Threat model, private reporting, technical controls |
 | [Testing](docs/testing.md) | Local checks, protocol evidence, CI, live integration, release verification |
 | [Releases](https://github.com/ThomasCrouzet/icloud-mcp/releases) and [Changelog](CHANGELOG.md) | Published archives and version history |

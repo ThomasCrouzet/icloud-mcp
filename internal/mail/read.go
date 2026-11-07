@@ -51,7 +51,7 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 		if item.Headers.MessageID != "" {
 			result.MessageID = item.Headers.MessageID
 		}
-		var selectedPart, htmlPart *imapadapter.BodyPart
+		var htmlPart *imapadapter.BodyPart
 		hasHTML := false
 		for i := range item.Parts {
 			part := &item.Parts[i]
@@ -60,9 +60,6 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 				if htmlPart == nil {
 					htmlPart = part
 				}
-			}
-			if selectedPart == nil && part.InlinePlain {
-				selectedPart = part
 			}
 			if part.Attachment {
 				if len(result.Attachments) >= MaxAttachments {
@@ -74,7 +71,43 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 				})
 			}
 		}
-		if selectedPart == nil {
+		var firstPlainBody string
+		hasPlain := false
+		for _, part := range item.Parts {
+			if !part.InlinePlain {
+				continue
+			}
+			bodyData, err := session.FetchBodyPart(input.UID, part.Path)
+			if err != nil {
+				return nil, err
+			}
+			if bodyData.TooLarge {
+				result.BodyOmitted = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "plain-text body exceeded the wire-byte limit and was omitted"})
+				return fitMessageResult(result)
+			}
+			body, oversized, decodeErr := decodePlainBody(bodyData.MIMEHeader, bodyData.Body, maxBody)
+			if decodeErr != nil {
+				result.BodyOmitted = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_decode_failed", Message: "plain-text body could not be safely decoded and was omitted"})
+				return fitMessageResult(result)
+			}
+			if oversized {
+				result.BodyOmitted = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "decoded plain-text body exceeded max_body_bytes and was omitted"})
+				return fitMessageResult(result)
+			}
+			if !hasPlain {
+				firstPlainBody = body
+				hasPlain = true
+			}
+			if !input.AllowHTMLFallback || strings.TrimSpace(body) != "" {
+				result.Body = body
+				result.BodySource = "plain_text"
+				return fitMessageResult(result)
+			}
+		}
+		if !hasPlain || hasHTML && input.AllowHTMLFallback {
 			if hasHTML && input.AllowHTMLFallback && htmlPart != nil {
 				htmlData, htmlErr := session.FetchBodyPart(input.UID, htmlPart.Path)
 				if htmlErr != nil {
@@ -114,26 +147,8 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 			}
 			return fitMessageResult(result)
 		}
-		bodyData, err := session.FetchBodyPart(input.UID, selectedPart.Path)
-		if err != nil {
-			return nil, err
-		}
-		if bodyData.TooLarge {
-			result.BodyOmitted = true
-			result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "plain-text body exceeded the wire-byte limit and was omitted"})
-			return fitMessageResult(result)
-		}
-		body, oversized, decodeErr := decodePlainBody(bodyData.MIMEHeader, bodyData.Body, maxBody)
-		if decodeErr != nil {
-			result.BodyOmitted = true
-			result.Warnings = append(result.Warnings, Warning{Code: "body_decode_failed", Message: "plain-text body could not be safely decoded and was omitted"})
-		} else if oversized {
-			result.BodyOmitted = true
-			result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "decoded plain-text body exceeded max_body_bytes and was omitted"})
-		} else {
-			result.Body = body
-			result.BodySource = "plain_text"
-		}
+		result.Body = firstPlainBody
+		result.BodySource = "plain_text"
 		return fitMessageResult(result)
 	})
 	if err != nil {

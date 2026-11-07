@@ -68,6 +68,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Return a usable `nextBeforeUid` after an empty bounded mail search. Resume at
   completed scan progress, and at the oldest returned message after count or
   byte truncation.
+- Allow `get_message` HTML fallback for blank decoded plain text when
+  `allow_html_fallback` is true. Keep meaningful plain text preferred (#79).
 
 ## [0.4.3] - 2026-11-04
 
