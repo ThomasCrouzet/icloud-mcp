@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestContractPublishedDefaults(t *testing.T) {
@@ -196,6 +197,59 @@ func contractSizedPlainBody(size int) string {
 	}
 	b.WriteString(strings.Repeat("x", size-b.Len()))
 	return b.String()
+}
+
+func TestContractWorkingHoursEndCounterfactual(t *testing.T) {
+	for _, zone := range []string{"UTC", "Europe/Paris", "America/New_York"} {
+		t.Run(zone, func(t *testing.T) {
+			location, err := time.LoadLocation(zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := time.Date(2026, time.July, 1, 9, 0, 0, 0, location)
+			cutoff := time.Date(2026, time.July, 1, 17, 0, 0, 0, location)
+			rangeEnd := time.Date(2026, time.July, 1, 20, 0, 0, 0, location)
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+					f := newContractRuntime(t, contractProfile{plan: NewCapabilityPlan(false, true, true, true, true)})
+					args := contractMerge(f.arguments("find_free_slots", ""), map[string]any{"start": start.Format(time.RFC3339), "end": rangeEnd.Format(time.RFC3339), "timezone": zone, "working_hours_start": "09:00", "limit": 200})
+					if explicit {
+						args["working_hours_end"] = "17:00"
+					}
+					res := f.call(t, "find_free_slots", args)
+					if res.IsError {
+						t.Fatal(resultText(t, res))
+					}
+					contractValidateOutput(t, f.tools["find_free_slots"], res)
+					slots := contractPayload(t, res)["slots"].([]any)
+					if len(slots) == 0 {
+						t.Fatal("working_hours_end counterfactual requires nonempty actual slots")
+					}
+					var latest time.Time
+					for _, item := range slots {
+						end, err := time.Parse(time.RFC3339, item.(map[string]any)["end"].(string))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if end.After(latest) {
+							latest = end
+						}
+					}
+					want := rangeEnd
+					if explicit {
+						f.verifyProperty(t, "find_free_slots", []string{"working_hours_end"}, args, res)
+						want = cutoff
+					} else if !latest.After(cutoff) {
+						t.Fatal("absent-cutoff dataset cannot expose an ignored working_hours_end")
+					}
+					if !latest.Equal(want) {
+						t.Fatalf("latest local slot end %s != %s", latest.In(location).Format(time.RFC3339), want.Format(time.RFC3339))
+					}
+					t.Logf("contract_working_end=%s", contractReplayJSON(t, map[string]any{"tool": "find_free_slots", "property": "working_hours_end", "timezone": zone, "explicit": explicit, "slots": len(slots), "latest_local_end": latest.In(location).Format(time.RFC3339), "requested_local_cutoff": cutoff.Format(time.RFC3339)}))
+				})
+			}
+		})
+	}
 }
 
 func TestContractDecodedBodyExactMaximum(t *testing.T) {

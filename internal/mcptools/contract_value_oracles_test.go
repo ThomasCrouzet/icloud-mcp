@@ -352,7 +352,11 @@ func (f *contractRuntime) verifyValues(t *testing.T, name string, path []string,
 			}
 		}
 	case "find_free_slots":
-		for _, item := range payload["slots"].([]any) {
+		slots := payload["slots"].([]any)
+		if key == "working_hours_end" && len(slots) == 0 {
+			t.Fatal("working_hours_end oracle requires nonempty actual slots")
+		}
+		for _, item := range slots {
 			slot := item.(map[string]any)
 			start, err := time.Parse(time.RFC3339, slot["start"].(string))
 			if err != nil {
@@ -371,6 +375,24 @@ func (f *contractRuntime) verifyValues(t *testing.T, name string, path []string,
 			}
 			if key == "timezone" && !strings.HasSuffix(slot["start"].(string), "+02:00") {
 				t.Fatal("timezone ignored")
+			}
+			if key == "working_hours_end" {
+				location := time.UTC
+				if zone, ok := args["timezone"].(string); ok {
+					location, err = time.LoadLocation(zone)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				clock, err := time.Parse("15:04", args[key].(string))
+				if err != nil {
+					t.Fatal(err)
+				}
+				localStart := start.In(location)
+				cutoff := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), clock.Hour(), clock.Minute(), 0, 0, location)
+				if end.After(cutoff) {
+					t.Fatalf("working_hours_end=%s ignored: local slot end %s exceeds cutoff %s (%d actual slots)", args[key], end.In(location).Format(time.RFC3339), cutoff.Format(time.RFC3339), len(slots))
+				}
 			}
 		}
 		if key == "limit" {
