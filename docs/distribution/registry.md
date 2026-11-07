@@ -1,6 +1,6 @@
 # Official MCP Registry record
 
-## Current record
+## Historical record: 2026-11-04
 
 Read on 2026-11-04 from
 `https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ThomasCrouzet/icloud-mcp`:
@@ -23,8 +23,9 @@ Read on 2026-11-04 from
 }
 ```
 
-The repository `server.json` declares version `0.4.3`. The tag, `server.json`,
-`CHANGELOG.md`, and the registry agree, and `make check-registry` passes.
+At this snapshot, the repository `server.json` declared version `0.4.3`.
+The tag, `server.json`, `CHANGELOG.md`, and the registry agreed, and
+`make check-registry` passed.
 
 ## How 0.4.3 was published
 

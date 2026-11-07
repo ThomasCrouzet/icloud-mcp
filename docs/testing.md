@@ -241,9 +241,10 @@ Package coverage floors are:
 | `internal/mail/imapadapter` | 60% |
 | `cmd/icloud-mcp` | 55% |
 
-Tag releases publish only after the CI and gitleaks jobs succeed on the same
-ref. See the `release` job in `.github/workflows/ci.yml`. GitHub archives use
-`make release-all` with Go 1.26.10 pinned. The setting is
+Tag releases publish only after CI, gitleaks, release metadata, and both native
+smoke matrix jobs succeed on the same ref. See the `release` job in
+`.github/workflows/ci.yml`. GitHub archives use `make release-all` with Go
+1.26.10 pinned. The setting is
 `check-latest: false`.
 
 Local `make release` remains the digest-pinned container path for linux/arm64.
@@ -253,6 +254,7 @@ that build.
 Tag and manual `native` CI runs extract the matching production archive on
 native GitHub-hosted runners. They verify checksums, version output, and an
 offline configuration failure. The matrix covers Linux amd64 and macOS arm64.
+The macOS arm64 job uses the standard `macos-15` runner.
 Linux arm64 remains cross-compiled and archive-tested only. Windows remains
 compile-only and has no published archive or runtime support claim.
 
@@ -269,9 +271,10 @@ make check-registry           # published registry state, network required
 ```
 
 `make check-release-metadata` does not use the network or require a tag. It runs
-on pull requests, `main`, and tags in the `release metadata` job. It fails on an
-invalid `server.json`, a missing or empty changelog section, or a tag that does
-not match the declared version on a tag push.
+on pull requests, `main`, tags, and manual `native` runs in the `release metadata`
+job. It fails on an invalid `server.json`, a missing or empty changelog section,
+or a tag that does not match the declared version on a tag push.
+Registry-only manual runs do not enable release metadata or native smoke.
 
 `make check-registry` fails when the latest registry version differs from
 `server.json`, when the record is missing, or when the response is unreadable.

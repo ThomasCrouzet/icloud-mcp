@@ -6,6 +6,26 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-07
+
+This patch includes all 0.5.0 features and fixes without product behavior changes.
+The published 0.5.0 release and its tag remain unchanged.
+
+### Fixed
+- Use the standard `macos-15` runner for the macOS arm64 archive smoke check.
+- Require both native archive smoke matrix jobs to succeed before tag publication.
+  Keep CI, secret scanning, metadata validation, and signing requirements.
+- Run release metadata validation in manual `native` mode so its dependent
+  smoke jobs can run. Keep registry-only verification separate.
+
+### Documentation
+- Update release verification for the native publication barrier and manual mode.
+- Label the 2026-11-04 registry snapshot as historical, not current publication state.
+
+### Acknowledgments
+- Thank Caleb Mennen (@cinnamennen) for the recurrence contribution included from 0.5.0.
+- Thank @dortega3000 and @dwlynch055 for their issue reports.
+
 ## [0.5.0] - 2026-11-07
 
 ### Added
