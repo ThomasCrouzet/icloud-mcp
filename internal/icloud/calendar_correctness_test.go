@@ -570,3 +570,34 @@ func TestAggregateRecurrenceWorkBudget(t *testing.T) {
 	_, _, err = expandOccurrencesContext(context.Background(), master, nil, start, start.AddDate(0, 1, 0), 10, &remaining)
 	requireICloudCode(t, err, CodePayloadTooLarge)
 }
+
+func TestWeeklyWeekdaySelectorsUseOneWeekCycle(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	masters := []Event{
+		{UID: "mwf", StartTime: time.Date(2026, 8, 31, 10, 0, 0, 0, la), Recurrence: "FREQ=WEEKLY;WKST=SU;BYDAY=MO,WE,FR"},
+		{UID: "biweekly", StartTime: time.Date(2026, 10, 9, 18, 0, 0, 0, la), Recurrence: "FREQ=WEEKLY;WKST=SU;INTERVAL=2;BYDAY=FR"},
+		{UID: "tuth", StartTime: time.Date(2026, 9, 1, 9, 0, 0, 0, la), Recurrence: "FREQ=WEEKLY;BYDAY=TU,TH"},
+	}
+	rangeStart := time.Date(2026, 11, 9, 0, 0, 0, 0, la)
+	rangeEnd := time.Date(2026, 11, 21, 0, 0, 0, 0, la)
+	remaining := maxRecurrenceSearchWork
+	total := 0
+	for _, master := range masters {
+		master.EndTime = master.StartTime.Add(time.Hour)
+		occs, _, err := expandOccurrencesContext(context.Background(), master, nil, rangeStart, rangeEnd, 0, &remaining)
+		if err != nil {
+			t.Fatalf("%s: one search must expand several weekly BYDAY series: %v", master.UID, err)
+		}
+		total += len(occs)
+	}
+	// MO,WE,FR: 6. INTERVAL=2 on FR: 1 (Nov 20). TU,TH: 4.
+	if total != 11 {
+		t.Fatalf("occurrences = %d, want 11", total)
+	}
+	if used := maxRecurrenceSearchWork - remaining; used > 1000 {
+		t.Fatalf("aggregate work = %d, want a one-week selector sample", used)
+	}
+}

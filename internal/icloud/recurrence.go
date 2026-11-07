@@ -463,7 +463,13 @@ func checkRecurrenceSelectorSafety(ctx context.Context, opt *rrule.ROption, seri
 		cycle = 4800 / greatestCommonDivisor(interval, 4800)
 		periodStart = time.Date(normalized.Dtstart.Year(), normalized.Dtstart.Month(), 1, 0, 0, 0, 0, normalized.Dtstart.Location())
 	case rrule.WEEKLY:
-		cycle = 20871 / greatestCommonDivisor(interval, 20871)
+		cycleBase := 20871
+		if recurrenceHasOnlyWeekdayDateSelectors(&normalized) {
+			// BYDAY without other date selectors selects the same weekdays in
+			// each week. One period is an exact sample of all periods.
+			cycleBase = 1
+		}
+		cycle = cycleBase / greatestCommonDivisor(interval, cycleBase)
 		periodStart = recurrenceWeekStart(normalized.Dtstart, normalized.Wkst.Day())
 	case rrule.DAILY:
 		cycleBase := 146097
