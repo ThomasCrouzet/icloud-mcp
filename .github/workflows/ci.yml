@@ -222,7 +222,7 @@ jobs:
 
   release-metadata:
     name: release metadata
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && inputs.native)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -260,7 +260,7 @@ jobs:
           - runner: ubuntu-latest
             asset_os: linux
             asset_arch: amd64
-          - runner: macos-14
+          - runner: macos-15
             asset_os: darwin
             asset_arch: arm64
     runs-on: ${{ matrix.runner }}
@@ -316,7 +316,7 @@ jobs:
   release:
     name: build archives and checksums
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, secrets, release-metadata]
+    needs: [ci, secrets, release-metadata, native-release-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
