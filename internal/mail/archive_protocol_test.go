@@ -62,6 +62,13 @@ func newArchiveProtocol(t *testing.T, listing, scope, outcome string, enabled bo
 	return f
 }
 
+// NewArchiveMCPFixture exposes only synthetic protocol fixtures to external
+// package tests, without adding production transport injection points.
+func NewArchiveMCPFixture(t *testing.T, scope, outcome string, enabled bool) (*Client, func() [5]int32) {
+	f := newArchiveProtocol(t, archiveSentListing, scope, outcome, enabled)
+	return f.client, f.counts
+}
+
 const archiveSentListing = "* LIST (\\Sent) \"/\" \"Private Sent\"\r\n"
 
 func (f *archiveProtocol) serveIMAP(conn net.Conn) {
