@@ -56,6 +56,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the shared coverage floors. CI invokes the same guard and coverage scripts.
 
 ### Fixed
+- Decode iCalendar TEXT escapes in event titles, locations, notes, search matching, and successful delete responses (#78).
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays
   nominal, an elapsed DURATION stays elapsed, and a title-only update does not
   change start or end.
@@ -67,6 +68,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Return a usable `nextBeforeUid` after an empty bounded mail search. Resume at
   completed scan progress, and at the oldest returned message after count or
   byte truncation.
+- Allow `get_message` HTML fallback for blank decoded plain text when
+  `allow_html_fallback` is true. Keep meaningful plain text preferred (#79).
 
 ## [0.4.3] - 2026-11-04
 
