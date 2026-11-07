@@ -152,7 +152,7 @@ func (f *archiveProtocol) serveIMAP(conn net.Conn) {
 func (f *archiveProtocol) serveSMTP(conn net.Conn, config *tls.Config) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	var wire net.Conn = conn
+	wire := conn
 	r := bufio.NewReader(wire)
 	write := func(s string) bool { _, err := io.WriteString(wire, s); return err == nil }
 	if !write("220 smtp.fixture ESMTP\r\n") {
