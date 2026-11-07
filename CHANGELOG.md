@@ -56,6 +56,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the shared coverage floors. CI invokes the same guard and coverage scripts.
 
 ### Fixed
+- Decode iCalendar TEXT escapes in event titles, locations, notes, search matching, and successful delete responses (#78).
 - Preserve occurrence duration semantics across DST. A nominal DURATION stays
   nominal, an elapsed DURATION stays elapsed, and a title-only update does not
   change start or end.

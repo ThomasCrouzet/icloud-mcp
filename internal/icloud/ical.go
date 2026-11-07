@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -908,20 +909,34 @@ func parseCalendarObject(obj *extcaldav.CalendarObject) (*Event, []Event, error)
 	return master, overrides, nil
 }
 
+func eventText(props ical.Props, name string) (string, error) {
+	prop := props.Get(name)
+	if prop == nil {
+		return "", nil
+	}
+	textProp := *prop
+	// RFC 5545 VALUE tokens ignore case, but go-ical checks them case-sensitively.
+	if valueType := prop.Params.Get(ical.ParamValue); valueType != string(ical.ValueText) && strings.EqualFold(valueType, string(ical.ValueText)) {
+		textProp.Params = maps.Clone(prop.Params)
+		textProp.Params.Set(ical.ParamValue, string(ical.ValueText))
+	}
+	return textProp.Text()
+}
+
 func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, exDates []time.Time, err error) {
 	e := &Event{Path: path}
 
 	if p := vevent.Props.Get(ical.PropUID); p != nil {
 		e.UID = p.Value
 	}
-	if p := vevent.Props.Get(ical.PropSummary); p != nil {
-		e.Title = p.Value
+	if e.Title, err = eventText(vevent.Props, ical.PropSummary); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event title is invalid", nil)
 	}
-	if p := vevent.Props.Get(ical.PropLocation); p != nil {
-		e.Location = p.Value
+	if e.Location, err = eventText(vevent.Props, ical.PropLocation); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event location is invalid", nil)
 	}
-	if p := vevent.Props.Get(ical.PropDescription); p != nil {
-		e.Notes = p.Value
+	if e.Notes, err = eventText(vevent.Props, ical.PropDescription); err != nil {
+		return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event notes are invalid", nil)
 	}
 
 	if p := vevent.Props.Get(ical.PropDateTimeStart); p != nil {

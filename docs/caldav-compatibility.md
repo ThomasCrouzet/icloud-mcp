@@ -45,6 +45,18 @@ policies. See [CardDAV compatibility](carddav-compatibility.md) and
   preserves VERSION, PRODID, and VTIMEZONE.
 - REPORT payloads are incomplete for encoding with go-ical.
 
+## Event text
+
+- Event reads decode iCalendar TEXT in SUMMARY, LOCATION, and DESCRIPTION as
+  title, location, and notes. This includes recurrence overrides.
+- Explicit TEXT value types are case-insensitive. Reading does not change stored properties.
+- Escaped commas, semicolons, backslashes, and newlines become ordinary text.
+  Unicode stays unchanged. Missing and empty properties produce empty fields.
+- `search_events` matches query text against these decoded fields.
+  The successful `delete_event` response also decodes `deletedTitle`, including dry runs.
+- Invalid TEXT escapes or value types return `protocol_error` when read.
+  An invalid delete title fails before mutation. Errors do not include remote text.
+
 ## Writes
 
 - Use PUT to store server-created events as `text/calendar` objects named
