@@ -145,6 +145,8 @@ the complete object. Identical UIDs in different calendars stay isolated.
   proven.
 - The client rejects RDATE and ranged `RECURRENCE-ID` (`THISANDFUTURE`) with
   `protocol_error`. Availability results never omit them silently.
+  See [decision 0001](decisions/0001-recurrence-and-invitations.md) for the
+  RFC-grounded assessment, safety gaps, and fixture matrix.
 - A preflight check tests date-selector reachability over a bounded Gregorian
   cycle. The check runs before the recurrence iterator.
 - The client rejects the non-RFC `BYEASTER` extension.
