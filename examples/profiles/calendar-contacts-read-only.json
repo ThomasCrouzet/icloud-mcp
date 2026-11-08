@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "icloud": {
+      "command": "/Users/you/go/bin/icloud-mcp",
+      "env": {
+        "ICLOUD_EMAIL": "file:///Users/you/.config/icloud-mcp/email",
+        "ICLOUD_PASSWORD": "file:///Users/you/.config/icloud-mcp/password",
+        "ICLOUD_MCP_READ_ONLY": "true",
+        "ICLOUD_MCP_PERMISSIONS": "calendar.read,contacts.read",
+        "ICLOUD_MCP_ENABLE_CONTACTS": "true",
+        "ICLOUD_MCP_ENABLE_MAIL": "false",
+        "ICLOUD_MCP_ENABLE_MAIL_WRITE": "false",
+        "ICLOUD_MCP_ENABLE_MAIL_SEND": "false",
+        "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
+      }
+    }
+  }
+}

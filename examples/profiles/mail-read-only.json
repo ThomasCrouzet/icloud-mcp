@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "icloud": {
+      "command": "/Users/you/go/bin/icloud-mcp",
+      "env": {
+        "ICLOUD_MAIL_ADDRESS": "file:///Users/you/.config/icloud-mcp/mail-address",
+        "ICLOUD_MAIL_PASSWORD": "file:///Users/you/.config/icloud-mcp/mail-password",
+        "ICLOUD_MCP_READ_ONLY": "true",
+        "ICLOUD_MCP_PERMISSIONS": "mail.read",
+        "ICLOUD_MCP_RESOURCE_SCOPES": "mail.read=INBOX",
+        "ICLOUD_MCP_ENABLE_CONTACTS": "false",
+        "ICLOUD_MCP_ENABLE_MAIL": "true",
+        "ICLOUD_MCP_ENABLE_MAIL_WRITE": "false",
+        "ICLOUD_MCP_ENABLE_MAIL_SEND": "false"
+      }
+    }
+  }
+}
