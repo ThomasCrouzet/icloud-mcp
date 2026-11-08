@@ -221,6 +221,10 @@ def parse_benchmarks(log_text: str) -> list[dict]:
     return records
 
 
+def is_finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
 def validate_baseline(
     records: list[dict], required: dict[str, tuple[str, ...]], expected_count: int
 ) -> list[str]:
@@ -236,19 +240,30 @@ def validate_baseline(
         if len(samples) != expected_count:
             errors.append(f"sample count {len(samples)} for {name}, want {expected_count}")
         for index, record in enumerate(samples, start=1):
-            if record.get("bytes_per_op") is None:
+            if not is_finite_number(record.get("ns_per_op")):
+                errors.append(f"{name} sample {index} of {expected_count}: missing or invalid ns/op")
+            bytes_per_op = record.get("bytes_per_op")
+            if bytes_per_op is None:
                 errors.append(f"{name} sample {index} of {expected_count}: missing B/op")
-            if record.get("allocs_per_op") is None:
+            elif not is_finite_number(bytes_per_op):
+                errors.append(f"{name} sample {index} of {expected_count}: invalid B/op")
+            allocs_per_op = record.get("allocs_per_op")
+            if allocs_per_op is None:
                 errors.append(f"{name} sample {index} of {expected_count}: missing allocs/op")
+            elif not is_finite_number(allocs_per_op):
+                errors.append(f"{name} sample {index} of {expected_count}: invalid allocs/op")
     for name, required_metrics in required.items():
         samples = by_name.get(name)
         if samples is None:
             errors.append(f"missing benchmark {name}")
             continue
         for index, record in enumerate(samples, start=1):
+            metrics = record.get("custom_metrics", {})
             for metric in required_metrics:
-                if metric not in record.get("custom_metrics", {}):
+                if metric not in metrics:
                     errors.append(f"missing metric {metric} for {name} sample {index} of {expected_count}")
+                elif not is_finite_number(metrics[metric]):
+                    errors.append(f"invalid metric {metric} for {name} sample {index} of {expected_count}")
     return errors
 
 

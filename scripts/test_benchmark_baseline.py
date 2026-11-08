@@ -196,6 +196,30 @@ class BaselineValidationTests(unittest.TestCase):
         errors = recorder.validate_baseline(records, recorder.REQUIRED_BENCHMARKS, 3)
         self.assertTrue(any("missing B/op" in error and CASE in error for error in errors))
 
+    def test_missing_ns_per_op_on_second_sample_is_rejected(self):
+        records = healthy_records()
+        seen = 0
+        for record in records:
+            if record["name"] == CASE:
+                seen += 1
+                if seen == 2:
+                    record["ns_per_op"] = None
+                    break
+        errors = recorder.validate_baseline(records, recorder.REQUIRED_BENCHMARKS, 3)
+        self.assertTrue(any("invalid ns/op" in error and CASE in error for error in errors))
+
+    def test_nonfinite_metric_on_second_sample_is_rejected(self):
+        records = healthy_records()
+        seen = 0
+        for record in records:
+            if record["name"] == CASE:
+                seen += 1
+                if seen == 2:
+                    record["custom_metrics"]["fixture-occurrences"] = float("inf")
+                    break
+        errors = recorder.validate_baseline(records, recorder.REQUIRED_BENCHMARKS, 3)
+        self.assertTrue(any("invalid metric fixture-occurrences" in error and CASE in error for error in errors))
+
     def test_legitimate_partial_selection_is_valid(self):
         errors = recorder.validate_baseline([sample(CASE) for _ in range(3)], {}, 3)
         self.assertEqual(errors, [])
@@ -244,6 +268,21 @@ class RecorderCLITests(unittest.TestCase):
             result = run_cli("--check-manifest", str(path), "--count", "3")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("missing metric fixture-occurrences", result.stdout)
+
+    def test_second_sample_missing_ns_per_op_through_cli_is_rejected(self):
+        records = healthy_records()
+        seen = 0
+        for record in records:
+            if record["name"] == CASE:
+                seen += 1
+                if seen == 2:
+                    record["ns_per_op"] = None
+                    break
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_manifest(directory, records, count=3)
+            result = run_cli("--check-manifest", str(path), "--count", "3")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("invalid ns/op", result.stdout)
 
     def test_legitimate_partial_manifest_through_cli_is_incomplete_but_valid(self):
         with tempfile.TemporaryDirectory() as directory:
