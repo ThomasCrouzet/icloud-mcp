@@ -1,5 +1,49 @@
 # Official MCP Registry record
 
+## Current record: 2026-11-08
+
+Read on 2026-11-08 from
+`https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ThomasCrouzet/icloud-mcp`.
+The latest record is version `0.5.2`, published at
+`2026-11-08T11:33:00Z`, and it is the first record with packages:
+
+```json
+{
+  "name": "io.github.ThomasCrouzet/icloud-mcp",
+  "version": "0.5.2",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-amd64.mcpb",
+      "version": "0.5.2",
+      "fileSha256": "4c4ccaa729fff875a29ec5680c2bb9b0ba7c6ed4ada1ff2e8210580385c887e4",
+      "transport": {"type": "stdio"}
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-arm64.mcpb",
+      "version": "0.5.2",
+      "fileSha256": "edc49688736e28e9ced5dbffc94d283df7f40f0dc15f476d2f568c748d0466e1",
+      "transport": {"type": "stdio"}
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-darwin-arm64.mcpb",
+      "version": "0.5.2",
+      "fileSha256": "b5b2ad8dec6948bf18f2b742b21d56757de2de7d5dc586d7ed32ba6a76424879",
+      "transport": {"type": "stdio"}
+    }
+  ],
+  "isLatest": true
+}
+```
+
+The downloaded bundles matched these hashes, all three Cosign signatures
+verified against the `v0.5.2` tag workflow identity, and `make check-registry`
+passed. The first publication attempt failed closed because the Registry could
+not reach the GitHub asset URL before its timeout; a retry succeeded. No
+metadata changed between the attempts.
+
 ## Historical record: 2026-11-04
 
 Read on 2026-11-04 from
