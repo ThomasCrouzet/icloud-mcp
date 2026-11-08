@@ -98,9 +98,9 @@ without Calendar, Contacts, or Mail mutation tools.
 ## MCP tools
 
 The server registers **7 tools with the default read-only profile**, including
-the global capability tool, and **24 when explicit permissions and domain gates
-enable every capability**. Disabled tools are absent from discovery. The MCP
-interface provides tools over **stdio**.
+the global capability tool, and **24 when explicit permissions and domain gates enable every capability**.
+Disabled tools are absent from discovery. The MCP interface provides tools over
+**stdio**.
 
 | Tool | Input | Result | Account changes |
 |---|---|---|---|

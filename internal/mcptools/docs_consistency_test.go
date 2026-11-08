@@ -14,11 +14,11 @@ func TestDocumentedToolManifest(t *testing.T) {
 	architecture := readDocFile(t, "../../docs/architecture.md")
 
 	all := NewCapabilityPlan(false, true, true, true, true)
-	defaultPlan := NewCapabilityPlan(false, false, false, false, false)
+	defaultPlan := NewCapabilityPlan(true, false, false, false, false)
 	readOnly := NewCapabilityPlan(true, false, false, false, false)
 
-	if got := defaultPlan.ToolCount(); got != 10 {
-		t.Fatalf("default tool count = %d, want 10", got)
+	if got := defaultPlan.ToolCount(); got != 7 {
+		t.Fatalf("default tool count = %d, want 7", got)
 	}
 	if got := readOnly.ToolCount(); got != 7 {
 		t.Fatalf("read-only tool count = %d, want 7", got)
@@ -28,9 +28,8 @@ func TestDocumentedToolManifest(t *testing.T) {
 	}
 
 	readmeCounts := []string{
-		"**10 tools by default**",
-		"**7 with global read-only",
-		"**24 with all gates on**",
+		"**7 tools with the default read-only profile**",
+		"**24 when explicit permissions and domain gates enable every capability**",
 	}
 	for _, claim := range readmeCounts {
 		if !strings.Contains(readme, claim) {
@@ -38,12 +37,11 @@ func TestDocumentedToolManifest(t *testing.T) {
 		}
 	}
 	architectureCounts := []string{
-		"Default registration has 10 tools",
-		"Global read-only with optional domains disabled has seven tools",
-		"complete surface has 24 tools",
+		"Default registration has seven tools",
+		"enables all 24 tools",
 		"at most **24** tools",
-		"The default surface has 10 tools",
-		"has 7 tools",
+		"The default surface has seven read-only tools",
+		"complete surface has exactly",
 	}
 	for _, claim := range architectureCounts {
 		if !strings.Contains(architecture, claim) {
