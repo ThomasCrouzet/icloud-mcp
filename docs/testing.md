@@ -254,9 +254,11 @@ synthetic go-imap server and client. Mail session close commands are excluded.
 The Mail wire fixture sends synthetic FETCH responses through `net.Pipe` and
 parses them with the real go-imap client and adapter conversion. It has two
 levels: metadata and curated headers, and a 524,287-byte body fetch with MIME
-header parsing. The service body benchmarks remain separate. The wire fixture
-does not cover every live IMAP server behavior, a live mailbox, or Apple
-interoperability.
+header parsing. The body benchmark starts each measured fetch with a fresh
+4 MiB inbound session budget. It keeps the production limit and payload and
+does not change the sampling method. The service body benchmarks remain
+separate. The wire fixture does not cover every live IMAP server behavior, a
+live mailbox, or Apple interoperability.
 
 The Mail throughput benchmarks set the local read limiter to infinite for the
 measurement fixture. They measure per-operation work, not the 60-per-minute

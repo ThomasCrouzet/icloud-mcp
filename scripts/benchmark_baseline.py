@@ -61,7 +61,7 @@ REQUIRED_BENCHMARKS = {
     "BenchmarkMailGetNearLimitBody/NearLimitBody": ("payload-bytes", "refused", "service-call/op"),
     "BenchmarkMailGetNearLimitBody/OverLimitBodyRefusal": ("payload-bytes", "refused", "service-call/op"),
     "BenchmarkIMAPWireMetadata": ("wire-rpc/op", "metadata-messages", "header-bytes", "sparse-uid-base"),
-    "BenchmarkIMAPWireBodyNearLimit": ("wire-rpc/op", "body-bytes", "mime-header-bytes", "sparse-uid-base"),
+    "BenchmarkIMAPWireBodyNearLimit": ("wire-rpc/op", "body-bytes", "mime-header-bytes", "sparse-uid-base", "inbound-budget-bytes"),
     "BenchmarkAvailabilityBudget/HighCardinality": ("range-hours", "worker-limit"),
     "BenchmarkAvailabilityBudget/Overflow": ("range-hours", "worker-limit"),
     "BenchmarkAvailabilityBudget/ManyEmpty": ("range-hours", "worker-limit"),

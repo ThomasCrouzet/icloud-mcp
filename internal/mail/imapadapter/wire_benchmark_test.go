@@ -3,9 +3,9 @@ package imapadapter
 import (
 	"bytes"
 	"context"
-	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -161,6 +161,13 @@ func (s *imapWireBenchmarkSession) Fetch(writer *imapserver.FetchWriter, _ imap.
 	return message.Close()
 }
 
+type wireBenchmarkLogWriter struct{ tb testing.TB }
+
+func (w wireBenchmarkLogWriter) Write(p []byte) (int, error) {
+	w.tb.Logf("imapserver: %s", strings.TrimSpace(string(p)))
+	return len(p), nil
+}
+
 func imapWireBenchmarkFixture(tb testing.TB) (*Session, *imapWireBenchmarkSession) {
 	tb.Helper()
 	serverConn, clientConn := net.Pipe()
@@ -171,7 +178,7 @@ func imapWireBenchmarkFixture(tb testing.TB) (*Session, *imapWireBenchmarkSessio
 		},
 		Caps:         imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapUIDPlus: {}},
 		InsecureAuth: true,
-		Logger:       log.New(io.Discard, "", 0),
+		Logger:       log.New(wireBenchmarkLogWriter{tb}, "", 0),
 	})
 	listener := newSingleConnListener(serverConn)
 	go func() { _ = server.Serve(listener) }()
@@ -243,6 +250,18 @@ func assertIMAPWireBody(tb testing.TB, session *Session) {
 	}
 }
 
+func resetIMAPWireInboundBudget(tb testing.TB, session *Session) {
+	tb.Helper()
+	guard, ok := session.conn.(*guardedConn)
+	if !ok {
+		tb.Fatalf("wire session guard type = %T, want *guardedConn", session.conn)
+	}
+	// The production guard bounds cumulative inbound bytes per session. Each
+	// measured near-limit fetch starts with a fresh session budget. The fixture
+	// keeps the real 4 MiB limit and the real 524,287-byte payload.
+	guard.total = 0
+}
+
 func TestIMAPWireBenchmarkScenario(t *testing.T) {
 	t.Logf("fixture_seed=%s uid=%d body_bytes=%d", imapWireBenchmarkSeed, imapWireBenchmarkUID, imapWireBenchmarkWireBodyBytes)
 	session, fake := imapWireBenchmarkFixture(t)
@@ -279,6 +298,7 @@ func BenchmarkIMAPWireBodyNearLimit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
+		resetIMAPWireInboundBudget(b, session)
 		assertIMAPWireBody(b, session)
 	}
 	b.StopTimer()
@@ -286,4 +306,5 @@ func BenchmarkIMAPWireBodyNearLimit(b *testing.B) {
 	b.ReportMetric(float64(imapWireBenchmarkWireBodyBytes), "body-bytes")
 	b.ReportMetric(float64(len(imapWireBenchmarkMIMEHeader)), "mime-header-bytes")
 	b.ReportMetric(float64(imapWireBenchmarkUID), "sparse-uid-base")
+	b.ReportMetric(float64(maxSessionBytes), "inbound-budget-bytes")
 }
