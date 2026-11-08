@@ -406,12 +406,13 @@ jobs:
           cmp "$before" "$after"
           echo "native_after_tag=$VERSION source_sha=$GITHUB_SHA"
           cat "$after"
+          cp "$after" "$RUNNER_TEMP/native-digests-${ASSET_OS}-${ASSET_ARCH}.txt"
 
       - name: Record native-tested digests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-digests-${{ steps.version.outputs.value }}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
-          path: ${{ runner.temp }}/native-after.txt
+          path: ${{ runner.temp }}/native-digests-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.txt
           if-no-files-found: error
           retention-days: 7
 
