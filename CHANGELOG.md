@@ -46,6 +46,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returns `-32022` with the requested version and supported list.
 
 ### Documentation
+- Put the MCPB path first in the README with a clearly labelled unverified host
+  procedure, exact settings, failure recovery, and release links. Keep the
+  archive and `go install` paths visible. Add a synthetic read-only transcript
+  and a technical case study with evidence and limitations.
 - Record the Windows no-go decision: no observed demand plus an unresolved ACL
   and native-run gap keep `windows/amd64` compile-only. List the evidence
   required to reopen it.
