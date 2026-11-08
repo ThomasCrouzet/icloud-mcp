@@ -249,12 +249,12 @@ func (s *Client) SendMessage(ctx context.Context, input SendInput) (SendResult, 
 	if input.IdempotencyKey == "" {
 		return s.sendOnce(ctx, input)
 	}
-	claim, owner, result, err := s.sendCache.claim(ctx, s.config.Address, input)
+	claim, owner, result, err := s.sendCache.claim(ctx, s.config.Address, input, s.now())
 	if !owner {
 		return result, err
 	}
 	result, err = s.sendOnce(ctx, input)
-	s.sendCache.complete(claim, result, err)
+	s.sendCache.complete(claim, result, err, s.now())
 	return result, err
 }
 

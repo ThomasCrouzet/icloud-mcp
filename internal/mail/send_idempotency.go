@@ -6,11 +6,16 @@ import (
 	"encoding/binary"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
 	maxSendIdempotencyEntries = 128
 	maxSendIdempotencyKey     = 255
+	// sendIdempotencyDefinitiveRetention bounds duplicate protection for
+	// completed definitive outcomes. Pending and ambiguous outcomes do not
+	// expire during the process lifetime.
+	sendIdempotencyDefinitiveRetention = 15 * time.Minute
 )
 
 type sendFingerprint [sha256.Size]byte
@@ -20,6 +25,8 @@ type sendClaim struct {
 	done        chan struct{}
 	result      SendResult
 	err         error
+	completed   bool
+	expires     time.Time
 }
 
 type sendIdempotencyCache struct {
@@ -77,11 +84,12 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 
 // claim returns whether the caller owns this key and must dispatch the send.
 // A duplicate waits for the owner without releasing the claim, even when its
-// own context is cancelled.
-func (c *sendIdempotencyCache) claim(ctx context.Context, sender string, input SendInput) (*sendClaim, bool, SendResult, error) {
+// own context is cancelled. Expired definitive claims are reclaimed lazily.
+func (c *sendIdempotencyCache) claim(ctx context.Context, sender string, input SendInput, now time.Time) (*sendClaim, bool, SendResult, error) {
 	key := input.IdempotencyKey
 	fingerprint := sendRequestFingerprint(sender, input)
 	c.mu.Lock()
+	c.expireLocked(now)
 	if existing, ok := c.entries[key]; ok {
 		c.mu.Unlock()
 		if existing.fingerprint != fingerprint {
@@ -96,7 +104,7 @@ func (c *sendIdempotencyCache) claim(ctx context.Context, sender string, input S
 	}
 	if len(c.entries) >= maxSendIdempotencyEntries {
 		c.mu.Unlock()
-		return nil, false, SendResult{}, newError(CodeConflict, "idempotency cache is full; use a new process or a different key")
+		return nil, false, SendResult{}, sendIdempotencyFullError()
 	}
 	claim := &sendClaim{fingerprint: fingerprint, done: make(chan struct{})}
 	c.entries[key] = claim
@@ -104,13 +112,89 @@ func (c *sendIdempotencyCache) claim(ctx context.Context, sender string, input S
 	return claim, true, SendResult{}, nil
 }
 
-func (c *sendIdempotencyCache) complete(claim *sendClaim, result SendResult, err error) {
+func (c *sendIdempotencyCache) complete(claim *sendClaim, result SendResult, err error, completedAt time.Time) {
 	if claim == nil {
 		return
 	}
 	c.mu.Lock()
 	claim.result = result
 	claim.err = err
+	claim.completed = true
+	if !completedAt.IsZero() && sendClaimIsDefinitive(result, err) {
+		claim.expires = completedAt.Add(sendIdempotencyDefinitiveRetention)
+	}
 	close(claim.done)
 	c.mu.Unlock()
+}
+
+// expireLocked deletes only completed definitive claims at or past their
+// completion-based deadline. Pending and ambiguous claims never expire here.
+// A clock rollback leaves claims retained because their deadline is still in
+// the future.
+func (c *sendIdempotencyCache) expireLocked(now time.Time) {
+	if now.IsZero() {
+		return
+	}
+	for key, claim := range c.entries {
+		if !claim.completed || claim.expires.IsZero() {
+			continue
+		}
+		if !claim.expires.After(now) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+// sendClaimIsDefinitive reports whether a completed claim may be reclaimed
+// after the definitive retention window. Ambiguous outcomes, and any result the
+// send boundary did not classify explicitly, stay protected until process exit.
+func sendClaimIsDefinitive(result SendResult, err error) bool {
+	public := AsError(err)
+	if result.Status == SendOutcomeUnknown || (public != nil && public.Code == CodeOutcomeUnknown) {
+		return false
+	}
+	if result.Status == SendAccepted && err == nil {
+		return true
+	}
+	if public == nil {
+		return false
+	}
+	switch result.Status {
+	case SendRejected:
+		return definitiveSendErrorCode(public.Code)
+	case "":
+		return preDispatchSendErrorCode(public.Code)
+	default:
+		return false
+	}
+}
+
+func definitiveSendErrorCode(code Code) bool {
+	switch code {
+	case CodeValidation, CodeAuthorization, CodeRateLimited, CodeTimeout,
+		CodeUnavailable, CodeAuthentication, CodeProtocolError, CodePayloadTooLarge,
+		CodeNotFound, CodeInternalError:
+		return true
+	}
+	return false
+}
+
+func preDispatchSendErrorCode(code Code) bool {
+	switch code {
+	case CodeValidation, CodeAuthorization, CodeRateLimited, CodeTimeout:
+		return true
+	}
+	return false
+}
+
+func sendIdempotencyFullError() *Error {
+	return &Error{
+		Code:    CodeConflict,
+		Message: "send idempotency capacity is full; no SMTP submission was dispatched for this key",
+		Reconciliation: "Keep the same key and unchanged parameters. Existing keys can still return " +
+			"their retained results. Capacity recovers only when retained definitive outcomes expire. " +
+			"Pending or uncertain outcomes stay until process exit. Do not restart or use a " +
+			"different key to retry an uncertain send. Check Sent and confirm with recipients " +
+			"before another send.",
+	}
 }

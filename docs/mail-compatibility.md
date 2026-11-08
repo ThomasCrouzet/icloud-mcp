@@ -282,12 +282,21 @@ before dispatch. The fingerprint binds the sender, recipient groups, subject,
 body, reply headers, and `archive_sent`. Omission and explicit false are equivalent.
 Changing the archival preference conflicts, even while the original call is active.
 
-The cache is process-local and retains accepted, rejected, and uncertain
-outcomes until process exit. It has 128 keys. A full cache rejects a new claim
-`conflict` before SMTP. A cancelled duplicate caller does not release the
-original claim. A later call receives the original result, including
-`outcome_unknown`, and never submits again. Restart clears the cache, so this is
-not an exactly-once delivery guarantee.
+The cache is process-local. Pending claims never expire. A completed accepted or
+definitive rejected outcome is retained for 15 minutes after completion. An
+`outcome_unknown` outcome stays until process exit. Pending and uncertain
+outcomes are never reclaimed to make space. The cache has 128 keys. A full cache
+rejects a new claim with `conflict` before SMTP and gives non-sensitive
+reconciliation guidance; existing keys still return their retained results.
+A cancelled duplicate caller does not release the original claim. While a claim
+is pending or retained, a later call receives the recorded result, including
+`outcome_unknown`, and does not submit again.
+
+After the 15-minute window, an old key is a new operation. It can submit again
+with identical or different content, and no conflict is guaranteed. Expiry is
+not proof that the earlier operation failed. Process restart clears every claim
+and has the same effect. The cache is not a durable or exactly-once delivery
+guarantee.
 
 ### Sent-copy archival
 

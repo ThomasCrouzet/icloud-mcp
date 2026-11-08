@@ -7,6 +7,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Bound SMTP send idempotency. Completed definitive outcomes are retained for 15
+  minutes after completion; pending and `outcome_unknown` claims stay until process
+  exit. Keep the 128-key cap and reject a full cache before SMTP with
+  reconciliation guidance. An old key after expiry or restart can submit again, so
+  this is not durable or exactly-once delivery.
 - Preserve the complete published Mail uint64 numeric range before SDK validation.
   Normalize integral unsigned JSON number spellings exactly, with bounded exponent
   work. Keep strict types, field limits, schemas, and validation unchanged.
