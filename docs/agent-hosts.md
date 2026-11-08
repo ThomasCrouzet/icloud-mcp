@@ -31,7 +31,7 @@ Exactly **14** product environment variables:
 | `ICLOUD_EMAIL` | none | Required Calendar/Contacts identity. `file://` supported (regular file, <=4 KiB, mode 0600+). |
 | `ICLOUD_PASSWORD` | none | Calendar/Contacts app-specific password, or Mail fallback when no separate Mail password is set. `file://` as above. |
 | `ICLOUD_MCP_READ_ONLY` | `false` | Global mutation kill switch. |
-| `ICLOUD_MCP_PERMISSIONS` | legacy switches | Optional comma-separated capability list. It replaces the implicit write rules. |
+| `ICLOUD_MCP_PERMISSIONS` | reads only | Optional comma-separated capability list. Name every effect. |
 | `ICLOUD_MCP_RESOURCE_SCOPES` | all resources | Optional action resource allowlists for Calendar paths, Contacts address books, and Mail mailboxes. |
 | `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
@@ -211,26 +211,36 @@ despite the absence of `mail.read`. Validate send capabilities locally instead.
 Use a separately authorized read configuration if broader network diagnostics are needed.
 Do not remove scopes or add permissions merely to make a diagnostic pass.
 
-## Future v1.0.0 default migration
+## v1.0.0 default migration
 
-The design target is a **breaking v1.0.0** default-read-only migration.
-This is not a v0.5.x patch change, release announcement, or automatic upgrade action.
-Current defaults remain unchanged: with no explicit permissions and an unset
-`ICLOUD_MCP_READ_ONLY`, Calendar writes and deletes remain available.
-Legacy Contacts also gains writes when its domain gate is enabled.
-An explicit permission list replaces these implicit grants.
+The v1.0.0 default is read-only. With no `ICLOUD_MCP_PERMISSIONS`, an unset
+`ICLOUD_MCP_READ_ONLY`, and any credential set, the server exposes no effectful
+Calendar, Contacts, or Mail tool.
 
-Before implementing that target, publish advance release and migration notes.
-Include notices in a preceding release and require operators to review effective
-permissions before upgrading. Document removal of mutation tools from default discovery.
-Preserve credential separation, domain gates, exact recipient checks, and resource scopes.
+- A domain switch enables reads only. `ICLOUD_MCP_ENABLE_CONTACTS`,
+  `ICLOUD_MCP_ENABLE_MAIL`, `ICLOUD_MCP_ENABLE_MAIL_WRITE`, and
+  `ICLOUD_MCP_ENABLE_MAIL_SEND` never grant an effect.
+- `ICLOUD_MCP_READ_ONLY=false` does not grant an effect.
+- Name each effect in `ICLOUD_MCP_PERMISSIONS`, then keep the required domain
+  gate and any exact recipient or resource scope.
+- `ICLOUD_MCP_READ_ONLY=true` still removes every mutation and send, even when
+  the permission list names one.
 
-Operators who retain writes must configure `ICLOUD_MCP_READ_ONLY=false`, explicit
-write/send permissions, required domain gates, and narrow scopes or exact recipients.
-They must not rely on omission or on a domain gate alone.
-Validate the resulting manifest and scopes before an authorized operation.
-Read-only users should keep `ICLOUD_MCP_READ_ONLY=true` and explicit read permissions now.
-Do not wait for v1.0.0 to use the recommended profiles.
+Migration from a v0.x configuration that relied on implicit writes:
+
+```text
+# before: write tools appeared without ICLOUD_MCP_PERMISSIONS
+ICLOUD_MCP_READ_ONLY=false
+
+# after: name the exact Calendar effects
+ICLOUD_MCP_READ_ONLY=false
+ICLOUD_MCP_PERMISSIONS=calendar.read,calendar.write,calendar.delete
+```
+
+Contacts add `contacts.write` or `contacts.delete`; Mail adds `mail.mutate`,
+`mail.trash`, `mail.send`, or `mail.archive`. Keep `ICLOUD_MCP_READ_ONLY=true`
+for read-only users. Validate the resulting manifest before an authorized
+operation.
 
 ## Dates
 

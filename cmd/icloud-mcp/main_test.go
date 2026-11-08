@@ -264,16 +264,33 @@ func TestOptionalServiceConstructionIsLazyAndGated(t *testing.T) {
 			mailService, readOnlySendConfig.EffectiveMailSend(), err)
 	}
 
+	legacySendConfig := base
+	legacySendConfig.EnableMail = true
+	legacySendConfig.EnableMailSend = true
+	legacySendConfig.SMTPAllowedRecipients = []string{"allowed@example.com"}
+	if err := legacySendConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	_, mailService, err = newOptionalServices(&legacySendConfig)
+	if err != nil || mailService == nil || legacySendConfig.EffectiveMailSend() {
+		t.Fatalf("legacy Mail send flag granted an effect: mail:%T effective:%t err:%v",
+			mailService, legacySendConfig.EffectiveMailSend(), err)
+	}
+
 	sendConfig := base
 	sendConfig.EnableMail = true
 	sendConfig.EnableMailSend = true
 	sendConfig.SMTPAllowedRecipients = []string{"allowed@example.com"}
+	sendConfig.Permissions, err = config.ParsePermissions("mail.send")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := sendConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	_, mailService, err = newOptionalServices(&sendConfig)
 	if err != nil || mailService == nil || !sendConfig.EffectiveMailSend() {
-		t.Fatalf("enabled Mail send construction = mail:%T effective:%t err:%v",
+		t.Fatalf("explicit Mail send construction = mail:%T effective:%t err:%v",
 			mailService, sendConfig.EffectiveMailSend(), err)
 	}
 }

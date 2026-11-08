@@ -7,6 +7,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **Breaking, target v1.0.0:** an unset `ICLOUD_MCP_PERMISSIONS` now grants
+  reads only. Domain switches, `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
+  `ICLOUD_MCP_ENABLE_MAIL_SEND`, and `ICLOUD_MCP_READ_ONLY=false` no longer
+  imply an effect. Name `calendar.write`, `calendar.delete`, `contacts.write`,
+  `contacts.delete`, `mail.mutate`, `mail.trash`, `mail.send`, or
+  `mail.archive` explicitly. Existing v0.x installations that relied on
+  implicit Calendar or Contacts writes must add those tokens before upgrading.
+  Startup logs one migration warning when a legacy switch is set without an
+  explicit list.
 - Deny updates and deletes of an event with `ORGANIZER` or `ATTENDEE` by
   default. The approved path needs an explicit `ICLOUD_MCP_PERMISSIONS` grant,
   `acknowledge_scheduling=true`, and the current strong ETag. `get_event` and a
