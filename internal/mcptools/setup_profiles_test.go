@@ -274,7 +274,8 @@ func TestSetupProfilesReadOperations(t *testing.T) {
 					}
 					before := f.counts()
 					denied := f.call(t, "get_message", map[string]any{"mailbox": "forbidden-private", "uid_validity": 9, "uid": 2})
-					if !denied.IsError || contractPayload(t, denied)["code"] != "authorization" || !reflect.DeepEqual(before, f.counts()) || strings.Contains(resultText(t, denied), "forbidden-private") {
+					// Mail read handlers currently wrap scope errors as validation results.
+					if !denied.IsError || contractPayload(t, denied)["code"] != "validation" || !strings.Contains(resultText(t, denied), "outside the configured resource scope") || !reflect.DeepEqual(before, f.counts()) || strings.Contains(resultText(t, denied), "forbidden-private") {
 						t.Fatal("Mail read scope denial accessed or disclosed the forbidden mailbox")
 					}
 				}
