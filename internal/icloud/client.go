@@ -265,6 +265,13 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 			return "", fmt.Errorf("invalid timezone %q", ne.Timezone)
 		}
 	}
+	if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !ne.AllDay {
+		for _, value := range []time.Time{ne.StartTime, ne.EndTime} {
+			if !WallClockExists(WallClockOf(value.In(loc)), loc) {
+				return "", NewValidationError("event time does not exist in timezone " + loc.String() + " because of a daylight-saving gap")
+			}
+		}
+	}
 	if err := c.discover(ctx); err != nil {
 		return "", err
 	}
@@ -366,6 +373,9 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	// retains VERSION, PRODID, and VTIMEZONE for modification and re-PUT.
 	vevent, err := findMasterVEvent(found.Data)
 	if err != nil {
+		return err
+	}
+	if err := authorizeSchedulingMutation(found.Data, up.AllowGroupScheduled, up.IfMatchETag, found.ETag); err != nil {
 		return err
 	}
 
@@ -717,12 +727,30 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	if err != nil {
 		return DeleteResult{}, NewError(CodeProtocolError, 0, "Calendar event title is invalid", nil)
 	}
+	groupScheduled, err := schedulingIndicators(obj.Data)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	allowScheduled := opts != nil && opts.AllowGroupScheduled
+	suppliedETag := ""
+	if opts != nil {
+		suppliedETag = opts.IfMatchETag
+	}
+	if opts == nil || !opts.DryRun {
+		if err := authorizeSchedulingMutation(obj.Data, allowScheduled, suppliedETag, obj.ETag); err != nil {
+			return DeleteResult{}, err
+		}
+	}
 
 	result := DeleteResult{
-		Title:       title,
-		UID:         uid,
-		Scope:       string(scope),
-		WouldMutate: true,
+		Title:            title,
+		UID:              uid,
+		Scope:            string(scope),
+		WouldMutate:      true,
+		IsGroupScheduled: groupScheduled,
+	}
+	if groupScheduled {
+		result.NotificationRisk = SchedulingNotificationRisk
 	}
 
 	if opts != nil && opts.DryRun {
@@ -761,6 +789,30 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 	c.locations.evict(calendarPath, uid)
 	return result, nil
+}
+
+// authorizeSchedulingMutation enforces the operator approval boundary for an
+// object with ORGANIZER or ATTENDEE. Approval is bound to the exact object and
+// reviewed strong ETag: a changed source object invalidates it. The final GET
+// in the caller already supplied both values, so the check runs before any
+// PUT or DELETE and after the last read.
+func authorizeSchedulingMutation(cal *ical.Calendar, allowed bool, suppliedETag, currentETag string) error {
+	group, err := schedulingIndicators(cal)
+	if err != nil {
+		return err
+	}
+	if !group {
+		return nil
+	}
+	if !allowed {
+		return NewError(CodeAuthorization, http.StatusForbidden,
+			"group-scheduled event mutation requires explicit operator approval and a reviewed strong ETag", nil)
+	}
+	if suppliedETag == "" || currentETag == "" || suppliedETag != currentETag {
+		return NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+			"group-scheduled event mutation requires the current strong ETag; re-read with get_event and review the scheduling risk", nil)
+	}
+	return nil
 }
 
 // deleteOccurrence cancels a single occurrence by adding EXDATE to the master

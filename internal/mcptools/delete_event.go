@@ -23,16 +23,19 @@ func newDeleteEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("recurrence_id", mcp.Description("Required for scope=occurrence; copy search_events.recurrenceId. All-day uses YYYY-MM-DD; timed values follow "+datetimeParamDescription("start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *")),
 		mcp.WithBoolean("dry_run", mcp.DefaultBool(false), mcp.Description("Validate without PUT or DELETE")),
+		mcp.WithBoolean("acknowledge_scheduling", mcp.Description("Required for a non-dry-run delete of an event with organizer or attendee metadata. Requires an explicit operator ICLOUD_MCP_PERMISSIONS grant and the current strong etag.")),
 	)
 }
 
 type deleteEventResponse struct {
-	Success      bool   `json:"success"`
-	UID          string `json:"uid"`
-	DeletedTitle string `json:"deletedTitle,omitempty"`
-	DryRun       bool   `json:"dryRun,omitempty"`
-	Scope        string `json:"scope,omitempty"`
-	WouldMutate  bool   `json:"wouldMutate,omitempty"`
+	Success          bool   `json:"success"`
+	UID              string `json:"uid"`
+	DeletedTitle     string `json:"deletedTitle,omitempty"`
+	DryRun           bool   `json:"dryRun,omitempty"`
+	Scope            string `json:"scope,omitempty"`
+	WouldMutate      bool   `json:"wouldMutate,omitempty"`
+	IsGroupScheduled bool   `json:"isGroupScheduled,omitempty"`
+	NotificationRisk string `json:"notificationRisk,omitempty"`
 }
 
 func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
@@ -85,9 +88,14 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return deny("validation", err)
 		}
+		acknowledgeScheduling, err := optionalBoolArg(req, "acknowledge_scheduling", false)
+		if err != nil {
+			return deny("validation", err)
+		}
 		opts := &icloud.DeleteOptions{
-			IfMatchETag: etag,
-			DryRun:      dryRun,
+			IfMatchETag:         etag,
+			DryRun:              dryRun,
+			AllowGroupScheduled: deps.CalendarDeleteExplicit && acknowledgeScheduling,
 		}
 		switch scope {
 		case "", "series":
@@ -121,12 +129,14 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 		logCalendarMutation(deps.Audit, "delete_event", calendarPath, uid, status)
 
 		return writeCalendarJSON(deps.Redactor, deleteEventResponse{
-			Success:      true,
-			UID:          uid,
-			DeletedTitle: res.Title,
-			DryRun:       res.DryRun,
-			Scope:        res.Scope,
-			WouldMutate:  res.WouldMutate,
+			Success:          true,
+			UID:              uid,
+			DeletedTitle:     res.Title,
+			DryRun:           res.DryRun,
+			Scope:            res.Scope,
+			WouldMutate:      res.WouldMutate,
+			IsGroupScheduled: res.IsGroupScheduled,
+			NotificationRisk: res.NotificationRisk,
 		}), nil
 	}
 }

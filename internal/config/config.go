@@ -120,6 +120,13 @@ func ParsePermissions(value string) (Permissions, error) {
 // Configured reports whether an explicit permission list was set.
 func (p Permissions) Configured() bool { return p.configured }
 
+// ExplicitCalendarWrite reports an operator-granted Calendar write capability.
+// An unset permission list keeps the legacy switch and is not explicit.
+func (p Permissions) ExplicitCalendarWrite() bool { return p.configured && p.calendarWrite }
+
+// ExplicitCalendarDelete reports an operator-granted Calendar delete capability.
+func (p Permissions) ExplicitCalendarDelete() bool { return p.configured && p.calendarDelete }
+
 // Effective applies the global read-only kill switch.
 func (p Permissions) Effective(readOnly bool) Permissions {
 	if !p.configured {
@@ -138,20 +145,16 @@ func (p Permissions) Effective(readOnly bool) Permissions {
 	return p
 }
 
-// LegacyPermissions derives the documented pre-policy behavior.
-func LegacyPermissions(readOnly, contactsEnabled, mailEnabled, mailWrite, mailSend bool) Permissions {
+// DefaultPermissions is the least-privilege policy used when
+// ICLOUD_MCP_PERMISSIONS is unset. Domain switches enable reads only. No
+// effectful capability is implied by a domain switch, ICLOUD_MCP_READ_ONLY, or
+// ICLOUD_MCP_ENABLE_MAIL_WRITE. An operator must name every effect in
+// ICLOUD_MCP_PERMISSIONS.
+func DefaultPermissions(contactsEnabled, mailEnabled bool) Permissions {
 	return Permissions{
-		calendarRead:   true,
-		calendarWrite:  !readOnly,
-		calendarDelete: !readOnly,
-		contactsRead:   contactsEnabled,
-		contactsWrite:  contactsEnabled && !readOnly,
-		contactsDelete: contactsEnabled && !readOnly,
-		mailRead:       mailEnabled,
-		mailMutate:     mailEnabled && mailWrite && !readOnly,
-		mailTrash:      mailEnabled && mailWrite && !readOnly,
-		mailSend:       mailEnabled && mailSend && !readOnly,
-		mailArchive:    false,
+		calendarRead: true,
+		contactsRead: contactsEnabled,
+		mailRead:     mailEnabled,
 	}
 }
 
@@ -557,12 +560,12 @@ func (c *Config) Validate() error {
 }
 
 // EffectivePermissions returns the capability set after the global read-only
-// switch. An unset ICLOUD_MCP_PERMISSIONS keeps the legacy domain switches.
+// switch. An unset ICLOUD_MCP_PERMISSIONS grants reads only.
 func (c *Config) EffectivePermissions() Permissions {
 	if c.Permissions.Configured() {
 		return c.Permissions.Effective(c.ReadOnly)
 	}
-	return LegacyPermissions(c.ReadOnly, c.EnableContacts, c.EnableMail, c.EnableMailWrite, c.EnableMailSend)
+	return DefaultPermissions(c.EnableContacts, c.EnableMail)
 }
 
 // Capabilities returns the effective capability set.

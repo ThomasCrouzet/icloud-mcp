@@ -6,7 +6,49 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking, target v1.0.0:** an unset `ICLOUD_MCP_PERMISSIONS` now grants
+  reads only. Domain switches, `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
+  `ICLOUD_MCP_ENABLE_MAIL_SEND`, and `ICLOUD_MCP_READ_ONLY=false` no longer
+  imply an effect. Name `calendar.write`, `calendar.delete`, `contacts.write`,
+  `contacts.delete`, `mail.mutate`, `mail.trash`, `mail.send`, or
+  `mail.archive` explicitly. Existing v0.x installations that relied on
+  implicit Calendar or Contacts writes must add those tokens before upgrading.
+  Startup logs one migration warning when a legacy switch is set without an
+  explicit list.
+- Deny updates and deletes of an event with `ORGANIZER` or `ATTENDEE` by
+  default. The approved path needs an explicit `ICLOUD_MCP_PERMISSIONS` grant,
+  `acknowledge_scheduling=true`, and the current strong ETag. `get_event` and a
+  deletion `dry_run` report a non-sensitive risk without attendee addresses.
+- Preserve floating iCalendar values. `isFloating` marks an offset-free local
+  value; availability interprets it in the requested timezone.
+- Expand zoned recurrences on the wall clock. A spring-gap occurrence uses the
+  pre-gap offset and sets `dstAdjusted`; a fold uses the first occurrence.
+- Reject an EXDATE whose value type cannot match DTSTART, and an
+  agent-supplied local start in a daylight-saving gap.
+- `calendar_capabilities.outputFormat` is
+  `RFC3339_with_offset_or_floating`. The features map adds `floating_time` and
+  `dst_gap_fold_policy`.
+- Reuse one bounded process-local scan for `search_events` cursor pages
+  instead of querying every selected calendar again. The snapshot lives at most
+  300 seconds, holds at most four queries and the existing 10,000-event budget,
+  and is never written to disk. A partial failure is not cached. Pagination is
+  now snapshot-like for the token lifetime.
+- Build release archives and MCPB bundles once per tag, native-test those exact
+  bytes on all three platforms, and sign and publish the same bytes. A digest
+  mismatch, missing candidate, or substituted asset blocks publication. Only a
+  tag or explicit manual `native` run can create the candidate artifact.
+
+### Added
+- Verify the modern `2026-07-28` MCP wire protocol on stdio with raw JSON-RPC:
+  `server/discover`, stateless `tools/list`, and `tools/call` without an
+  `initialize` handshake. Legacy `2025-11-25` still passes. An unknown version
+  returns `-32022` with the requested version and supported list.
+
 ### Documentation
+- Record the Windows no-go decision: no observed demand plus an unresolved ACL
+  and native-run gap keep `windows/amd64` compile-only. List the evidence
+  required to reopen it.
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset
   timeout.

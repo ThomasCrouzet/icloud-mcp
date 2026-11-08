@@ -138,8 +138,21 @@ the complete object. Identical UIDs in different calendars stay isolated.
   deletes the series resource.
 - Occurrence EXDATE and RECURRENCE-ID values match the master DATE, TZID, or Z
   form.
+- An EXDATE whose value type cannot match DTSTART fails closed with
+  `protocol_error` before expansion. DATE against DATE-TIME, and floating
+  against absolute DATE-TIME, never match. Multiple EXDATE properties and
+  comma-separated values stay supported.
+- A floating DATE-TIME (no `Z`, no `TZID`) stays floating. The result sets
+  `isFloating` and uses an offset-free local value such as
+  `2026-07-01T09:00:00`; the server never invents a UTC offset.
+- A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
+  the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
+  `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
+- Availability interprets a floating event in the requested timezone, so it
+  cannot make the same wall-clock slot look free.
 - A timed recurring create writes TZID and a generated VTIMEZONE. It uses the
-  explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback.
+  explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback. A start that
+  does not exist in that zone fails before the request.
 - This method keeps wall-clock RRULEs correct across DST.
 - The client does not implement `this-and-future`. Its end-to-end safety is not
   proven.
@@ -154,6 +167,30 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - It rejects calendar selectors with hourly, minutely, or secondly frequency.
 - These cases fail closed because the dependency cannot stop an empty internal
   selector scan.
+
+## Group-scheduled events
+
+`get_event` reports `isGroupScheduled` when the object has `ORGANIZER` or
+`ATTENDEE`. It never returns an address or parameter from those properties.
+A malformed cal-address fails closed with `protocol_error`.
+
+A series or occurrence update or delete of such an object is denied with
+`authorization` by default, before any PUT or DELETE. The approved path needs
+all of these:
+
+1. The operator sets an explicit `ICLOUD_MCP_PERMISSIONS` value that grants
+   `calendar.write` (update) or `calendar.delete` (delete). A legacy switch is
+   not enough.
+2. The call sets `acknowledge_scheduling=true`.
+3. The call passes the current strong `etag` from `get_event`.
+
+The service rechecks `ORGANIZER` and `ATTENDEE` on its final GET and compares
+the supplied ETag with the current one. A changed object invalidates the
+approval. A deletion `dry_run` reports `isGroupScheduled` and a fixed
+`notificationRisk` without mutating or exposing identities.
+
+This guard does not assert live Apple notification behavior. It prevents an
+unreviewed mutation of an object that could produce one.
 
 ## Parser and result limits
 
@@ -210,8 +247,9 @@ The token binds the normalized range, explicit selected calendars, result
 filters, default presence, compact and recurrence modes, and the current
 `calendar.read` scope. `limit` is not bound. The explicit selection and scope,
 token structure, signature, expiry, and query binding are checked before any
-Calendar backend access. A missing resume anchor is stale source: it needs one
-normal bounded fetch to detect, with no rescan or amplification.
+Calendar backend access. A missing resume anchor is checked against the
+process-local scan snapshot. If the snapshot is absent or expired, one normal
+bounded fetch checks the anchor; a stale token never causes an unbounded scan.
 
 Cursor mode keeps the primary order start, UID, calendar, then title. It adds
 recurrence ID, end time, override flag, internal path, ETag, and a full-row
@@ -219,12 +257,20 @@ digest as strict tie-breaks. Exact duplicate backend rows in one calendar are
 collapsed only in this opt-in mode. Distinct calendars and recurring overrides
 stay distinct. Legacy duplicate handling does not change.
 
-Every page still queries each selected calendar with at most four concurrent
-reads. It keeps the 2,500 expanded-event per-calendar limit, the 10,000 filtered
-materialized limit, the 366-day range, ten explicit calendars, the 32 MiB REPORT
-limit, and all recurrence work caps. More than 2,500 expanded events in one
-calendar fails closed before paging. Pagination does not permit loading a whole
-history.
+The first cursor page scans every selected calendar with at most four
+concurrent reads. It keeps the 2,500 expanded-event per-calendar limit, the
+10,000 filtered materialized limit, the 366-day range, ten explicit calendars,
+the 32 MiB REPORT limit, and all recurrence work caps. More than 2,500 expanded
+events in one calendar fails closed before paging. Pagination does not permit
+loading a whole history.
+
+The completed scan is kept in process memory for at most 300 seconds, the
+cursor lifetime, in at most four snapshots. Later pages of the same bound query
+reuse it without another backend REPORT. A partial failure is not cached. The
+snapshot is never written to disk or logs and disappears on process exit. This
+turns a multi-page continuation into a bounded snapshot: a source edit after
+the first page is not visible until the snapshot expires, and `total` is the
+snapshot count.
 
 `nextCursor` is emitted only when an explicit selection has a complete page with
 at least one later row. It is omitted on `partialFailure`, recurrence truncation,
@@ -235,11 +281,10 @@ budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
 
-`total` is the current bounded fetch count, not a snapshot. If the last row
-identity disappears or changes, the cursor is stale and the caller restarts.
-Rows inserted before the anchor can be omitted. A row moved from before to after
-the anchor can appear again. A row moved after to before can be omitted. No
-snapshot isolation or exhaustive provider coverage is claimed.
+`total` is the bounded snapshot count while the snapshot is live. If the last
+row identity disappears or changes after a refresh, the cursor is stale and the
+caller restarts. Within a live snapshot, inserted or moved rows do not appear.
+No provider-level snapshot isolation or exhaustive coverage is claimed.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.
 - The search reserves selector reachability proof work before iteration.

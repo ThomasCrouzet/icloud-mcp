@@ -61,6 +61,12 @@ func BusyFromEvents(events []Event, includeAllDay bool, bufferBefore, bufferAfte
 		if e.AllDay {
 			start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
 			end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
+		} else if e.IsFloating {
+			// A floating value has no instant. For availability in the
+			// requested zone, interpret its wall clock there. The event stays
+			// floating in every Calendar result.
+			start = WallClockInLocation(start, loc)
+			end = WallClockInLocation(end, loc)
 		}
 		start = start.Add(-bufferBefore)
 		end = end.Add(bufferAfter)

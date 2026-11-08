@@ -159,8 +159,14 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 	if loc == nil {
 		loc = time.UTC
 	}
-	if t, err := time.ParseInLocation(naiveDateTimeLayout, value, loc); err == nil {
-		return t, nil
+	if wall, err := time.Parse(naiveDateTimeLayout, value); err == nil {
+		if !WallClockExists(wall, loc) {
+			return time.Time{}, fmt.Errorf(
+				"invalid %s: local time %s does not exist in %s because of a daylight-saving gap",
+				name, value, loc,
+			)
+		}
+		return time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc), nil
 	}
 	return time.Time{}, fmt.Errorf(
 		"invalid %s: expected RFC3339 with an explicit offset (e.g. 2026-07-01T14:00:00+02:00, or ...Z for UTC) "+

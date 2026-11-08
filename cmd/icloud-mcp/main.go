@@ -135,6 +135,9 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	}
 
 	plan := mcptools.NewCapabilityPlanFromConfig(cfg.ReadOnly, cfg.Capabilities())
+	if !cfg.Permissions.Configured() && (!cfg.ReadOnly || cfg.EnableMailWrite || cfg.EnableMailSend) {
+		slog.Warn("v1 defaults are read-only: no switch grants a Calendar, Contacts, or Mail effect; add the exact ICLOUD_MCP_PERMISSIONS tokens to opt in")
+	}
 
 	// 4. Calendar transports are constructed only when Calendar capabilities
 	// are effective. Discovery is lazy on the first Calendar tool call, so a
@@ -162,6 +165,9 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 		Version:         version,
 		HealthEnabled:   healthEnabled,
 		ResourceScopes:  cfg.ResourceScopes,
+
+		CalendarWriteExplicit:  cfg.Permissions.ExplicitCalendarWrite(),
+		CalendarDeleteExplicit: cfg.Permissions.ExplicitCalendarDelete(),
 	}, plan)
 
 	// 6. Optional healthcheck (off by default).

@@ -149,6 +149,47 @@ lifecycle evidence; no coverage threshold is reduced.
 
 ## Offline performance baseline
 
+### Test timing
+
+Record per-test durations on the pinned toolchain:
+
+```bash
+go test ./internal/mcptools -count=1 -json > /tmp/mcptools.json
+go test ./internal/mcptools -race -count=1 -json > /tmp/mcptools-race.json
+```
+
+On 2026-11-08 with Go 1.26.10 on linux/amd64, the non-race package took
+20.4-24.6 seconds over three runs before the change and 16.6-17.2 seconds after
+it. The removed delay was `TestProtocolCalendarSelectionDiscoveryBounds`: its
+11-calendar discovery case exceeded the production read burst of 10 and waited
+about one second for each tool. That test asserts selection routing, not rate
+limiting, so it now calls the raw fixture. `internal/icloud/middleware_test.go`
+keeps the burst and refill assertions.
+
+The contract suites (`TestContractPublishedArguments`,
+`TestContractExactPublishedBoundaries`, dispatch profiles, and value-sensitive
+defaults) remain the largest cost. They start fresh MCP runtimes to prove schema
+refusal and optional-field behavior without state leaking between cases. The
+race-only run remains about 160 seconds. Splitting or caching those runtimes
+would weaken the isolation the tests provide, so they stay in the same package.
+
+### MCP protocol versions
+
+`cmd/icloud-mcp/raw_protocol_test.go` drives the production stdio loop with raw
+JSON-RPC frames, without an MCP SDK client. `scripts/protocol_evidence.py` runs
+the same modern probe against the extracted test binary.
+
+| Version | Era | Status | Evidence |
+|---|---|---|---|
+| `2026-07-28` | Modern, stateless `_meta` per request | Verified | `server/discover`, `tools/list`, and `tools/call` without `initialize`; newest advertised version |
+| `2025-11-25` | Legacy `initialize` handshake | Verified | Raw initialize, `notifications/initialized`, then `tools/list` |
+| `2025-06-18`, `2025-03-26`, `2024-11-05` | Legacy | Known to the SDK, not separately exercised | No compatibility claim beyond the SDK version list |
+| Unknown future version | Modern comparison | Rejected | JSON-RPC `-32022` with `data.requested` and the supported list |
+
+`server/discover` reports the SDK's complete `ValidProtocolVersions` list,
+newest first. No public HTTP endpoint exists; modern support is limited to the
+stdio transport.
+
 The benchmark suite records deterministic, offline protocol measurements. It
 uses synthetic data and local fixtures only. It does not use Apple credentials,
 live endpoints, or a service dependency.
@@ -217,6 +258,20 @@ python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.j
 | Mail sparse UID | `BenchmarkMailSearchSparseUID` | `mail-pattern-v1`, 30 candidates near UID 4,000,000,000 | 20 results, truncation, one bounded 5,000-UID window, and 3 service-session calls |
 | Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
 | Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
+
+`BenchmarkSearchEventsCursorPagination` drives ten 400-row pages over a
+4,000-event synthetic calendar. It reports `rpc/page`: the process-local scan
+snapshot makes the first page scan once and later pages add no REPORT, so the
+measured value is 0.1. The previous implementation queried every calendar on
+every page, which is 1.0.
+
+The availability collector converts each completed read batch to merged busy
+intervals and then drops the event payloads. It still counts every returned
+record toward the 10,000-event budget before filtering. On the fixed
+`BenchmarkAvailabilityBudget/HighCardinality` fixture, `-benchmem -benchtime=1x`
+reported a median of about 4.6 MB/op with full events retained and about 1.5
+MB/op with intervals only. The accepted result, RPC count, and four-read bound
+are unchanged.
 | Mail wire body | `BenchmarkIMAPWireBodyNearLimit` | `imap-wire-metadata-v1`, one synthetic FETCH body over `net.Pipe` | 524,287 body bytes parsed through go-imap with the real adapter, and one wire FETCH per operation |
 | MCP refusals | `BenchmarkSearchEventsRefusals` | 10,001 materialized events, invalid limit, synthetic 429, and 2 ms cancellation | Safe error payloads, zero RPCs for input validation, and active cancellation |
 | MCP fan-out latency | `BenchmarkSearchEventsFanoutLatency` | 4 calendars with 1 ms synthetic peer latency | 4 RPCs, bounded 4-worker concurrency, and parallel elapsed time |
@@ -443,24 +498,38 @@ Package coverage floors are:
 | `internal/mail/imapadapter` | 60% |
 | `cmd/icloud-mcp` | 55% |
 
-Tag releases publish only after CI, gitleaks, release metadata, and the native
-smoke matrix jobs succeed on the same ref. The same tag builds and verifies one
-MCPB bundle per target, appends the bundle hashes to the checksums file, and
-signs the archives, bundles, and checksums before it creates the release. See the `release` job in
-`.github/workflows/ci.yml`. GitHub archives use `make release-all` with Go
-1.26.10 pinned. The setting is
-`check-latest: false`.
+Tag releases build the candidate bytes exactly once, in `release-candidates`.
+That job runs `make release-all` with Go 1.26.10 pinned (`check-latest: false`),
+builds one MCPB bundle per target, appends the bundle hashes to the checksums
+file, validates `server.json` package hashes, and writes
+`candidate-digests.txt`. It uploads the directory as one immutable artifact.
+Only tag pushes and explicit manual `native` runs reach this job, so files
+produced by an untrusted pull request cannot be promoted.
+
+The three native jobs download that artifact and run no compiler for the
+product. Each verifies `candidate-digests.txt`, extracts the exact archive and
+bundle, runs `scripts/native_smoke.py`, validates the manifest, re-collects the
+digests, and requires byte equality before and after execution. It uploads its
+tested digest file. The publication job downloads the same candidate artifact
+and all three native digest files, verifies them again, signs those exact bytes
+with cosign keyless, and creates the GitHub Release. It never rebuilds.
+
+`scripts/verify_release_candidates.py` rejects a missing, extra, stale, altered,
+or checksum-mismatched file. `make check-release-candidates` runs its
+tamper-and-delete self-test in CI. Logs record the tag, source SHA, and
+candidate manifest digest.
 
 Local `make release` remains the digest-pinned container path for linux/arm64.
 CI also smoke-builds `windows/amd64`. GitHub Release archives do not contain
 that build.
 
-Tag and manual `native` CI runs extract the matching production archive on
-native GitHub-hosted runners. They verify checksums, version output, an offline
+Tag and manual `native` CI runs test the exact candidate archive on native
+GitHub-hosted runners. They verify checksums, version output, an offline
 configuration failure, a path with spaces, a synthetic MCP `initialize` and
 read-only `tools/list`, and a clean SIGTERM exit. The matrix covers Linux amd64 on
 `ubuntu-latest`, Linux arm64 on `ubuntu-24.04-arm`, and macOS arm64 on
-`macos-15`. The command is `python3 scripts/native_smoke.py`.
+`macos-15`. The command is `python3 scripts/native_smoke.py`. Publication is
+tag-only.
 
 Windows remains compile-only and has no published archive or runtime support
 claim. See [platform support](platform-support.md) for the compiled, published,
@@ -491,9 +560,9 @@ Registry-only manual runs do not enable release metadata or native smoke.
 It runs only through the manual `published registry verification` workflow or
 locally after publication. A pending next version does not fail `main`.
 
-The tag job in `ci.yml` builds archives with `make release-all`, signs them with
-cosign keyless, and creates the GitHub Release. It does not publish registry
-metadata. Publish only after the archives exist.
+The tag job in `ci.yml` downloads the native-tested candidate bytes, signs them
+with cosign keyless, and creates the GitHub Release. It does not publish
+registry metadata. Publish only after the archives exist.
 
 ```bash
 mcp-publisher login github

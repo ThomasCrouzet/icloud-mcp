@@ -232,6 +232,9 @@ jobs:
       - name: Test release metadata checks
         run: python3 -m unittest scripts/test_check_release.py
 
+      - name: Test exact release candidate verification
+        run: make check-release-candidates
+
   # Publication follows the tag and requires a manual maintainer step. Keep
   # registry verification separate so a pending release does not fail main.
   published-registry:
@@ -246,24 +249,14 @@ jobs:
       - name: Check published registry state
         run: make check-registry
 
-  native-release-smoke:
-    name: native release smoke
+  # Build the exact bytes once at the tagged commit. Only tag pushes reach this
+  # job, so artifact bytes produced by an untrusted pull request cannot be
+  # promoted. Native jobs and publication download this same immutable artifact.
+  release-candidates:
+    name: build release candidates
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.native)
     needs: [ci, secrets, release-metadata]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            asset_os: linux
-            asset_arch: amd64
-          - runner: ubuntu-24.04-arm
-            asset_os: linux
-            asset_arch: arm64
-          - runner: macos-15
-            asset_os: darwin
-            asset_arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -286,77 +279,24 @@ jobs:
           fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build signed-shape archives and checksums
-        run: make release-all VERSION="${{ steps.version.outputs.value }}"
-
-      - name: Extract and start the native archive
-        shell: bash
+      - name: Validate release metadata
         env:
           VERSION: ${{ steps.version.outputs.value }}
-          ASSET_OS: ${{ matrix.asset_os }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-        run: |
-          set -euo pipefail
-          archive="icloud-mcp-${VERSION}-${ASSET_OS}-${ASSET_ARCH}.tar.gz"
-          checksums="icloud-mcp-${VERSION}-checksums.txt"
-          test -f "dist/$archive"
-          (cd dist && shasum -a 256 -c "$checksums")
-          mkdir native-smoke
-          tar -xzf "dist/$archive" -C native-smoke
-          python3 scripts/native_smoke.py \
-            --binary native-smoke/icloud-mcp \
-            --version "$VERSION" \
-            --tools 7
-          bundle="dist/icloud-mcp-${VERSION}-${ASSET_OS}-${ASSET_ARCH}.mcpb"
-          python3 scripts/mcpb.py build \
-            --source "dist/$archive" --target "${ASSET_OS}/${ASSET_ARCH}" \
-            --version "$VERSION" --output "$bundle"
-          python3 scripts/mcpb.py verify "$bundle" --server server.json
-          bundle_smoke="$(mktemp -d)"
-          python3 -m zipfile -e "$bundle" "$bundle_smoke"
-          chmod 755 "$bundle_smoke/server/icloud-mcp"
-          python3 scripts/native_smoke.py \
-            --binary "$bundle_smoke/server/icloud-mcp" --version "$VERSION" --tools 7
-          npx -y @anthropic-ai/mcpb@2.1.2 validate "$bundle_smoke/manifest.json"
-          rm -rf "$bundle_smoke"
-          echo "native_smoke bundle=$bundle os=$ASSET_OS arch=$ASSET_ARCH"
-
-  # Tag releases only after CI and secret scan succeed on the same ref.
-  release:
-    name: build archives and checksums
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, secrets, release-metadata, native-release-smoke]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.10'
-          check-latest: false
-
-      - name: Validate release metadata and extract notes
         run: |
           make check-release-metadata
-          python3 scripts/check_release.py metadata --tag "$GITHUB_REF_NAME" \
-            --notes-out "$RUNNER_TEMP/release-notes.md"
+          python3 scripts/check_release.py metadata --tag "$VERSION"
 
-      - name: Build multi-arch archives
-        # Host Go is pinned above for release builds. Local `make release` remains
-        # the digest-pinned container path for linux/arm64 only.
-        run: make release-all VERSION="$GITHUB_REF_NAME"
+      - name: Build archives once
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: make release-all VERSION="$VERSION"
 
       - name: Build and verify MCPB bundles
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
+          tag="$VERSION"
           for target in linux/amd64 linux/arm64 darwin/arm64; do
             os="${target%/*}"
             arch="${target#*/}"
@@ -374,6 +314,166 @@ jobs:
           done
           (cd dist && sha256sum icloud-mcp-"${tag}"-*.mcpb >>"icloud-mcp-${tag}-checksums.txt")
           python3 scripts/check_release.py packages --dir dist --server server.json
+
+      - name: Record candidate digests
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          tag="$VERSION"
+          python3 scripts/verify_release_candidates.py collect \
+            --dir dist --tag "$tag" --manifest dist/candidate-digests.txt
+          echo "release_tag=$tag"
+          echo "source_sha=$GITHUB_SHA"
+          echo "candidate_manifest_sha256=$(sha256sum dist/candidate-digests.txt | cut -d" " -f1)"
+
+      - name: Upload immutable candidate artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidates-${{ steps.version.outputs.value }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  native-release-smoke:
+    name: native release smoke
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.native)
+    needs: [release-candidates]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            asset_os: linux
+            asset_arch: amd64
+          - runner: ubuntu-24.04-arm
+            asset_os: linux
+            asset_arch: arm64
+          - runner: macos-15
+            asset_os: darwin
+            asset_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout tools and fixtures
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download the exact candidate bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        with:
+          name: release-candidates-${{ steps.version.outputs.value }}
+          path: dist
+
+      - name: Verify downloaded candidate digests
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_candidates.py verify \
+            --dir dist --tag "$VERSION" --manifest dist/candidate-digests.txt
+          echo "native_before_tag=$VERSION source_sha=$GITHUB_SHA"
+          cat dist/candidate-digests.txt
+
+      - name: Test the exact archive and bundle bytes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          ASSET_OS: ${{ matrix.asset_os }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+        run: |
+          set -euo pipefail
+          archive="dist/icloud-mcp-${VERSION}-${ASSET_OS}-${ASSET_ARCH}.tar.gz"
+          bundle="dist/icloud-mcp-${VERSION}-${ASSET_OS}-${ASSET_ARCH}.mcpb"
+          before="$RUNNER_TEMP/native-before.txt"
+          after="$RUNNER_TEMP/native-after.txt"
+          python3 scripts/verify_release_candidates.py collect \
+            --dir dist --tag "$VERSION" --manifest "$before"
+          mkdir native-smoke
+          tar -xzf "$archive" -C native-smoke
+          python3 scripts/native_smoke.py \
+            --binary native-smoke/icloud-mcp \
+            --version "$VERSION" \
+            --tools 7
+          bundle_smoke="$(mktemp -d)"
+          python3 -m zipfile -e "$bundle" "$bundle_smoke"
+          chmod 755 "$bundle_smoke/server/icloud-mcp"
+          python3 scripts/native_smoke.py             --binary "$bundle_smoke/server/icloud-mcp" --version "$VERSION" --tools 7
+          npx -y @anthropic-ai/mcpb@2.1.2 validate "$bundle_smoke/manifest.json"
+          rm -rf "$bundle_smoke"
+          python3 scripts/verify_release_candidates.py collect \
+            --dir dist --tag "$VERSION" --manifest "$after"
+          cmp "$before" "$after"
+          echo "native_after_tag=$VERSION source_sha=$GITHUB_SHA"
+          cat "$after"
+          cp "$after" "$RUNNER_TEMP/native-digests-${ASSET_OS}-${ASSET_ARCH}.txt"
+
+      - name: Record native-tested digests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-digests-${{ steps.version.outputs.value }}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
+          path: ${{ runner.temp }}/native-digests-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publish only the candidate bytes that passed native smoke. This job never
+  # runs a compiler for the product.
+  release:
+    name: sign and publish release candidates
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [release-candidates, native-release-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout release metadata and scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go for pinned cosign
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+
+      - name: Download the tested candidate bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        with:
+          name: release-candidates-${{ steps.version.outputs.value }}
+          path: dist
+
+      - name: Download native-tested digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        with:
+          pattern: native-digests-${{ github.ref_name }}-*
+          path: native-digests
+          merge-multiple: true
+
+      - name: Verify candidate and native-tested digests
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_candidates.py verify \
+            --dir dist --tag "$VERSION" --manifest dist/candidate-digests.txt
+          shopt -s nullglob
+          files=(native-digests/*.txt)
+          test "${#files[@]}" -eq 3
+          for file in "${files[@]}"; do
+            echo "checking native-tested digests from $file"
+            (cd dist && shasum -a 256 -c "$OLDPWD/$file")
+          done
+          echo "release_tag=$VERSION source_sha=$GITHUB_SHA"
+          echo "candidate_manifest_sha256=$(sha256sum dist/candidate-digests.txt | cut -d" " -f1)"
+
+      - name: Validate release metadata and extract notes
+        run: |
+          make check-release-metadata
+          python3 scripts/check_release.py metadata --tag "$GITHUB_REF_NAME" \
+            --notes-out "$RUNNER_TEMP/release-notes.md"
 
       - name: Install pinned cosign
         run: |
