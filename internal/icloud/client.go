@@ -736,7 +736,7 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	if opts != nil {
 		suppliedETag = opts.IfMatchETag
 	}
-	if !(opts != nil && opts.DryRun) {
+	if opts == nil || !opts.DryRun {
 		if err := authorizeSchedulingMutation(obj.Data, allowScheduled, suppliedETag, obj.ETag); err != nil {
 			return DeleteResult{}, err
 		}
