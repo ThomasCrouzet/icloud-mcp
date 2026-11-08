@@ -7,6 +7,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Retry pinned gitleaks and Cosign downloads in CI so a transient GitHub 504 does not fail a pull request or a release.
 - Reconcile the documented environment variable count to 14, add
   `mail.archive` to the README permission inventory, and list `reply_message`
   in the read-only Mail tool inventory and SMTP authorization notes.
