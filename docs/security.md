@@ -122,13 +122,15 @@ error:
 - Mail: `set_message_flags`, `move_message`, `trash_message`,
   `send_message`, and `reply_message` are absent.
 
-Contacts read requires its enable flag. Mail read requires its enable flag. Mail
-mutation also requires the Mail write flag. Mail send independently requires
-the send flag and a valid SMTP recipient policy. Mail read does not enable
-mutation or send. Mail mutation does not enable send.
+Contacts read requires its enable flag. Mail read requires its enable flag.
+Contacts writes require `contacts.write` or `contacts.delete`. Mail mutation
+requires `mail.mutate` or `mail.trash`. Mail send requires `mail.send` and a
+valid SMTP recipient policy. The legacy Mail write and send flags never grant a
+tool. Mail read does not enable mutation or send. Mail mutation does not enable
+send.
 
-Global read-only removes the configured write and send tools. It keeps
-configuration validation.
+Global read-only removes every granted write and send tool. An unset
+`ICLOUD_MCP_PERMISSIONS` grants reads only.
 Requested Mail send still requires a recipient allowlist at boot.
 
 ### Calendar read resource scopes
