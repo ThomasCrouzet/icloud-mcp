@@ -359,7 +359,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download the exact candidate bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-candidates-${{ steps.version.outputs.value }}
           path: dist
@@ -439,13 +439,13 @@ jobs:
           check-latest: false
 
       - name: Download the tested candidate bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-candidates-${{ steps.version.outputs.value }}
           path: dist
 
       - name: Download native-tested digests
-        uses: actions/download-artifact@d3f86a106a0bac45b974a5d5c39f9b7b0b7e2e14 # v4.6.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: native-digests-${{ github.ref_name }}-*
           path: native-digests
