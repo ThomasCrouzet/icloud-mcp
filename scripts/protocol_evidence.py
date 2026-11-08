@@ -299,6 +299,57 @@ def run_stdio(binary, output, results):
             peer.abort()
 
 
+def modern_meta(version):
+    return {
+        "io.modelcontextprotocol/protocolVersion": version,
+        "io.modelcontextprotocol/clientInfo": {"name": "raw-protocol-probe", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+
+def run_modern(binary, output, results):
+    """Probe the modern 2026-07-28 wire protocol with raw JSON-RPC frames.
+
+    No initialize handshake runs. The probe checks server/discover, stateless
+    tools/list and tools/call with per-request _meta, and the normative error
+    for an unknown version.
+    """
+    peer = Peer(binary, output, "modern-protocol", "normal")
+    try:
+        meta = modern_meta("2026-07-28")
+        discover = peer.response(peer.request("server/discover", {"_meta": meta}))
+        require("error" not in discover, f"server/discover failed: {discover}")
+        result = discover["result"]
+        require(result["supportedVersions"][0] == "2026-07-28",
+                f"newest supported version: {result['supportedVersions']}")
+        require(result["capabilities"].get("tools") is not None,
+                "server/discover did not advertise tools")
+
+        listed = peer.response(peer.request("tools/list", {"_meta": meta}))
+        names = {tool["name"] for tool in listed["result"]["tools"]}
+        require(names == CALENDAR_READS, f"modern tool inventory: {names ^ CALENDAR_READS}")
+
+        called = peer.response(peer.request("tools/call", {
+            "name": "icloud_capabilities", "arguments": {}, "_meta": meta,
+        }))
+        capabilities = tool_payload(called)
+        require(set(capabilities["tools"]) == CALENDAR_READS, "modern capability manifest differs")
+
+        unknown = peer.response(peer.request("tools/list", {"_meta": modern_meta("2099-01-01")}))
+        require(unknown.get("error", {}).get("code") == -32022,
+                f"unknown version was not rejected correctly: {unknown}")
+        require(unknown["error"]["data"]["requested"] == "2099-01-01",
+                "unknown-version error did not echo the request")
+
+        peer.finish()
+        results.append({"scenario": "modern-protocol", "status": "passed"})
+    except Exception:
+        results.append({"scenario": "modern-protocol", "status": "failed"})
+        raise
+    finally:
+        peer.abort()
+
+
 def merge_coverage(output, inputs):
     blocks = {}
     for path in inputs:
@@ -367,6 +418,7 @@ def main():
         run(["go", "test", "-c", "-race", "-covermode=atomic", "-coverpkg=./cmd/icloud-mcp",
              "-o", str(binary), "./cmd/icloud-mcp"], "build.log")
         run_stdio(binary, output, manifest["results"])
+        run_modern(binary, output, manifest["results"])
         merge_coverage(output / "executable-coverage.out", sorted(output.glob("*.coverage.out")))
         run(["go", "test", "./internal/mcptools", "-run", "^TestProtocol", "-count=1", "-v", "-json", "-race"], "protocol-tests.jsonl")
         test_events = [json.loads(line) for line in (output / "protocol-tests.jsonl").read_text().splitlines()]

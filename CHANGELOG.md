@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Verify the modern `2026-07-28` MCP wire protocol on stdio with raw JSON-RPC:
+  `server/discover`, stateless `tools/list`, and `tools/call` without an
+  `initialize` handshake. Legacy `2025-11-25` still passes. An unknown version
+  returns `-32022` with the requested version and supported list.
+
 ### Documentation
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset

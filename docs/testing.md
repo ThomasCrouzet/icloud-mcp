@@ -149,6 +149,23 @@ lifecycle evidence; no coverage threshold is reduced.
 
 ## Offline performance baseline
 
+### MCP protocol versions
+
+`cmd/icloud-mcp/raw_protocol_test.go` drives the production stdio loop with raw
+JSON-RPC frames, without an MCP SDK client. `scripts/protocol_evidence.py` runs
+the same modern probe against the extracted test binary.
+
+| Version | Era | Status | Evidence |
+|---|---|---|---|
+| `2026-07-28` | Modern, stateless `_meta` per request | Verified | `server/discover`, `tools/list`, and `tools/call` without `initialize`; newest advertised version |
+| `2025-11-25` | Legacy `initialize` handshake | Verified | Raw initialize, `notifications/initialized`, then `tools/list` |
+| `2025-06-18`, `2025-03-26`, `2024-11-05` | Legacy | Known to the SDK, not separately exercised | No compatibility claim beyond the SDK version list |
+| Unknown future version | Modern comparison | Rejected | JSON-RPC `-32022` with `data.requested` and the supported list |
+
+`server/discover` reports the SDK's complete `ValidProtocolVersions` list,
+newest first. No public HTTP endpoint exists; modern support is limited to the
+stdio transport.
+
 The benchmark suite records deterministic, offline protocol measurements. It
 uses synthetic data and local fixtures only. It does not use Apple credentials,
 live endpoints, or a service dependency.
