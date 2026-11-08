@@ -1,0 +1,179 @@
+name: Publish MCP Registry
+
+# Publication is a maintainer gate. This workflow runs only after a GitHub
+# Release is published, or by explicit manual dispatch. It never runs on a pull
+# request or a main push. It fails closed when a bundle, hash, or signature is
+# missing. See docs/distribution/registry.md.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v0.5.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-registry-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: verify assets and publish registry record
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      PUBLISHER_VERSION: v1.8.8
+      PUBLISHER_SHA256: 09f1fa70ee146b640584274a1a6b2b8a0310b05d4321fa9224e6df6a016d67f4
+      COSIGN_VERSION: 2.4.1
+      COSIGN_SHA256: 8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 1
+
+      - name: Validate tag and local metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::tag must be a vX.Y.Z release tag: $TAG"
+              exit 1
+              ;;
+          esac
+          version="$(python3 -c 'import json; print(json.load(open("server.json"))["version"])')"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match server.json version $version"
+            exit 1
+          fi
+          make check-release-metadata
+          python3 -m unittest scripts/test_check_release.py
+
+      - name: Download release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --pattern '*.tar.gz' \
+            --pattern '*.mcpb' \
+            --pattern '*checksums.txt' \
+            --pattern '*.sig' \
+            --pattern '*.pem'
+          shopt -s nullglob
+          bundles=(release-assets/*.mcpb)
+          if [ "${#bundles[@]}" -eq 0 ]; then
+            echo "::error::release $TAG has no .mcpb bundle; run the documented bundle build and upload step before publication"
+            exit 1
+          fi
+          checksums=(release-assets/*checksums.txt)
+          if [ "${#checksums[@]}" -ne 1 ]; then
+            echo "::error::release $TAG must contain exactly one checksums file"
+            exit 1
+          fi
+
+      - name: Verify archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          checksum_file="$(basename release-assets/*checksums.txt)"
+          (cd release-assets && sha256sum -c "$checksum_file")
+
+      - name: Install pinned cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="${RUNNER_TEMP}/cosign"
+          curl -fsSL -o "$binary" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          printf '%s  %s\n' "$COSIGN_SHA256" "$binary" | sha256sum -c -
+          chmod +x "$binary"
+
+      - name: Verify release signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/tags/${TAG}"
+          issuer="https://token.actions.githubusercontent.com"
+          for file in release-assets/*.tar.gz; do
+            if [ ! -f "$file.sig" ] || [ ! -f "$file.pem" ]; then
+              echo "::error::missing signature for $file"
+              exit 1
+            fi
+            "${RUNNER_TEMP}/cosign" verify-blob \
+              --certificate "$file.pem" --signature "$file.sig" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$issuer" "$file"
+          done
+          for file in release-assets/*.mcpb; do
+            if [ ! -f "$file.sig" ] || [ ! -f "$file.pem" ]; then
+              echo "::error::missing signature for $file; sign and upload the MCPB assets before publication"
+              exit 1
+            fi
+            "${RUNNER_TEMP}/cosign" verify-blob \
+              --certificate "$file.pem" --signature "$file.sig" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$issuer" "$file"
+          done
+
+      - name: Verify bundle hashes and platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_release.py packages \
+            --dir release-assets --server server.json
+
+      - name: Install pinned mcp-publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/mcp-publisher_linux_amd64.tar.gz"
+          base="https://github.com/modelcontextprotocol/registry/releases/download/${PUBLISHER_VERSION}"
+          curl -fsSL -o "$archive" "${base}/mcp-publisher_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$PUBLISHER_SHA256" "$archive" | sha256sum -c -
+          curl -fsSL -o "${archive}.sigstore.json" \
+            "${base}/mcp-publisher_linux_amd64.tar.gz.sigstore.json"
+          "${RUNNER_TEMP}/cosign" verify-blob \
+            --bundle "${archive}.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar -xzf "$archive" -C "$RUNNER_TEMP" mcp-publisher
+          "${RUNNER_TEMP}/mcp-publisher" validate server.json
+
+      - name: Publish with GitHub OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/mcp-publisher" login github-oidc
+          "${RUNNER_TEMP}/mcp-publisher" publish server.json
+
+      - name: Verify published packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if python3 scripts/check_release.py registry --server server.json; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              sleep 10
+            fi
+          done
+          echo "::error::published registry state does not match server.json"
+          exit 1

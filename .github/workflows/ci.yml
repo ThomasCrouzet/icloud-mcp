@@ -316,6 +316,19 @@ jobs:
             --binary native-smoke/icloud-mcp \
             --version "$VERSION" \
             --tools 7
+          bundle="dist/icloud-mcp-${VERSION}-${ASSET_OS}-${ASSET_ARCH}.mcpb"
+          python3 scripts/mcpb.py build \
+            --source "dist/$archive" --target "${ASSET_OS}/${ASSET_ARCH}" \
+            --version "$VERSION" --output "$bundle"
+          python3 scripts/mcpb.py verify "$bundle" --server server.json
+          bundle-smoke="$(mktemp -d)"
+          python3 -m zipfile -e "$bundle" "$bundle-smoke"
+          chmod 755 "$bundle-smoke/server/icloud-mcp"
+          python3 scripts/native_smoke.py \
+            --binary "$bundle-smoke/server/icloud-mcp" --version "$VERSION" --tools 7
+          npx -y @anthropic-ai/mcpb@2.1.2 validate "$bundle-smoke/manifest.json"
+          rm -rf "$bundle-smoke"
+          echo "native_smoke bundle=$bundle os=$ASSET_OS arch=$ASSET_ARCH"
 
   # Tag releases only after CI and secret scan succeed on the same ref.
   release:
@@ -325,6 +338,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: write
       contents: write
       id-token: write
     steps:
@@ -348,6 +362,28 @@ jobs:
         # the digest-pinned container path for linux/arm64 only.
         run: make release-all VERSION="$GITHUB_REF_NAME"
 
+      - name: Build and verify MCPB bundles
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            archive="dist/icloud-mcp-${tag}-${os}-${arch}.tar.gz"
+            bundle="dist/icloud-mcp-${tag}-${os}-${arch}.mcpb"
+            python3 scripts/mcpb.py build \
+              --source "$archive" --target "$target" --version "$tag" \
+              --output "$bundle"
+            if [ "$target" = "linux/amd64" ]; then
+              python3 scripts/mcpb.py verify "$bundle" --server server.json
+            else
+              python3 scripts/mcpb.py verify "$bundle" --server server.json --no-exec
+            fi
+            python3 -m zipfile -t "$bundle" >/dev/null
+          done
+          (cd dist && sha256sum icloud-mcp-"${tag}"-*.mcpb >>"icloud-mcp-${tag}-checksums.txt")
+          python3 scripts/check_release.py packages --dir dist --server server.json
+
       - name: Cosign keyless signatures
         # Sign before publication. If Fulcio or Rekor fails, do not publish an unsigned GitHub Release.
         run: |
@@ -362,8 +398,8 @@ jobs:
           cd dist
           tag="$GITHUB_REF_NAME"
           shopt -s nullglob
-          files=(icloud-mcp-"$tag"-*.tar.gz icloud-mcp-"$tag"-checksums.txt)
-          test "${#files[@]}" -eq 4
+          files=(icloud-mcp-"$tag"-*.tar.gz icloud-mcp-"$tag"-*.mcpb icloud-mcp-"$tag"-checksums.txt)
+          test "${#files[@]}" -eq 7
           for f in "${files[@]}"; do
             "$binary" sign-blob --yes \
               --output-signature "${f}.sig" \
@@ -382,18 +418,33 @@ jobs:
             "dist/icloud-mcp-${tag}-linux-amd64.tar.gz"
             "dist/icloud-mcp-${tag}-linux-arm64.tar.gz"
             "dist/icloud-mcp-${tag}-darwin-arm64.tar.gz"
+            "dist/icloud-mcp-${tag}-linux-amd64.mcpb"
+            "dist/icloud-mcp-${tag}-linux-arm64.mcpb"
+            "dist/icloud-mcp-${tag}-darwin-arm64.mcpb"
             "dist/icloud-mcp-${tag}-checksums.txt"
           )
           signatures=(dist/icloud-mcp-"$tag"-*.sig)
           certificates=(dist/icloud-mcp-"$tag"-*.pem)
-          test "${#signatures[@]}" -eq 4
-          test "${#certificates[@]}" -eq 4
+          test "${#signatures[@]}" -eq 7
+          test "${#certificates[@]}" -eq 7
           assets+=("${signatures[@]}" "${certificates[@]}")
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
             --notes-file "${RUNNER_TEMP}/release-notes.md" \
             --title "$GITHUB_REF_NAME" \
             "${assets[@]}"
+
+      - name: Dispatch Registry publication
+        # A release created with GITHUB_TOKEN does not emit a second workflow
+        # run. Dispatch the publication workflow explicitly after the release
+        # assets exist. The workflow verifies hashes and signatures again.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run publish-registry.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag="$GITHUB_REF_NAME"
 
   secrets:
     name: gitleaks (secret scan)
