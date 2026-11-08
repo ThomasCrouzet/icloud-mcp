@@ -618,7 +618,7 @@ func (s *Session) ConditionalStoreDelta(uid uint32, add bool, flags []string, ex
 	return validateConditionalStore(uid, add, flags, expectedModSeq, buffers)
 }
 
-func validateConditionalStore(uid uint32, add bool, flags []string, expectedModSeq uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
+func validateConditionalStore(uid uint32, add bool, flags []string, _ uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
 	if len(buffers) == 0 {
 		return Message{}, &Error{Kind: ErrorConflict}
 	}
@@ -630,14 +630,12 @@ func validateConditionalStore(uid uint32, add bool, flags []string, expectedModS
 	for _, flag := range buffer.Flags {
 		message.Flags = append(message.Flags, string(flag))
 	}
-	if buffer.ModSeq > expectedModSeq {
-		return message, nil
-	}
 	if buffer.ModSeq == 0 {
 		return Message{}, &Error{Kind: ErrorProtocol}
 	}
-	// A no-op delta can succeed without a MODSEQ change. Validate the returned
-	// flags for the requested direction before treating it as success.
+	// A MODSEQ increase does not prove that the requested delta applied:
+	// unsolicited FETCH data and racing writers can change MODSEQ alone.
+	// Validate the exact requested flag state before reporting success.
 	present := make(map[string]bool, len(message.Flags))
 	for _, flag := range message.Flags {
 		present[flag] = true

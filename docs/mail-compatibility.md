@@ -178,11 +178,15 @@ When the IMAP server advertises CONDSTORE, flag updates require `expected_modseq
 The adapter sends one UID STORE with `UNCHANGEDSINCE`. It does not replace all
 flags. Because beta.8 discards tagged MODIFIED, the adapter validates the
 single-UID result from the returned FETCH metadata instead. A missing FETCH, an
-unrelated UID, a malformed response, or an unchanged MODSEQ without the requested
-delta maps to `concurrent_modification` or `protocol_error`. It never treats a
-tagged OK as success by itself.
+unrelated UID, or a malformed response maps to `protocol_error`. The adapter
+checks the exact requested add or remove state on every returned FETCH,
+including one whose MODSEQ increased. A missing requested flag, a flag that
+should be absent but remains, or a partial multi-flag delta maps to
+`concurrent_modification`. It never treats a tagged OK or a MODSEQ increase as
+success by itself.
 
-A matching MODSEQ reports `conditionalUpdate: true` and the new flags and MODSEQ.
+A FETCH that proves the requested delta reports `conditionalUpdate: true` and
+the new flags and MODSEQ.
 A stale MODSEQ changes no flags and returns `concurrent_modification`. The
 adapter never retries the conditional STORE. An ambiguous dispatched write still
 returns `outcome_unknown`.

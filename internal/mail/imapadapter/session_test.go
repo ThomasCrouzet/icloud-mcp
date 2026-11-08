@@ -553,6 +553,9 @@ func TestValidateConditionalStoreSingleUID(t *testing.T) {
 		{name: "duplicate fetch is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}, {UID: 2, ModSeq: 13}}},
 		{name: "same modseq without delta is conflict", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 11}}},
 		{name: "missing modseq is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2}}},
+		{name: "increased modseq without added flag", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}}},
+		{name: "increased modseq with removed flag still present", add: false, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}},
+		{name: "increased modseq with only part of the delta", add: true, flags: []string{"\\Seen", "\\Flagged"}, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := validateConditionalStore(2, test.add, test.flags, 11, test.buffers)

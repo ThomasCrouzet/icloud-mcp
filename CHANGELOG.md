@@ -33,6 +33,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read reply threading metadata without fetching message bodies, fall back to
   `In-Reply-To` when `References` is absent, and bound long reference chains
   instead of rejecting them.
+- Validate the exact requested flag delta after a conditional IMAP STORE even
+  when MODSEQ increased, so an unsolicited FETCH cannot report a false success.
 
 ## [1.0.0] - 2026-11-08
 
