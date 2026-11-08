@@ -194,7 +194,7 @@ Each run writes these files outside the repository:
 | Area | Benchmark | Fixed input | Asserted result |
 |------|-----------|-------------|-----------------|
 | Calendar recurrence | `BenchmarkRecurrenceExpansion` | `calendar-index-v1`, Europe/Paris, 40 daily occurrences across each 2026 DST change, and 2000 hourly occurrences | Local 09:00 is stable, offsets change, the 2000 per-series cap truncates, and a 2000-count series is complete |
-| Calendar imported UID | `BenchmarkCalendarImportedUID` | One imported UID, direct `<uid>.ics` miss, plus or minus 50-year REPORT fallback | Cold state uses 5 RPCs, warm state uses 3, and the internal path stays hidden |
+| Calendar imported UID | `BenchmarkCalendarImportedUID` | One imported UID, direct `<uid>.ics` miss, plus or minus 50-year REPORT fallback | Cold uses 5 RPCs, warm discovery with a cold location cache uses 3, and a warm location cache uses 1; the internal path stays hidden |
 | Calendar fan-out and free slots | `BenchmarkAvailabilityBudget` | 4 calendars with 10,000 events, 1,024 calendars, and overflow cases | Existing accepted scenario retains the 10,000-event availability budget and four-read bound |
 | Calendar search and result | `BenchmarkSearchEventsSerialization` | 4 calendars with 10,000 events | 400 public results, 10,000 total, truncation, and 4 RPCs |
 | Contacts | `BenchmarkContactsParseSearch2000` | `contacts-index-v1`, 2,000 vCard 3.0 contacts | One query match, no scan cap, 4 cold RPCs, and 1 warm RPC |

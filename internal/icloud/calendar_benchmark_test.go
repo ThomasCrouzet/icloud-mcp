@@ -140,6 +140,17 @@ func TestCalendarBenchmarkScenarios(t *testing.T) {
 	}
 	runImportedUIDBenchmark(t, false)
 	runImportedUIDBenchmark(t, true)
+	doer := &importedUIDBenchmarkDoer{}
+	client := newImportedUIDBenchmarkClient(doer)
+	if err := client.Discover(context.Background()); err != nil {
+		t.Fatalf("warm discovery: %v", err)
+	}
+	assertImportedUIDLookup(t, client)
+	base := doer.RPCs()
+	assertImportedUIDLookup(t, client)
+	if got := doer.RPCs() - base; got != 1 {
+		t.Fatalf("warm location cache RPCs = %d, want 1", got)
+	}
 }
 
 func BenchmarkRecurrenceExpansion(b *testing.B) {
@@ -312,6 +323,8 @@ func BenchmarkCalendarImportedUID(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
+			// Measure warm discovery with a cold UID location cache.
+			client.locations.evict(importedUIDBenchmarkCalendar, importedUIDBenchmarkUID)
 			assertImportedUIDLookup(b, client)
 		}
 		b.StopTimer()
@@ -320,5 +333,27 @@ func BenchmarkCalendarImportedUID(b *testing.B) {
 		}
 		b.ReportMetric(1, "fixture-events")
 		b.ReportMetric(1, "fallback-report")
+		b.ReportMetric(0, "location-cache")
+	})
+	b.Run("WarmLocationCache", func(b *testing.B) {
+		doer := &importedUIDBenchmarkDoer{}
+		client := newImportedUIDBenchmarkClient(doer)
+		if err := client.Discover(context.Background()); err != nil {
+			b.Fatalf("warm discovery: %v", err)
+		}
+		assertImportedUIDLookup(b, client)
+		baseRPC := doer.RPCs()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			assertImportedUIDLookup(b, client)
+		}
+		b.StopTimer()
+		if b.N > 0 {
+			b.ReportMetric(float64(doer.RPCs()-baseRPC)/float64(b.N), "rpc/op")
+		}
+		b.ReportMetric(1, "fixture-events")
+		b.ReportMetric(1, "fallback-report")
+		b.ReportMetric(1, "location-cache")
 	})
 }
