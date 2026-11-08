@@ -1,0 +1,310 @@
+package imapadapter
+
+import (
+	"bytes"
+	"context"
+	"log"
+	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapserver"
+)
+
+// Concrete synthetic-wire metadata and body fixture. The real adapter Session
+// talks to the go-imap server over net.Pipe. The server writes FETCH data on
+// the wire, and the client parser plus adapter conversion build the result.
+// This is not a live Apple connection and not a full mailbox service fixture.
+const (
+	imapWireBenchmarkSeed          = "imap-wire-metadata-v1"
+	imapWireBenchmarkUID           = uint32(4_000_000_000)
+	imapWireBenchmarkUIDNext       = imapWireBenchmarkUID + 1
+	imapWireBenchmarkBodyBytes     = 204800
+	imapWireBenchmarkWireBodyBytes = maxWireBodyBytes - 1
+)
+
+var (
+	imapWireBenchmarkHeaders = []byte(
+		"Message-ID: <wire-benchmark@example.test>\r\n" +
+			"In-Reply-To: <wire-parent@example.test>\r\n" +
+			"References: <wire-root@example.test> <wire-parent@example.test>\r\n" +
+			"Reply-To: Wire Bench <reply@example.test>\r\n" +
+			"\r\n",
+	)
+	imapWireBenchmarkMIMEHeader = []byte(
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: 7bit\r\n" +
+			"\r\n",
+	)
+	imapWireBenchmarkWireBody = bytes.Repeat([]byte{'b'}, imapWireBenchmarkWireBodyBytes)
+)
+
+type singleConnListener struct {
+	conn   net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newSingleConnListener(conn net.Conn) *singleConnListener {
+	return &singleConnListener{conn: conn, closed: make(chan struct{})}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	var accepted net.Conn
+	l.once.Do(func() { accepted = l.conn })
+	if accepted != nil {
+		return accepted, nil
+	}
+	<-l.closed
+	return nil, net.ErrClosed
+}
+
+func (l *singleConnListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+type imapWireBenchmarkSession struct {
+	imapserver.Session
+	fetches atomic.Int64
+	closes  atomic.Int64
+}
+
+func (s *imapWireBenchmarkSession) Close() error {
+	s.closes.Add(1)
+	return nil
+}
+
+func (s *imapWireBenchmarkSession) Login(string, string) error { return nil }
+
+func (s *imapWireBenchmarkSession) Select(string, *imap.SelectOptions) (*imap.SelectData, error) {
+	return &imap.SelectData{UIDValidity: 7, UIDNext: imap.UID(imapWireBenchmarkUIDNext), NumMessages: 1}, nil
+}
+
+func (s *imapWireBenchmarkSession) Poll(*imapserver.UpdateWriter, bool) error { return nil }
+
+func (s *imapWireBenchmarkSession) Unselect() error { return nil }
+
+func (s *imapWireBenchmarkSession) Fetch(writer *imapserver.FetchWriter, _ imap.NumSet, options *imap.FetchOptions) error {
+	s.fetches.Add(1)
+	message := writer.CreateMessage(1)
+	if options.UID {
+		message.WriteUID(imap.UID(imapWireBenchmarkUID))
+	}
+	if options.Flags {
+		message.WriteFlags([]imap.Flag{imap.FlagSeen})
+	}
+	if options.InternalDate {
+		message.WriteInternalDate(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+	}
+	if options.RFC822Size {
+		message.WriteRFC822Size(imapWireBenchmarkBodyBytes + int64(len(imapWireBenchmarkHeaders)))
+	}
+	if options.Envelope {
+		message.WriteEnvelope(&imap.Envelope{
+			Date:    time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+			Subject: "wire metadata fixture",
+			From: []imap.Address{{
+				Name: "Wire Sender", Mailbox: "sender", Host: "example.test",
+			}},
+			To: []imap.Address{{
+				Name: "Wire Recipient", Mailbox: "recipient", Host: "example.test",
+			}},
+			ReplyTo: []imap.Address{{
+				Name: "Wire Bench", Mailbox: "reply", Host: "example.test",
+			}},
+			MessageID: "wire-benchmark@example.test",
+			InReplyTo: []string{"wire-parent@example.test"},
+		})
+	}
+	if options.BodyStructure != nil {
+		message.WriteBodyStructure(&imap.BodyStructureSinglePart{
+			Type: "text", Subtype: "plain", Encoding: "7bit",
+			Size: imapWireBenchmarkBodyBytes,
+			Text: &imap.BodyStructureText{NumLines: 1},
+			Extended: &imap.BodyStructureSinglePartExt{
+				Disposition: &imap.BodyStructureDisposition{Value: "inline"},
+			},
+		})
+	}
+	for _, section := range options.BodySection {
+		var data []byte
+		switch {
+		case section.Specifier == imap.PartSpecifierHeader:
+			data = imapWireBenchmarkHeaders
+		case section.Specifier == imap.PartSpecifierMIME:
+			data = imapWireBenchmarkMIMEHeader
+		case len(section.Part) == 1 && section.Part[0] == 1:
+			data = imapWireBenchmarkWireBody
+		default:
+			return &imap.Error{Type: imap.StatusResponseTypeBad, Text: "unsupported benchmark body section"}
+		}
+		part := message.WriteBodySection(section, int64(len(data)))
+		if _, err := part.Write(data); err != nil {
+			_ = part.Close()
+			return err
+		}
+		if err := part.Close(); err != nil {
+			return err
+		}
+	}
+	return message.Close()
+}
+
+type wireBenchmarkLogWriter struct{ tb testing.TB }
+
+func (w wireBenchmarkLogWriter) Write(p []byte) (int, error) {
+	w.tb.Logf("imapserver: %s", strings.TrimSpace(string(p)))
+	return len(p), nil
+}
+
+func imapWireBenchmarkFixture(tb testing.TB) (*Session, *imapWireBenchmarkSession) {
+	tb.Helper()
+	serverConn, clientConn := net.Pipe()
+	fake := &imapWireBenchmarkSession{}
+	server := imapserver.New(&imapserver.Options{
+		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			return fake, &imapserver.GreetingData{}, nil
+		},
+		Caps:         imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapUIDPlus: {}},
+		InsecureAuth: true,
+		Logger:       log.New(wireBenchmarkLogWriter{tb}, "", 0),
+	})
+	listener := newSingleConnListener(serverConn)
+	go func() { _ = server.Serve(listener) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	session, err := NewSession(ctx, clientConn, "sender@example.test", "app-password")
+	if err != nil {
+		cancel()
+		_ = server.Close()
+		tb.Fatalf("synthetic wire session: %v", err)
+	}
+	if _, err := session.Select("INBOX", true); err != nil {
+		_ = session.Close()
+		_ = server.Close()
+		cancel()
+		tb.Fatalf("synthetic wire select: %v", err)
+	}
+	tb.Cleanup(func() {
+		_ = session.Close()
+		_ = server.Close()
+		cancel()
+	})
+	return session, fake
+}
+
+func assertIMAPWireMetadata(tb testing.TB, session *Session) {
+	tb.Helper()
+	messages, err := session.FetchMetadata([]uint32{imapWireBenchmarkUID}, true)
+	if err != nil {
+		tb.Fatalf("wire metadata: %v", err)
+	}
+	if len(messages) != 1 {
+		tb.Fatalf("wire metadata messages = %d, want 1", len(messages))
+	}
+	message := messages[0]
+	if message.UID != imapWireBenchmarkUID || message.Envelope.Subject != "wire metadata fixture" {
+		tb.Fatalf("wire metadata message = %+v", message)
+	}
+	if len(message.Envelope.From) != 1 || message.Envelope.From[0].Address != "sender@example.test" {
+		tb.Fatalf("wire metadata sender = %+v", message.Envelope.From)
+	}
+	if len(message.Parts) != 1 || message.Parts[0].ContentType != "text/plain" {
+		tb.Fatalf("wire metadata parts = %+v", message.Parts)
+	}
+	if message.Headers.MessageID != "<wire-benchmark@example.test>" ||
+		len(message.Headers.InReplyTo) != 1 ||
+		len(message.Headers.References) != 2 ||
+		len(message.Headers.ReplyTo) != 1 {
+		tb.Fatalf("wire curated headers = %+v", message.Headers)
+	}
+}
+
+func assertIMAPWireBody(tb testing.TB, session *Session) {
+	tb.Helper()
+	data, err := session.FetchBodyPart(imapWireBenchmarkUID, []int{1})
+	if err != nil {
+		tb.Fatalf("wire body: %v", err)
+	}
+	if data.TooLarge {
+		tb.Fatalf("wire body unexpectedly exceeded its limit")
+	}
+	if len(data.Body) != imapWireBenchmarkWireBodyBytes {
+		tb.Fatalf("wire body bytes = %d, want %d", len(data.Body), imapWireBenchmarkWireBodyBytes)
+	}
+	if !bytes.Equal(data.Body, imapWireBenchmarkWireBody) {
+		tb.Fatalf("wire body bytes differ from the synthetic payload")
+	}
+	if !bytes.Contains(data.MIMEHeader, []byte("Content-Type: text/plain")) {
+		tb.Fatalf("wire MIME header = %q", data.MIMEHeader)
+	}
+}
+
+func resetIMAPWireInboundBudget(tb testing.TB, session *Session) {
+	tb.Helper()
+	guard, ok := session.conn.(*guardedConn)
+	if !ok {
+		tb.Fatalf("wire session guard type = %T, want *guardedConn", session.conn)
+	}
+	// The production guard bounds cumulative inbound bytes per session. Each
+	// measured near-limit fetch starts with a fresh session budget. The fixture
+	// keeps the real 4 MiB limit and the real 524,287-byte payload.
+	guard.total = 0
+}
+
+func TestIMAPWireBenchmarkScenario(t *testing.T) {
+	t.Logf("fixture_seed=%s uid=%d body_bytes=%d", imapWireBenchmarkSeed, imapWireBenchmarkUID, imapWireBenchmarkWireBodyBytes)
+	session, fake := imapWireBenchmarkFixture(t)
+	base := fake.fetches.Load()
+	assertIMAPWireMetadata(t, session)
+	assertIMAPWireMetadata(t, session)
+	assertIMAPWireBody(t, session)
+	assertIMAPWireBody(t, session)
+	if got := fake.fetches.Load() - base; got != 4 {
+		t.Fatalf("wire FETCH count = %d, want 4", got)
+	}
+}
+
+func BenchmarkIMAPWireMetadata(b *testing.B) {
+	session, fake := imapWireBenchmarkFixture(b)
+	assertIMAPWireMetadata(b, session)
+	base := fake.fetches.Load()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		assertIMAPWireMetadata(b, session)
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(fake.fetches.Load()-base)/float64(b.N), "wire-rpc/op")
+	b.ReportMetric(1, "metadata-messages")
+	b.ReportMetric(float64(len(imapWireBenchmarkHeaders)), "header-bytes")
+	b.ReportMetric(float64(imapWireBenchmarkUID), "sparse-uid-base")
+}
+
+func BenchmarkIMAPWireBodyNearLimit(b *testing.B) {
+	session, fake := imapWireBenchmarkFixture(b)
+	assertIMAPWireBody(b, session)
+	base := fake.fetches.Load()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		resetIMAPWireInboundBudget(b, session)
+		assertIMAPWireBody(b, session)
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(fake.fetches.Load()-base)/float64(b.N), "wire-rpc/op")
+	b.ReportMetric(float64(imapWireBenchmarkWireBodyBytes), "body-bytes")
+	b.ReportMetric(float64(len(imapWireBenchmarkMIMEHeader)), "mime-header-bytes")
+	b.ReportMetric(float64(imapWireBenchmarkUID), "sparse-uid-base")
+	b.ReportMetric(float64(maxSessionBytes), "inbound-budget-bytes")
+}

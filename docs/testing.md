@@ -147,6 +147,134 @@ CI does not upload or archive reports on GitHub. It combines executable and Go
 test coverage before it checks existing floors. The executable coverage adds
 lifecycle evidence; no coverage threshold is reduced.
 
+## Offline performance baseline
+
+The benchmark suite records deterministic, offline protocol measurements. It
+uses synthetic data and local fixtures only. It does not use Apple credentials,
+live endpoints, or a service dependency.
+
+Run one finite pass for correctness:
+
+```bash
+BENCH_EVIDENCE_DIR=/absolute/external/path/icloud-bench-smoke make bench-smoke
+```
+
+Record a bounded full baseline on demand:
+
+```bash
+BENCH_EVIDENCE_DIR=/absolute/external/path/icloud-bench-full make bench-full
+```
+
+Both targets call `scripts/benchmark_baseline.py` after they run the recorder
+regression tests in `scripts/test_benchmark_baseline.py`. The runner needs
+Python 3.9 or newer and the project Go toolchain. It refuses an evidence
+directory inside the repository. Use a new directory for each run. The full
+mode defaults to `-benchtime=500ms -count=3`; override it with the script
+options when a stated method requires it. Neither mode defines a timing
+threshold or a speedup claim.
+
+The runner removes every inherited `ICLOUD_*` variable before it starts a child
+process. It records the removed variable names, never their values. It fixes
+`GOMAXPROCS=4` and Go `-p=4`. It records the revision, tree, branch, working
+diff hash, untracked files, toolchain, platform, CPU, host load, and available
+memory before and after the run.
+
+Each run writes these files outside the repository:
+
+| Artifact | Contents |
+|----------|----------|
+| `manifest.json` | Source, environment, commands, exits, settings, parsed samples, summary, and limitations |
+| `benchmark.log` and `benchmark.err` | Raw Go benchmark output and standard error |
+| `benchmarks.json` | Parsed benchmark records, including raw lines |
+| `scenario-smoke.json` and `scenario-smoke.err` | `go test -json` events for the one-pass correctness scenarios |
+| `scenario-events.json` | Minimal run, pass, fail, and skip events used for validation |
+| `environment-before.json` and `environment-after.json` | Host and toolchain snapshots |
+
+The complete predicate is exact. Every selected or required benchmark must
+report the requested positive integer sample count. Every sample must contain
+`ns/op`, `B/op`, `allocs/op`, and every required custom metric. An empty result,
+a truncated count, an extra count, or a missing field on any sample is rejected.
+The runner also requires all five expected scenario tests to emit `run` and
+`pass` events from `go test -json`, with zero `skip` or `fail` events. A
+legitimate partial benchmark selection is valid when each selected name is
+complete, but it stays incomplete.
+
+Revalidate a retained manifest without running Go:
+
+```bash
+python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.json --count 3
+```
+
+### Scenario coverage
+
+| Area | Benchmark | Fixed input | Asserted result |
+|------|-----------|-------------|-----------------|
+| Calendar recurrence | `BenchmarkRecurrenceExpansion` | `calendar-index-v1`, Europe/Paris, 40 daily occurrences across each 2026 DST change, and 2000 hourly occurrences | Local 09:00 is stable, offsets change, the 2000 per-series cap truncates, and a 2000-count series is complete |
+| Calendar imported UID | `BenchmarkCalendarImportedUID` | One imported UID, direct `<uid>.ics` miss, plus or minus 50-year REPORT fallback | Cold uses 5 RPCs, warm discovery with a cold location cache uses 3, and a warm location cache uses 1; the internal path stays hidden |
+| Calendar fan-out and free slots | `BenchmarkAvailabilityBudget` | 4 calendars with 10,000 events, 1,024 calendars, and overflow cases | Existing accepted scenario retains the 10,000-event availability budget and four-read bound |
+| Calendar search and result | `BenchmarkSearchEventsSerialization` | 4 calendars with 10,000 events | 400 public results, 10,000 total, truncation, and 4 RPCs |
+| Contacts | `BenchmarkContactsParseSearch2000` | `contacts-index-v1`, 2,000 sorted vCard 3.0 contacts with fixed REPORT bytes | One query match, no scan cap, 4 cold RPCs, and 1 warm RPC |
+| Mail sparse UID | `BenchmarkMailSearchSparseUID` | `mail-pattern-v1`, 30 candidates near UID 4,000,000,000 | 20 results, truncation, one bounded 5,000-UID window, and 3 service-session calls |
+| Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
+| Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
+| Mail wire body | `BenchmarkIMAPWireBodyNearLimit` | `imap-wire-metadata-v1`, one synthetic FETCH body over `net.Pipe` | 524,287 body bytes parsed through go-imap with the real adapter, and one wire FETCH per operation |
+| MCP refusals | `BenchmarkSearchEventsRefusals` | 10,001 materialized events, invalid limit, synthetic 429, and 2 ms cancellation | Safe error payloads, zero RPCs for input validation, and active cancellation |
+| MCP fan-out latency | `BenchmarkSearchEventsFanoutLatency` | 4 calendars with 1 ms synthetic peer latency | 4 RPCs, bounded 4-worker concurrency, and parallel elapsed time |
+| MCP schema | `BenchmarkMCPToolSchema` | `search_events` input and output schema | A non-empty serialized schema with declared properties |
+
+The ordinary test scenarios `TestCalendarBenchmarkScenarios`,
+`TestContactsBenchmarkScenarios`, `TestMailBenchmarkScenarios`,
+`TestIMAPWireBenchmarkScenario`, and `TestMCPBenchmarkScenarios` run under
+normal test discovery. They execute each fixture once and keep every business
+and refusal assertion. The Mail search scenario runs two operations. The
+recorder requires the five `go test -json` pass events. The scenarios prove
+execution, not statistical stability.
+
+### Metrics and limits
+
+`ns/op` is the measured end-to-end elapsed time per operation after the stated
+setup exclusion. `B/op` and `allocs/op` are Go allocation totals per operation.
+They are not retained live heap. Custom metrics name RPCs, fixture sizes,
+concurrency bounds, injected latency, truncation, and refusals.
+
+`child_peak_rss_kib` is the maximum resident set size of the waited child
+process tree. It is a process-level indicator. It cannot establish sampled Go
+heap, retained record budgets, or allocation totals. Retained budgets are code
+limits and appear as fixture metrics: 2,000 occurrences per series, 10,000
+materialized events, 400 public search results, 2,000 scanned contacts, 100,000
+per-series recurrence steps, 250,000 aggregate recurrence steps, 204,800 body
+bytes, and 524,288 wire body bytes.
+
+RPCs count protocol commands sent by the scenario. Calendar and Contacts metrics
+count synthetic DAV HTTP requests. MCP metrics count backend search calls, not
+transport frames. Mail `service-call/op` counts calls on the service test
+session. Mail `wire-rpc/op` counts actual IMAP FETCH commands parsed through the
+synthetic go-imap server and client. Mail session close commands are excluded.
+
+The Mail wire fixture sends synthetic FETCH responses through `net.Pipe` and
+parses them with the real go-imap client and adapter conversion. It has two
+levels: metadata and curated headers, and a 524,287-byte body fetch with MIME
+header parsing. The body benchmark starts each measured fetch with a fresh
+4 MiB inbound session budget. It keeps the production limit and payload and
+does not change the sampling method. The service body benchmarks remain
+separate. The wire fixture does not cover every live IMAP server behavior, a
+live mailbox, or Apple interoperability.
+
+The Mail throughput benchmarks set the local read limiter to infinite for the
+measurement fixture. They measure per-operation work, not the 60-per-minute
+product gate. Existing Mail tests assert that the 11th burst read is rate
+limited, and the MCP refusal benchmark covers a synthetic rate-limit response.
+
+The suite covers cold and warm discovery for Calendar imported UID and Contacts.
+Calendar fan-out is parallel with at most four workers. Mail search windows and
+Contacts book scans are sequential. Synthetic latency, errors, rate-limit
+responses, cancellation, and resource refusals are explicit benchmark cases.
+
+Host load, CPU frequency scaling, and background work can move wall-clock
+numbers. Compare only runs from the same host with the same method. The suite
+does not publish a percentage claim without a separate before-and-after
+experiment.
+
 ## Manifest-driven MCP contracts
 
 Run the offline contract layer with the existing Go test runner:

@@ -5,6 +5,7 @@ BIN_DIR     := bin
 INSTALL_DIR ?= $(HOME)/.local/bin
 GO          ?= go
 EVIDENCE_DIR ?=
+BENCH_EVIDENCE_DIR ?=
 
 # Use a fixed digest for the release builder image to make builds reproducible.
 # The module minimum is Go 1.26.0; this digest tracks golang:1.26.10.
@@ -24,7 +25,7 @@ BUILDFLAGS := -trimpath -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 RELEASE_FILES := LICENSE THIRD_PARTY_NOTICES.md
 
-.PHONY: build check-release-version check-release-clean check-release-metadata check-registry release release-all install test protocol-evidence lint vet cover clean help
+.PHONY: build check-release-version check-release-clean check-release-metadata check-registry release release-all install test protocol-evidence bench-smoke bench-full lint vet cover clean help
 
 build: ## Build a local binary with the host toolchain. Include VERSION (default dev).
 	@mkdir -p $(BIN_DIR)
@@ -160,6 +161,16 @@ test: ## Run Go tests with race detection and coverage.
 protocol-evidence: ## Run synthetic protocol scenarios. Set EVIDENCE_DIR to a new external directory.
 	@test -n "$(EVIDENCE_DIR)" || { echo "Set EVIDENCE_DIR to a new directory outside the repository" >&2; exit 1; }
 	python3 scripts/protocol_evidence.py --output "$(EVIDENCE_DIR)"
+
+bench-smoke: ## Run one deterministic offline benchmark pass. Set BENCH_EVIDENCE_DIR outside the repository.
+	@test -n "$(BENCH_EVIDENCE_DIR)" || { echo "Set BENCH_EVIDENCE_DIR to a new directory outside the repository" >&2; exit 1; }
+	python3 scripts/test_benchmark_baseline.py
+	python3 scripts/benchmark_baseline.py --mode smoke --evidence-dir "$(BENCH_EVIDENCE_DIR)"
+
+bench-full: ## Record a bounded full offline benchmark baseline. Set BENCH_EVIDENCE_DIR outside the repository.
+	@test -n "$(BENCH_EVIDENCE_DIR)" || { echo "Set BENCH_EVIDENCE_DIR to a new directory outside the repository" >&2; exit 1; }
+	python3 scripts/test_benchmark_baseline.py
+	python3 scripts/benchmark_baseline.py --mode full --evidence-dir "$(BENCH_EVIDENCE_DIR)"
 
 cover: ## Run Go tests and create a coverage report for HTML display.
 	@mkdir -p $(DIST_DIR)

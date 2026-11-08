@@ -40,6 +40,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add manifest-driven offline MCP contract fixtures through real domain services.
   Check published arguments, defaults, boundaries, capability profiles, counted
   backend effects, declared structured outputs, and fixture-coverage controls.
+- Add a deterministic offline performance baseline for Calendar recurrence,
+  imported UID lookup, fan-out, free slots, Contacts parse and search, Mail
+  sparse UID, near-limit body, and synthetic-wire metadata handling, and MCP
+  schema, result, refusal, cancellation, and latency paths. Record raw
+  measurements outside the source tree with isolated `make bench-smoke` and
+  `make bench-full` commands. Reject malformed, empty, or incomplete recorder
+  results.
 
 ## [0.5.1] - 2026-11-07
 
