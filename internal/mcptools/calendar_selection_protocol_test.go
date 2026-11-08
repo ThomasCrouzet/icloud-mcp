@@ -35,11 +35,15 @@ type calendarSelectionProtocol struct {
 
 func newCalendarSelectionProtocol(t *testing.T, service *freeSlotsTestService, scopes string) *calendarSelectionProtocol {
 	t.Helper()
+	// Selection tests assert routing and scope, not rate limiting. Use the raw
+	// fixture so an 11-calendar discovery case does not wait for the production
+	// read limiter's burst to refill. The guarded variant stays available for
+	// the health-status assertion below.
 	f := &calendarSelectionProtocol{service: service, guarded: icloud.NewGuardedService(service, 0, time.Millisecond)}
 	redactor := security.NewRedactor("synthetic-selection-secret")
 	s := server.NewMCPServer("calendar-selection", "test", server.WithToolCapabilities(false),
 		server.WithToolHandlerMiddleware(RecoverRedactMiddleware(redactor)))
-	Register(s, Deps{Service: f.guarded, Redactor: redactor, ResourceScopes: mustScopes(t, scopes),
+	Register(s, Deps{Service: service, Redactor: redactor, ResourceScopes: mustScopes(t, scopes),
 		DefaultLocation: time.UTC, HealthEnabled: true, Audit: security.NewAuditLogger(&f.audit)}, true)
 	var err error
 	f.client, err = client.NewInProcessClient(s)

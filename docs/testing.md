@@ -149,6 +149,30 @@ lifecycle evidence; no coverage threshold is reduced.
 
 ## Offline performance baseline
 
+### Test timing
+
+Record per-test durations on the pinned toolchain:
+
+```bash
+go test ./internal/mcptools -count=1 -json > /tmp/mcptools.json
+go test ./internal/mcptools -race -count=1 -json > /tmp/mcptools-race.json
+```
+
+On 2026-11-08 with Go 1.26.10 on linux/amd64, the non-race package took
+20.4-24.6 seconds over three runs before the change and 16.6-17.2 seconds after
+it. The removed delay was `TestProtocolCalendarSelectionDiscoveryBounds`: its
+11-calendar discovery case exceeded the production read burst of 10 and waited
+about one second for each tool. That test asserts selection routing, not rate
+limiting, so it now calls the raw fixture. `internal/icloud/middleware_test.go`
+keeps the burst and refill assertions.
+
+The contract suites (`TestContractPublishedArguments`,
+`TestContractExactPublishedBoundaries`, dispatch profiles, and value-sensitive
+defaults) remain the largest cost. They start fresh MCP runtimes to prove schema
+refusal and optional-field behavior without state leaking between cases. The
+race-only run remains about 160 seconds. Splitting or caching those runtimes
+would weaken the isolation the tests provide, so they stay in the same package.
+
 The benchmark suite records deterministic, offline protocol measurements. It
 uses synthetic data and local fixtures only. It does not use Apple credentials,
 live endpoints, or a service dependency.
