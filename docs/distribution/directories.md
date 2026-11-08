@@ -4,6 +4,7 @@ No submission was made for this list. Read the current rules again before each
 submission. Prices and forms change.
 
 Checked on 2026-10-31. The registry row was updated on 2026-11-04.
+The Smithery eligibility row was rechecked on 2026-11-08.
 
 | Directory | Submission path | Required fields | Current status |
 |-----------|-----------------|-----------------|----------------|
@@ -16,13 +17,14 @@ Checked on 2026-10-31. The registry row was updated on 2026-11-04.
 | MCP Market | Web form at `/submit` | GitHub repository URL, optional remote flag | Not listed. The direct server URL returned HTTP 404. |
 | Awesome MCP Servers | Pull request to `punkpeye/awesome-mcp-servers` | Name linked to the repository, brief description, category, alphabetical order | Not listed. A README search on 2026-10-31 found no `ThomasCrouzet/icloud-mcp` entry. |
 | Docker MCP Registry | Pull request to `docker/mcp-registry` | `server.yaml`, category, Dockerfile or public remote endpoint, environment variables and secrets, icon | Not eligible. The project has no Dockerfile or public remote endpoint. Docker is only a build tool for one release target. |
-| Smithery | `smithery.ai/new` or the Smithery CLI | Public HTTPS MCP URL, or an MCPB bundle for a local stdio server | Not eligible. The project ships a local stdio binary and has no MCPB bundle. The direct server URL returned HTTP 404. |
+| Smithery | `smithery.ai/new` or the Smithery CLI | Public HTTPS MCP URL, or an MCPB bundle for a local stdio server | Not listed. Rechecked 2026-11-08: bundle available in the next release, not yet submitted. The direct server URL returned HTTP 404. |
 
 ## Notes
 
 - Do not submit to PulseMCP while submissions are paused.
-- Do not submit to Docker or Smithery until the project has a container image,
-  a public remote endpoint, or an MCPB bundle.
+- Do not submit to Docker until the project has a container image or a public
+  remote endpoint. Do not submit to Smithery until a release contains a verified
+  MCPB bundle.
 - mcp.so and mcpservers.org offer paid placement. MCP Market offers a paid fast
   queue. Use a free path unless the maintainer approves a payment.
 - Glama indexes the repository without a submission. Use the claim flow to

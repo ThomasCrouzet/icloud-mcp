@@ -25,7 +25,7 @@ Read on 2026-11-04 from
 
 At this snapshot, the repository `server.json` declared version `0.4.3`.
 The tag, `server.json`, `CHANGELOG.md`, and the registry agreed, and
-`make check-registry` passed.
+`make check-registry` passed. That record had no `packages` or `remotes`.
 
 ## How 0.4.3 was published
 
@@ -56,33 +56,154 @@ The likely path is a manual `mcp-publisher publish` from a maintainer
 workstation after `mcp-publisher login github`. The repository has no log that
 proves it.
 
-## Publish commands
+## MCPB package publication
 
-Install the official publisher from a pinned release. This example uses
-`v1.8.7` on linux/amd64:
+Checked on 2026-11-08.
+
+The official Registry schema dated 2025-12-11 accepts a `packages` array. For
+`registryType` `mcpb`, it requires `identifier`, `transport`, and
+`fileSha256`. The identifier is an HTTPS URL that ends in `.mcpb`. The transport
+type is `stdio`. The package version equals the server version. This project has
+no remote endpoint and declares no `remotes`.
+
+The official publisher used here is `mcp-publisher` 1.8.8, built from the
+`github.com/modelcontextprotocol/registry` module through the Go module proxy
+and its checksum database. The verified commands are `init`, `login`, `logout`,
+`publish`, `status`, and
+`validate`. `login github-oidc` uses GitHub Actions OIDC. The workflow keeps
+`permissions: contents: read` and `id-token: write`, and uses no long-lived
+token.
+
+### Order of operations
+
+Do not publish before every earlier gate passes. The order is fixed:
+
+1. Build the release archives locally and compute the deterministic bundle
+   hashes with the pinned Go version.
+2. Put the bundle URLs and SHA-256 values in `server.json`.
+3. Validate release metadata and package hashes.
+4. Commit and tag. CI builds the archives, rebuilds and verifies each bundle,
+   runs the native bundle smoke matrix, signs everything, and creates the
+   signed GitHub Release.
+5. CI dispatches the Registry workflow after the release exists. A release
+   created with `GITHUB_TOKEN` does not emit a second workflow run, so the
+   dispatch is explicit.
+6. The Registry workflow verifies hashes and signatures, publishes with GitHub
+   OIDC, and verifies the published packages and version.
+
+### 1. Build and verify bundles
+
+Use the pinned Go version from `go.mod` and the release flags. Build the
+archives first, then build bundles from the archives:
 
 ```bash
-curl -fsSL -o /tmp/mcp-publisher.tar.gz \
-  https://github.com/modelcontextprotocol/registry/releases/download/v1.8.7/mcp-publisher_linux_amd64.tar.gz
-curl -fsSL -o /tmp/publisher_checksums.txt \
-  https://github.com/modelcontextprotocol/registry/releases/download/v1.8.7/registry_1.8.7_checksums.txt
-grep 'mcp-publisher_linux_amd64.tar.gz$' /tmp/publisher_checksums.txt \
-  | sha256sum -c -
-tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp mcp-publisher
-/tmp/mcp-publisher validate
+VERSION=v0.5.1
+make release-all VERSION="$VERSION"
+for target in linux/amd64 linux/arm64 darwin/arm64; do
+  python3 scripts/mcpb.py build \
+    --source "dist/icloud-mcp-$VERSION-${target%/*}-${target#*/}.tar.gz" \
+    --target "$target" --version "$VERSION"
+done
+python3 scripts/mcpb.py verify \
+  "dist/icloud-mcp-$VERSION-linux-amd64.mcpb"
 ```
 
-Authenticate and publish from the repository root:
+Run `verify` only on a host of the same platform. Use
+`scripts/check_release.py packages` for the other platforms.
+
+### 2. Add package records
+
+Add one `packages` entry for each claimed platform. Use the immutable release
+asset URL and the bundle hash:
 
 ```bash
-/tmp/mcp-publisher login github
-/tmp/mcp-publisher publish
+sha256sum dist/*.mcpb
 ```
+
+```json
+"packages": [
+  {
+    "registryType": "mcpb",
+    "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.1/icloud-mcp-v0.5.1-linux-amd64.mcpb",
+    "version": "0.5.1",
+    "fileSha256": "<64 lowercase hex characters>",
+    "transport": {
+      "type": "stdio"
+    }
+  }
+]
+```
+
+Do not include a package for a platform that has no bundle. Do not include a
+`remotes` array.
+
+### 3. Validate local files
+
+```bash
+make check-release-metadata
+python3 scripts/check_release.py packages --dir dist
+python3 -m unittest scripts/test_mcpb.py scripts/test_check_release.py -v
+```
+
+`check-release-metadata` rejects a package version mismatch, a non-HTTPS URL, a
+URL without `.mcpb`, a bad hash, a non-stdio transport, a duplicate identifier,
+and a `remotes` array. `packages` rejects a missing bundle, a hash mismatch, a
+wrong bundle version, and a wrong bundle platform.
+
+### 4. Create the release
+
+CI creates the release after the tag passes CI, gitleaks, release metadata, and
+the native smoke jobs. The release job then:
+
+1. Rebuilds every archive and bundle from the tag.
+2. Verifies each bundle and checks it against `server.json`.
+3. Appends the MCPB hashes to the checksums file.
+4. Signs the archives, bundles, and checksums with cosign keyless.
+5. Creates the GitHub Release with all signed assets.
+6. Dispatches `.github/workflows/publish-registry.yml` for that tag.
+
+The release job fails before signing when a claimed platform is missing, a
+bundle hash differs from `server.json`, or a bundle verification fails.
+
+### 5. Publish with least privilege
+
+The workflow `.github/workflows/publish-registry.yml` runs on an explicit
+workflow dispatch (and on a published release when a maintainer uses a token
+that emits events). It downloads the assets, verifies hashes and signatures,
+downloads the pinned publisher, validates `server.json`, logs in with GitHub
+OIDC, publishes, and verifies the Registry.
+
+The Registry job needs only:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+```
+
+The release job needs `actions: write` only to dispatch that workflow. The
+Registry workflow does not run on pull requests or `main` pushes. It fails
+closed when an asset is missing, a hash differs from `server.json`, a signature
+fails, or the published packages do not match.
+
+For a manual publisher run from a workstation, use the device flow:
+
+```bash
+GOBIN=/tmp/mcpbin go install \
+  github.com/modelcontextprotocol/registry/cmd/publisher@v1.8.8
+/tmp/mcpbin/publisher validate server.json
+/tmp/mcpbin/publisher login github
+/tmp/mcpbin/publisher publish server.json
+```
+
+The Go module proxy and checksum database pin the publisher source. The
+workflow uses the same command and never downloads an unverified binary from a
+release asset.
 
 `login github` prints a device code. Complete the authorization in a browser.
 The token stays in the publisher configuration, outside the repository.
 
-Verify the result:
+### 6. Verify the result
 
 ```bash
 curl -fsSL \
@@ -90,20 +211,40 @@ curl -fsSL \
 make check-registry
 ```
 
-Do not publish unless the `vX.Y.Z` archive exists and its cosign signature
-verifies. Do not print or commit the publisher token.
+`make check-registry` compares the latest published version and, when
+`server.json` has packages, the exact identifier and `fileSha256` set. A missing
+package, an extra package, or a hash mismatch fails. Report success only after
+this command passes.
+
+### Rollback
+
+Registry records are append-only in normal use. Correct a bad publication with
+the publisher status command, then verify again:
+
+```bash
+/tmp/mcpbin/publisher status --status deprecated \
+  --message "Superseded by v0.5.2" \
+  io.github.ThomasCrouzet/icloud-mcp 0.5.1
+```
+
+Use `--status deleted` only for a security or integrity failure. Restore with
+`--status active` after the replacement version is verified. Do not delete the
+GitHub release if the package URL is already published; delete it only before
+publication. Revert a bad `server.json` change with a new commit and a new
+version. Do not reuse a published version.
 
 ## Fields to review on each release
 
 | Field | Action |
 |-------|--------|
 | `name` | Never change. It is the registry identity. |
-| `version` | Set to the new release without the `v` prefix. It must match the tag, `CHANGELOG.md`, and the archive. |
+| `version` | Set to the new release without the `v` prefix. It must match the tag, `CHANGELOG.md`, the archive, and each bundle. |
 | `title` | Change only when the product name changes. |
 | `description` | Keep at 100 characters or fewer. Change only when the product scope changes. |
 | `repository.url` | Keep the canonical GitHub URL. |
 | `websiteUrl` | Point to the current quick start or product page. |
-| `packages` / `remotes` | Not present. Add only if the distribution model changes. |
+| `packages` | One `mcpb` entry for each claimed platform. Keep the URL and hash exact. |
+| `remotes` | Keep absent. This server is stdio only. |
 
 Run `mcp-publisher validate` before publish. Run `make check-registry` after
 publish. A mismatch is an error.

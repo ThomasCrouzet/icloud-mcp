@@ -47,6 +47,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   capability `UNVERIFIED` until a recorded run, plus a privacy-safe live
   evidence harness that checks gates without network access and writes
   sanitized JSON and Markdown artifacts to a directory outside the repository.
+- Add deterministic MCPB v0.4 bundles for linux/amd64, linux/arm64, and
+  darwin/arm64 with a Calendar read-only install default. The tag workflow
+  builds, natively smokes, signs, and publishes the bundles, records their
+  hashes in `server.json`, and dispatches a least-privilege Registry
+  publication workflow that fails closed on a missing or mismatched asset.
 - Record the recurrence and invitation interoperability decision in
   `docs/decisions/0001-recurrence-and-invitations.md`. Characterize RDATE,
   `THISANDFUTURE`, DST, all-day, conflicting overrides, and partial-series

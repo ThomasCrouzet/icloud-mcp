@@ -31,22 +31,33 @@ published-state verification are separate checks.
 
 1. Set `version` in `server.json` and add a dated, non-empty `CHANGELOG.md`
    section for that version.
-2. Run `make check-release-metadata`. It validates local files and uses no
+2. Build the release archives and MCPB bundles with the pinned Go version,
+   then add one `packages` entry per bundle with its immutable URL and
+   SHA-256. See [the Registry procedure](docs/distribution/registry.md).
+3. Run `make check-release-metadata`. It validates local files and uses no
    network. It passes before the tag exists or the registry contains the next
    version.
-3. Merge the change to `main`. CI and gitleaks must pass. The `release metadata`
+4. Run `python3 scripts/check_release.py packages --dir dist` against the built
+   bundles. A missing bundle, a wrong hash, or a wrong platform fails.
+5. Merge the change to `main`. CI and gitleaks must pass. The `release metadata`
    job runs on pull requests and `main`; it does not depend on the registry.
-4. Create and push the `vX.Y.Z` tag after the maintainer approves the version.
-   The tag job reruns CI, the secret scan, and release metadata. It then runs
-   `make release-all`, signs the archives, and publishes the GitHub Release.
-   It does not publish registry metadata.
-5. Verify the archives and signatures before publication.
-6. Authenticate the official publisher once: `mcp-publisher login github`.
-7. Publish the metadata: `mcp-publisher publish`.
+6. Create and push the `vX.Y.Z` tag after the maintainer approves the version.
+   The tag job reruns CI, the secret scan, and release metadata. It then builds
+   the archives and bundles, runs the native bundle smoke matrix, checks the
+   package hashes, signs every asset, creates the GitHub Release, and
+   dispatches Registry publication.
+7. Watch the Registry workflow. It verifies hashes and signatures with GitHub
+   OIDC, publishes, and verifies the published packages.
 8. Run `make check-registry`. It verifies the published registry state and must
    exit with status zero. The manual `published registry verification` workflow
    runs the same command.
-9. Read the registry API. Confirm the version and the `updatedAt` value.
+9. Read the registry API. Confirm the version, packages, and `updatedAt` value.
+
+If the Registry workflow fails after the release exists, keep the tag and
+release. Fix the failed condition and rerun the workflow for that tag. Do not
+move the tag and do not publish the same version again. Manual publication uses
+the pinned publisher commands in the Registry procedure; it is a fallback, not
+the normal path.
 
 If publication fails or is incomplete, keep the tag and archives. Do not move
 the tag and do not publish again with a different version. Fix the registry
