@@ -371,22 +371,24 @@ func TestProtocolAvailabilityBudgetLargeBuffers(t *testing.T) {
 	}
 }
 
-// MCP output cannot reveal accumulator capacity or references returned on failure.
+// The collector counts all returned records but retains only merged busy
+// intervals. Overflow and empty results retain nothing.
 func TestAvailabilityCollectorStorage(t *testing.T) {
+	opts := availabilityOptions{IncludeAllDay: true, Location: time.UTC}
 	for _, extra := range []int{0, 1} {
 		svc, paths := availabilityBudgetFixture([]int{2500, 2500, 2500, 2500, extra})
-		events, err := collectAvailabilityEvents(t.Context(), paths, svc.read)
+		intervals, err := collectAvailabilityIntervals(t.Context(), paths, svc.read, opts)
 		if extra == 0 {
-			if err != nil || len(events) != 10000 || cap(events) != 10000 {
-				t.Fatalf("threshold storage: len=%d cap=%d err=%v", len(events), cap(events), err)
+			if err != nil || len(intervals) != 1 {
+				t.Fatalf("threshold intervals: len=%d err=%v", len(intervals), err)
 			}
-		} else if events != nil || icloud.AsICloudError(err) == nil || icloud.AsICloudError(err).Code != icloud.CodePayloadTooLarge {
-			t.Fatalf("overflow retained data: len=%d err=%v", len(events), err)
+		} else if intervals != nil || icloud.AsICloudError(err) == nil || icloud.AsICloudError(err).Code != icloud.CodePayloadTooLarge {
+			t.Fatalf("overflow retained data: len=%d err=%v", len(intervals), err)
 		}
 	}
 	svc, paths := availabilityBudgetFixture(make([]int, 1024))
-	events, err := collectAvailabilityEvents(t.Context(), paths, svc.read)
-	if err != nil || events != nil {
-		t.Fatalf("empty results retained storage: len=%d cap=%d err=%v", len(events), cap(events), err)
+	intervals, err := collectAvailabilityIntervals(t.Context(), paths, svc.read, opts)
+	if err != nil || intervals != nil {
+		t.Fatalf("empty results retained storage: len=%d err=%v", len(intervals), err)
 	}
 }

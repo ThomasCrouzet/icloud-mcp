@@ -217,6 +217,20 @@ python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.j
 | Mail sparse UID | `BenchmarkMailSearchSparseUID` | `mail-pattern-v1`, 30 candidates near UID 4,000,000,000 | 20 results, truncation, one bounded 5,000-UID window, and 3 service-session calls |
 | Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
 | Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
+
+`BenchmarkSearchEventsCursorPagination` drives ten 400-row pages over a
+4,000-event synthetic calendar. It reports `rpc/page`: the process-local scan
+snapshot makes the first page scan once and later pages add no REPORT, so the
+measured value is 0.1. The previous implementation queried every calendar on
+every page, which is 1.0.
+
+The availability collector converts each completed read batch to merged busy
+intervals and then drops the event payloads. It still counts every returned
+record toward the 10,000-event budget before filtering. On the fixed
+`BenchmarkAvailabilityBudget/HighCardinality` fixture, `-benchmem -benchtime=1x`
+reported a median of about 4.6 MB/op with full events retained and about 1.5
+MB/op with intervals only. The accepted result, RPC count, and four-read bound
+are unchanged.
 | Mail wire body | `BenchmarkIMAPWireBodyNearLimit` | `imap-wire-metadata-v1`, one synthetic FETCH body over `net.Pipe` | 524,287 body bytes parsed through go-imap with the real adapter, and one wire FETCH per operation |
 | MCP refusals | `BenchmarkSearchEventsRefusals` | 10,001 materialized events, invalid limit, synthetic 429, and 2 ms cancellation | Safe error payloads, zero RPCs for input validation, and active cancellation |
 | MCP fan-out latency | `BenchmarkSearchEventsFanoutLatency` | 4 calendars with 1 ms synthetic peer latency | 4 RPCs, bounded 4-worker concurrency, and parallel elapsed time |

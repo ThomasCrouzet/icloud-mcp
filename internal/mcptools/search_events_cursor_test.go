@@ -282,8 +282,10 @@ func TestSearchEventsCursorDenseProgression(t *testing.T) {
 			if pages != wantPages {
 				t.Fatalf("pages = %d, want %d", pages, wantPages)
 			}
-			if dav.reportCount() != pages {
-				t.Fatalf("REPORT count = %d, want %d", dav.reportCount(), pages)
+			// The first page performs the scan. Later pages reuse the bounded
+			// process-local snapshot, so no backend REPORT repeats.
+			if dav.reportCount() != 1 {
+				t.Fatalf("REPORT count = %d, want 1", dav.reportCount())
 			}
 		})
 	}
@@ -795,17 +797,38 @@ func TestSearchEventsCursorCrossRegistrationAndScope(t *testing.T) {
 
 func TestSearchEventsCursorStaleAnchor(t *testing.T) {
 	svc := &icloud.MockService{Calendars: []icloud.Calendar{{Path: "/cal/a/"}}, Events: denseMockEvents("/cal/a/", 5)}
-	c := newCursorProtocolMCP(t, svc, "calendar.read=/cal/a/")
-	first := cursorCallTool(t, c, cursorBaseArgs("/cal/a/", 2, 0, "start"))
-	if first.token == "" {
+	deps := testDeps(svc)
+	now := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	codec := newSearchCursorCodec()
+	codec.now = func() time.Time { return now }
+	codec.ttl = time.Second
+	handler := searchEventsHandlerWithCodec(deps, codec)
+
+	first, err := handler(context.Background(), newReq(cursorBaseArgs("/cal/a/", 2, 0, "start")))
+	if err != nil || first.IsError {
+		t.Fatalf("first page: err=%v result=%s", err, resultText(t, first))
+	}
+	var firstPayload searchEventsResponse
+	decodeResult(t, first, &firstPayload)
+	if firstPayload.NextCursor == "" {
 		t.Fatal("no token")
 	}
 	svc.Events = append(append([]icloud.Event(nil), svc.Events[:1]...), svc.Events[2:]...)
-	call := mcp.CallToolRequest{}
-	call.Params.Name = "search_events"
-	call.Params.Arguments = cursorBaseArgs("/cal/a/", 2, 0, first.token)
 	before := svc.SearchCallCount
-	res, err := c.CallTool(context.Background(), call)
+
+	// Within the snapshot lifetime the anchor remains, so the page is
+	// consistent and no backend call repeats.
+	second, err := handler(context.Background(), newReq(cursorBaseArgs("/cal/a/", 2, 0, firstPayload.NextCursor)))
+	if err != nil || second.IsError {
+		t.Fatalf("cached page: err=%v result=%s", err, resultText(t, second))
+	}
+	if svc.SearchCallCount != before {
+		t.Fatalf("cached page searched %d times", svc.SearchCallCount-before)
+	}
+
+	// After expiry the scan refreshes and the missing anchor is stale.
+	now = now.Add(2 * time.Second)
+	res, err := handler(context.Background(), newReq(cursorBaseArgs("/cal/a/", 2, 0, firstPayload.NextCursor)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -850,8 +873,11 @@ func TestSearchEventsCursorChangingSource(t *testing.T) {
 	moved.EndTime = moved.StartTime.Add(time.Minute)
 	svc.Events[0] = moved
 	page = cursorCallTool(t, c, cursorBaseArgs("/cal/a/", 10, 0, first.token))
-	if !cursorUIDSet(page.payload.Events)["e-0"] {
-		t.Fatal("row moved from before to after the anchor did not appear")
+	if cursorUIDSet(page.payload.Events)["e-0"] {
+		t.Fatal("a source edit appeared inside a live cursor snapshot")
+	}
+	if page.payload.Count != 3 {
+		t.Fatalf("snapshot page count = %d, want 3", page.payload.Count)
 	}
 }
 
@@ -906,4 +932,33 @@ func TestSearchEventsCursorSchema(t *testing.T) {
 		return
 	}
 	t.Fatal("search_events not registered")
+}
+
+// TestSearchScanSnapshotBoundAndExpiry proves the cache is bounded and does
+// not outlive the cursor lifetime.
+func TestSearchScanSnapshotBoundAndExpiry(t *testing.T) {
+	now := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	codec := newSearchCursorCodec()
+	codec.now = func() time.Time { return now }
+	for i := range maxSearchScanSnapshots + 2 {
+		var key searchCursorDigest
+		key[0] = byte(i + 1)
+		codec.storeScan(key, searchScanSnapshot{rows: []searchCursorRow{{}}})
+		now = now.Add(time.Second)
+	}
+	codec.mu.Lock()
+	got := len(codec.scans)
+	codec.mu.Unlock()
+	if got != maxSearchScanSnapshots {
+		t.Fatalf("snapshots = %d, want %d", got, maxSearchScanSnapshots)
+	}
+	var key searchCursorDigest
+	key[0] = 1
+	if _, ok := codec.loadScan(key); ok {
+		t.Fatal("oldest snapshot was not evicted")
+	}
+	now = now.Add(searchCursorTTL)
+	if _, ok := codec.loadScan(key); ok {
+		t.Fatal("expired snapshot was returned")
+	}
 }

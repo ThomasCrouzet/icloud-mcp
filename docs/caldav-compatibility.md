@@ -247,8 +247,9 @@ The token binds the normalized range, explicit selected calendars, result
 filters, default presence, compact and recurrence modes, and the current
 `calendar.read` scope. `limit` is not bound. The explicit selection and scope,
 token structure, signature, expiry, and query binding are checked before any
-Calendar backend access. A missing resume anchor is stale source: it needs one
-normal bounded fetch to detect, with no rescan or amplification.
+Calendar backend access. A missing resume anchor is checked against the
+process-local scan snapshot. If the snapshot is absent or expired, one normal
+bounded fetch checks the anchor; a stale token never causes an unbounded scan.
 
 Cursor mode keeps the primary order start, UID, calendar, then title. It adds
 recurrence ID, end time, override flag, internal path, ETag, and a full-row
@@ -256,12 +257,20 @@ digest as strict tie-breaks. Exact duplicate backend rows in one calendar are
 collapsed only in this opt-in mode. Distinct calendars and recurring overrides
 stay distinct. Legacy duplicate handling does not change.
 
-Every page still queries each selected calendar with at most four concurrent
-reads. It keeps the 2,500 expanded-event per-calendar limit, the 10,000 filtered
-materialized limit, the 366-day range, ten explicit calendars, the 32 MiB REPORT
-limit, and all recurrence work caps. More than 2,500 expanded events in one
-calendar fails closed before paging. Pagination does not permit loading a whole
-history.
+The first cursor page scans every selected calendar with at most four
+concurrent reads. It keeps the 2,500 expanded-event per-calendar limit, the
+10,000 filtered materialized limit, the 366-day range, ten explicit calendars,
+the 32 MiB REPORT limit, and all recurrence work caps. More than 2,500 expanded
+events in one calendar fails closed before paging. Pagination does not permit
+loading a whole history.
+
+The completed scan is kept in process memory for at most 300 seconds, the
+cursor lifetime, in at most four snapshots. Later pages of the same bound query
+reuse it without another backend REPORT. A partial failure is not cached. The
+snapshot is never written to disk or logs and disappears on process exit. This
+turns a multi-page continuation into a bounded snapshot: a source edit after
+the first page is not visible until the snapshot expires, and `total` is the
+snapshot count.
 
 `nextCursor` is emitted only when an explicit selection has a complete page with
 at least one later row. It is omitted on `partialFailure`, recurrence truncation,
@@ -272,11 +281,10 @@ budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
 
-`total` is the current bounded fetch count, not a snapshot. If the last row
-identity disappears or changes, the cursor is stale and the caller restarts.
-Rows inserted before the anchor can be omitted. A row moved from before to after
-the anchor can appear again. A row moved after to before can be omitted. No
-snapshot isolation or exhaustive provider coverage is claimed.
+`total` is the bounded snapshot count while the snapshot is live. If the last
+row identity disappears or changes after a refresh, the cursor is stale and the
+caller restarts. Within a live snapshot, inserted or moved rows do not appear.
+No provider-level snapshot isolation or exhaustive coverage is claimed.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.
 - The search reserves selector reachability proof work before iteration.
