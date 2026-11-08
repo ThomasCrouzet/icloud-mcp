@@ -527,6 +527,41 @@ match an exact recipient policy. This policy cannot contain a wildcard.
 These live tests are optional, use credentials, and never run in CI. Passing unit
 tests do not prove that a live iCloud run occurred.
 
+### Compatibility evidence matrix
+
+The [compatibility matrix](compatibility-matrix.md) separates synthetic, static,
+and live-account evidence for Calendar, Contacts, and Mail. No live run is
+recorded for the current revision. Every live row is `UNVERIFIED`.
+
+Validate local gates and credential presence without network access:
+
+```bash
+python3 scripts/live_evidence.py --check
+```
+
+Record a read-only run outside the repository:
+
+```bash
+python3 scripts/live_evidence.py --confirm-live \
+  --output /absolute/private/evidence/icloud-live-read-1
+```
+
+A destructive run also requires `ICLOUD_MCP_INTEGRATION_WRITES=true`, an explicit
+disposable Calendar selector, and `--destructive`. The harness refuses output
+inside the repository and refuses a literal `*` recipient policy. It sanitizes
+addresses, passwords, Authorization or SASL values, tokens, and message
+identifiers before it writes `live-evidence.json`, `live-evidence.md`, and
+`live-test.log`.
+
+Run the harness regression tests with:
+
+```bash
+python3 -m unittest scripts/test_live_evidence.py -v
+```
+
+Complete [the live run template](evidence/live-run-template.md) after a run.
+Keep private values and raw transcripts outside the repository.
+
 ### Calendar integration command
 
 Use a dedicated account or disposable Calendar where possible:
