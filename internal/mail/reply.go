@@ -79,14 +79,14 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {
 		address := strings.TrimSpace(candidate.Address)
-		if address == "" || strings.EqualFold(address, s.config.Address) {
+		if address == "" || canonicalAddrSpec(address) == canonicalAddrSpec(s.config.Address) {
 			continue
 		}
 		normalized, err := validateAddrSpec(address)
 		if err != nil {
 			return SendResult{}, validationError("source reply recipient is not a plain addr-spec")
 		}
-		key := strings.ToLower(normalized)
+		key := canonicalAddrSpec(normalized)
 		if seen[key] {
 			continue
 		}

@@ -206,7 +206,7 @@ func TestContactsRegisterCountsSchemasAndAnnotations(t *testing.T) {
 		"search_contacts":    true,
 		"get_contact":        true,
 		"create_contact":     false,
-		"update_contact":     true,
+		"update_contact":     false,
 		"delete_contact":     true,
 	}
 	for name, tool := range tools {
@@ -223,7 +223,7 @@ func TestContactsRegisterCountsSchemasAndAnnotations(t *testing.T) {
 		if tool.Annotations.ReadOnlyHint == nil || *tool.Annotations.ReadOnlyHint != readOnly {
 			t.Errorf("%s readOnlyHint is incorrect", name)
 		}
-		wantDestructive := name == "delete_contact"
+		wantDestructive := name == "delete_contact" || name == "update_contact"
 		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != wantDestructive {
 			t.Errorf("%s destructiveHint is incorrect", name)
 		}

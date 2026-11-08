@@ -226,7 +226,7 @@ recipients. It also rejects groups, caller-selected From, header newlines, and
 NUL.
 
 The local policy validates all To, Cc, and Bcc addresses before connection. It
-permits only exact configured addresses with ASCII case-insensitive matching.
+permits only exact configured addresses, preserving local-part case and folding only the ASCII domain.
 The literal complete policy `*` permits all addresses. Recipients must be unique,
 with a limit of 50.
 

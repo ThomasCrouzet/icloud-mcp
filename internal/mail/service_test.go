@@ -268,15 +268,15 @@ func TestParseRecipientPolicy(t *testing.T) {
 			t.Errorf("ParseRecipientPolicy(%q): %v", value, err)
 		}
 	}
-	invalid := []string{"", "*,a@example.com", "a@example.com,A@example.com", "Name <a@example.com>", "@example.com", "a@example.com,", "a@example.com\nb@example.com"}
+	invalid := []string{"", "*,a@example.com", "a@example.com,a@EXAMPLE.COM", "Name <a@example.com>", "@example.com", "a@example.com,", "a@example.com\nb@example.com"}
 	for _, value := range invalid {
 		if _, err := ParseRecipientPolicy(value); err == nil {
 			t.Errorf("ParseRecipientPolicy(%q) unexpectedly succeeded", value)
 		}
 	}
 	policy, _ := ParseRecipientPolicy("Allowed@Example.com")
-	if !policy.allows("allowed@example.COM") || policy.allows("other@example.com") {
-		t.Fatal("exact ASCII-folded recipient matching failed")
+	if !policy.allows("Allowed@example.COM") || policy.allows("allowed@example.com") || policy.allows("other@example.com") {
+		t.Fatal("exact local-part case with ASCII domain folding failed")
 	}
 }
 
@@ -1283,7 +1283,7 @@ func TestSendLimits(t *testing.T) {
 		"subject":   {To: []string{"to@example.com"}, Subject: strings.Repeat("s", MaxSubjectBytes+1)},
 		"body":      {To: []string{"to@example.com"}, Body: strings.Repeat("b", MaxSendBodyBytes+1)},
 		"header":    {To: []string{"to@example.com"}, Subject: "bad\rsubject"},
-		"duplicate": {To: []string{"to@example.com"}, Cc: []string{"TO@example.com"}},
+		"duplicate": {To: []string{"to@example.com"}, Cc: []string{"to@EXAMPLE.COM"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := service.SendMessage(context.Background(), input); errorCode(t, err) != CodeValidation {

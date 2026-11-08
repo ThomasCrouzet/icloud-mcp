@@ -50,7 +50,7 @@ func RecipientPolicyFromExact(recipients []string) (RecipientPolicy, error) {
 		if err != nil {
 			return RecipientPolicy{}, fmt.Errorf("recipient policy contains an invalid address")
 		}
-		key := asciiLower(addr)
+		key := canonicalAddrSpec(addr)
 		if _, duplicate := policy.allowed[key]; duplicate {
 			return RecipientPolicy{}, fmt.Errorf("recipient policy contains a duplicate address")
 		}
@@ -78,8 +78,19 @@ func (p RecipientPolicy) allows(address string) bool {
 	if p.allowAll {
 		return true
 	}
-	_, ok := p.allowed[asciiLower(address)]
+	_, ok := p.allowed[canonicalAddrSpec(address)]
 	return ok
+}
+
+// canonicalAddrSpec preserves the local-part bytes and folds only the ASCII
+// domain, as RFC 5321 section 2.4 requires. The address must already be a
+// validated plain addr-spec.
+func canonicalAddrSpec(value string) string {
+	at := strings.LastIndexByte(value, '@')
+	if at < 0 {
+		return value
+	}
+	return value[:at] + "@" + asciiLower(value[at+1:])
 }
 
 func asciiLower(value string) string {

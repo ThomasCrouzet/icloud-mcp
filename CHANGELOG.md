@@ -18,6 +18,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   silently incomplete.
 - Resolve case-distinct vCard UIDs by byte-exact match after the
   case-insensitive CardDAV query, and fail closed on duplicate exact UIDs.
+- Match SMTP recipients by exact local-part bytes and fold only the ASCII
+  domain in the allowlist, duplicate detection, reply self-exclusion, and send
+  idempotency fingerprint.
+- Report `update_event` and `update_contact` as destructive, and
+  `update_contact` as non-idempotent, so host confirmation prompts reflect the
+  fields those tools can clear or replace.
+- Document the reviewed annotation contract for every mutation tool.
 
 ## [1.0.0] - 2026-11-08
 

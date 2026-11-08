@@ -336,3 +336,22 @@ identify each tool set.
 - Obey `retry_after_seconds` for `rate_limited` and `unavailable` errors.
 - After an `outcome_unknown` update, read the resource before you select a new key.
 - If the update cache is full, keep the key and wait for capacity.
+
+## Tool annotations
+
+MCP annotations are untrusted hints, not an authorization boundary. The server
+still enforces permissions, ETag preconditions, and allowlists on every call.
+
+- Treat `destructiveHint=true` as a request for explicit confirmation. This
+  includes `update_event`, `update_contact`, every delete, move, trash, and send
+  tool, because a call can clear, replace, remove, or permanently deliver data.
+- `destructiveHint=false` marks additive creates and the reversible flag delta.
+- `idempotentHint=false` means a repeated call can have an additional effect.
+  Calendar and Contact updates change `SEQUENCE`, `DTSTAMP`, ETag, or
+  synchronization state. A repeated conditional write can also fail with
+  `concurrent_modification`.
+- `delete_event` and `delete_contact` are idempotent in outcome: the resource
+  stays absent. A repeated call can still return `not_found` or an ETag
+  precondition error.
+- `send_message` and `reply_message` are never automatically retried, and their
+  `idempotency_key` is process-local and time-bounded.

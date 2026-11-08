@@ -150,7 +150,10 @@ Local capability and health output does not contain Calendar paths.
 
 `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is the literal `*` or a comma-separated set
 of unique, exact, plain addr-specs. Matching removes surrounding configuration
-spaces. It uses ASCII case-insensitive equality for the complete address.
+spaces. It preserves the local-part bytes and folds only the ASCII domain, as
+RFC 5321 section 2.4 requires. Thus `Team@example.com` authorizes
+`Team@EXAMPLE.COM` but not `team@example.com`. Duplicate entries are rejected
+only when they are equal under that rule.
 
 Display names, groups, empty entries, partial wildcards, domain-only rules, and
 suffix rules are invalid. Use an exact address list in production. The literal

@@ -483,7 +483,7 @@ func (s *Client) validateRecipientGroup(name string, values []string, recipients
 		if err != nil {
 			return nil, nil, nil, validationError(name + " contains an invalid plain addr-spec")
 		}
-		key := asciiLower(address)
+		key := canonicalAddrSpec(address)
 		if _, duplicate := seen[key]; duplicate {
 			return nil, nil, nil, validationError("recipient addresses must be unique")
 		}

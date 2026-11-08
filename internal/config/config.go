@@ -280,10 +280,10 @@ func ParseRecipientPolicy(value string) (RecipientPolicy, error) {
 		if strings.Contains(part, "*") {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: wildcard is valid only as the complete value", smtpAllowedRecipientsEnvVar)
 		}
-		address, err := normalizePlainAddress(part)
-		if err != nil {
+		if _, err := normalizePlainAddress(part); err != nil {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: expected exact email addresses or literal *", smtpAllowedRecipientsEnvVar)
 		}
+		address := canonicalAddrSpec(strings.TrimSpace(part))
 		if _, duplicate := exact[address]; duplicate {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: duplicate email address", smtpAllowedRecipientsEnvVar)
 		}
@@ -295,15 +295,25 @@ func ParseRecipientPolicy(value string) (RecipientPolicy, error) {
 // Allows reports whether address is permitted by this exact-address policy.
 // Invalid addresses are always denied.
 func (p RecipientPolicy) Allows(address string) bool {
-	normalized, err := normalizePlainAddress(address)
-	if err != nil {
+	if _, err := normalizePlainAddress(address); err != nil {
 		return false
 	}
 	if p.allowAll {
 		return true
 	}
-	_, ok := p.exact[normalized]
+	_, ok := p.exact[canonicalAddrSpec(strings.TrimSpace(address))]
 	return ok
+}
+
+// canonicalAddrSpec preserves the local-part bytes and folds only the ASCII
+// domain, as RFC 5321 section 2.4 requires. The address must already be a
+// validated plain addr-spec.
+func canonicalAddrSpec(value string) string {
+	at := strings.LastIndexByte(value, '@')
+	if at < 0 {
+		return value
+	}
+	return value[:at] + "@" + asciiLower(value[at+1:])
 }
 
 // AllowAll reports whether the complete configured policy was literal "*".
@@ -614,7 +624,7 @@ func normalizePlainAddress(value string) (string, error) {
 	if err != nil || parsed.Name != "" || parsed.Address != value {
 		return "", fmt.Errorf("invalid address")
 	}
-	return asciiLower(value), nil
+	return value, nil
 }
 
 func isASCII(value string) bool {

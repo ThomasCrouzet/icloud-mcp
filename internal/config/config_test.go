@@ -493,8 +493,8 @@ func TestLoad_MailCredentialsAndPasswordFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() unexpected error: %v", err)
 	}
-	if cfg.MailAddress != "mailbox@example.com" {
-		t.Errorf("MailAddress = %q, want normalized full address", cfg.MailAddress)
+	if cfg.MailAddress != "Mailbox@Example.com" {
+		t.Errorf("MailAddress = %q, want the configured local-part case", cfg.MailAddress)
 	}
 	if cfg.MailPassword != cfg.Password {
 		t.Errorf("MailPassword did not fall back to ICLOUD_PASSWORD")
@@ -783,7 +783,8 @@ func TestParseRecipientPolicy(t *testing.T) {
 		{name: "partial wildcard", value: "*@example.com", wantErr: true},
 		{name: "wildcard mixed", value: "*,one@example.com", wantErr: true},
 		{name: "duplicate exact", value: "one@example.com,one@example.com", wantErr: true},
-		{name: "duplicate case folded", value: "One@Example.com,one@example.com", wantErr: true},
+		{name: "duplicate domain case folded", value: "One@Example.com,One@EXAMPLE.COM", wantErr: true},
+		{name: "distinct local-part case", value: "One@Example.com,one@example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -806,10 +807,10 @@ func TestRecipientPolicy_ExactCaseFoldedMatching(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.Allows("allowed@example.com") || !policy.Allows(" ALLOWED@EXAMPLE.COM ") {
-		t.Error("exact address should match after surrounding trim and ASCII case folding")
+	if !policy.Allows("Allowed@Example.com") || !policy.Allows(" Allowed@EXAMPLE.COM ") {
+		t.Error("exact address should match after surrounding trim and ASCII domain folding")
 	}
-	for _, rejected := range []string{"other@example.com", "allowed@example.com.evil", "Name <allowed@example.com>"} {
+	for _, rejected := range []string{"other@example.com", "allowed@example.com", "allowed@example.com.evil", "Name <allowed@example.com>"} {
 		if policy.Allows(rejected) {
 			t.Errorf("unexpected match for %q", rejected)
 		}

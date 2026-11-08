@@ -63,7 +63,7 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	for _, group := range [][]string{input.To, input.Cc, input.Bcc} {
 		write(string(rune(len(group))))
 		for _, address := range group {
-			write(strings.ToLower(strings.TrimSpace(address)))
+			write(fingerprintAddrSpec(address))
 		}
 	}
 	write(input.Subject)
@@ -80,6 +80,16 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	var result sendFingerprint
 	copy(result[:], hash.Sum(nil))
 	return result
+}
+
+// fingerprintAddrSpec normalizes only the ASCII domain so a local-part case
+// change produces a conflicting fingerprint instead of a cached success.
+func fingerprintAddrSpec(address string) string {
+	address = strings.TrimSpace(address)
+	if _, err := validateAddrSpec(address); err != nil {
+		return address
+	}
+	return canonicalAddrSpec(address)
 }
 
 // claim returns whether the caller owns this key and must dispatch the send.

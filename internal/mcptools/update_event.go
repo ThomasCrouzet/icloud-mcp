@@ -15,7 +15,7 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
 		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key to retrieve prior outcomes."),
 		mcp.WithReadOnlyHintAnnotation(false),
-		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithString("uid", mcp.Required(), mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Event UID; max 255 UTF-8 bytes")),
 		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path; max 1024 UTF-8 bytes")),
