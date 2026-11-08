@@ -34,6 +34,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   300 seconds, holds at most four queries and the existing 10,000-event budget,
   and is never written to disk. A partial failure is not cached. Pagination is
   now snapshot-like for the token lifetime.
+- Build release archives and MCPB bundles once per tag, native-test those exact
+  bytes on all three platforms, and sign and publish the same bytes. A digest
+  mismatch, missing candidate, or substituted asset blocks publication. Only a
+  tag or explicit manual `native` run can create the candidate artifact.
 
 ### Added
 - Verify the modern `2026-07-28` MCP wire protocol on stdio with raw JSON-RPC:
