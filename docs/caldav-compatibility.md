@@ -277,15 +277,19 @@ digest as strict tie-breaks. Exact duplicate backend rows in one calendar are
 collapsed only in this opt-in mode. Distinct calendars and recurring overrides
 stay distinct. Legacy duplicate handling does not change.
 
-The first cursor page scans every selected calendar with at most four
-concurrent reads. It keeps the 2,500 expanded-event per-calendar limit, the
-10,000 filtered materialized limit, the 366-day range, ten explicit calendars,
-the 32 MiB REPORT limit, and all recurrence work caps. More than 2,500 expanded
-events in one calendar fails closed before paging. Pagination does not permit
-loading a whole history.
+The first cursor page scans every selected calendar in waves of at most four
+concurrent reads. It keeps only one wave of backend results alive, applies the
+2,500 expanded-event per-calendar limit and the 10,000 filtered materialized
+limit during the merge, and stops scheduling waves after a definitive overflow.
+It retains the 366-day range, ten explicit calendars, the 32 MiB REPORT limit,
+and all recurrence work caps. More than 2,500 expanded events in one calendar
+fails closed before paging. Pagination does not permit loading a whole history.
 
 The completed scan is kept in process memory for at most 300 seconds, the
-cursor lifetime, in at most four generation-scoped snapshots. Later pages of the
+cursor lifetime, in at most four generation-scoped snapshots and at most 32 MiB
+of retained event text in total. The oldest snapshot is evicted first. A single
+snapshot larger than the byte budget is refused: no continuation token is
+issued and the response states the cache bound. Later pages of the
 same generation reuse it without another backend REPORT. A repeated
 `cursor=start` with the same query creates an independent generation instead of
 overwriting an unexpired one; budget pressure evicts the oldest generation, and

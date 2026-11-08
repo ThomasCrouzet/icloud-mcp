@@ -131,8 +131,15 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		books = append([]bookRecord(nil), c.state.books...)
 	}
 
-	remainingCards := maxCardsScanned
-	remainingBytes := int64(maxReportBytes)
+	remainingCards := opts.RemainingCards
+	if remainingCards <= 0 || remainingCards > maxCardsScanned {
+		remainingCards = maxCardsScanned
+	}
+	remainingBytes := opts.RemainingBytes
+	if remainingBytes <= 0 || remainingBytes > int64(maxReportBytes) {
+		remainingBytes = int64(maxReportBytes)
+	}
+	startCards, startBytes := remainingCards, remainingBytes
 	var matches []ContactSummary
 	scanLimit := false
 	for index, book := range books {
@@ -176,9 +183,14 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		}
 		return matches[i].AddressBook < matches[j].AddressBook
 	})
-	result := SearchResult{ScanLimitReached: scanLimit, Truncated: len(matches) > opts.Limit}
+	result := SearchResult{
+		ScanLimitReached: scanLimit,
+		Truncated:        !opts.PageAll && len(matches) > opts.Limit,
+		ScannedCards:     startCards - remainingCards,
+		UsedBytes:        startBytes - remainingBytes,
+	}
 	count := len(matches)
-	if count > opts.Limit {
+	if !opts.PageAll && count > opts.Limit {
 		count = opts.Limit
 	}
 	for _, summary := range matches[:count] {

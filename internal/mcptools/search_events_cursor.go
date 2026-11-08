@@ -74,10 +74,16 @@ func (c *searchCursorCodec) lifetime() time.Duration {
 // snapshot holds at most the existing 10,000-event materialization budget.
 const maxSearchScanSnapshots = 4
 
+// maxSearchScanBytes bounds all retained cursor snapshots together. A snapshot
+// that alone exceeds the budget is refused, so an outstanding token becomes
+// stale instead of retaining unbounded event text.
+const maxSearchScanBytes = 32 << 20
+
 // searchScanSnapshot is a short-lived, process-local result of one completed
 // cursor scan. It is never written to disk or logs.
 type searchScanSnapshot struct {
 	generation           string
+	bytes                int
 	rows                 []searchCursorRow
 	warnings             []string
 	truncatedByExpansion bool
@@ -105,20 +111,32 @@ func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchS
 			delete(c.scans, key)
 		}
 	}
-	for len(c.scans) >= maxSearchScanSnapshots {
+	snapshotBytes := searchScanSnapshotBytes(snapshot)
+	if snapshotBytes > maxSearchScanBytes {
+		return ""
+	}
+	totalBytes := 0
+	for _, existing := range c.scans {
+		totalBytes += existing.bytes
+	}
+	for len(c.scans) > 0 && (len(c.scans) >= maxSearchScanSnapshots || totalBytes+snapshotBytes > maxSearchScanBytes) {
 		var oldestKey searchScanKey
 		var oldest time.Time
+		var oldestBytes int
 		first := true
 		for key, existing := range c.scans {
 			if first || existing.created.Before(oldest) {
-				oldestKey, oldest, first = key, existing.created, false
+				oldestKey, oldest, oldestBytes, first = key, existing.created, existing.bytes, false
 			}
 		}
 		delete(c.scans, oldestKey)
+		totalBytes -= oldestBytes
 	}
+	snapshot.bytes = snapshotBytes
+	assignedGeneration := generation
 	snapshot.created = c.currentTime()
-	c.scans[searchScanKey{query: query, generation: generation}] = snapshot
-	return generation
+	c.scans[searchScanKey{query: query, generation: assignedGeneration}] = snapshot
+	return assignedGeneration
 }
 
 func (c *searchCursorCodec) loadScan(query searchCursorDigest, generation string) (searchScanSnapshot, bool) {
@@ -137,6 +155,20 @@ func (c *searchCursorCodec) loadScan(query searchCursorDigest, generation string
 		return searchScanSnapshot{}, false
 	}
 	return snapshot, true
+}
+
+func searchScanSnapshotBytes(snapshot searchScanSnapshot) int {
+	total := 256
+	for _, row := range snapshot.rows {
+		event := row.event
+		total += 128 + len(event.UID) + len(event.Path) + len(event.Calendar) +
+			len(event.Title) + len(event.Location) + len(event.Notes) + len(event.Recurrence) +
+			len(event.Timezone) + len(event.Status) + len(event.Transp) + len(event.URL) + len(event.ETag)
+	}
+	for _, warning := range snapshot.warnings {
+		total += len(warning)
+	}
+	return total
 }
 
 func newSearchCursorCodec() *searchCursorCodec {

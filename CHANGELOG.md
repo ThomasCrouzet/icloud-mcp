@@ -62,6 +62,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `accessModes` so a mutation target is not mistaken for readable mail.
 - Make blocked HTML element removal exact-name and near-linear in the input
   size, so a `</scripture>` prefix cannot expose discarded content.
+- Carry one aggregate 2,000-card and 32 MiB scan budget across every authorized
+  address book in a scoped `search_contacts` call.
+- Process multi-calendar searches in waves of four and stop after a definitive
+  overflow, and bound retained cursor snapshots by 32 MiB of row text.
+- Add a signed, filter-bound `cursor` continuation to `search_contacts` for
+  large result sets within the existing aggregate scan budget.
 
 ## [1.0.0] - 2026-11-08
 

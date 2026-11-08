@@ -3,6 +3,13 @@ package contacts
 
 import "context"
 
+// Aggregate Contacts search work bounds. A scoped multi-book search carries one
+// budget across every authorized address book.
+const (
+	MaxCardsScanned = 2000
+	MaxReportBytes  = 32 << 20
+)
+
 // TypedValue is a labeled contact value such as an email address or phone.
 type TypedValue struct {
 	Type  string `json:"type,omitempty"`
@@ -83,6 +90,13 @@ type SearchOptions struct {
 	Phone         string `json:"phone,omitempty"`
 	IncludeGroups bool   `json:"include_groups,omitempty"`
 	Limit         int    `json:"limit,omitempty"`
+	// RemainingCards and RemainingBytes carry a caller-owned aggregate scan
+	// budget across several address books. Zero means the full default.
+	RemainingCards int   `json:"-"`
+	RemainingBytes int64 `json:"-"`
+	// PageAll keeps the complete bounded match set for a cursor page instead
+	// of truncating to Limit. The caller applies the page size.
+	PageAll bool `json:"-"`
 }
 
 // SearchResult reports summaries and whether either result or scan bounds
@@ -91,6 +105,11 @@ type SearchResult struct {
 	Contacts         []ContactSummary `json:"contacts"`
 	Truncated        bool             `json:"truncated,omitempty"`
 	ScanLimitReached bool             `json:"scanLimitReached,omitempty"`
+	// ScannedCards and UsedBytes report the work this call consumed, so a
+	// caller can carry one aggregate budget across books.
+	ScannedCards int    `json:"-"`
+	UsedBytes    int64  `json:"-"`
+	NextCursor   string `json:"nextCursor,omitempty"`
 }
 
 // CreateContactInput contains the editable vCard 3.0 fields accepted on create.

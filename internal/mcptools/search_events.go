@@ -234,55 +234,64 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			}
 			snapshot, useSnapshot = cached, true
 		}
-		var readResults []calendarReadResult[icloud.SearchResult]
+		var fatal *mcp.CallToolResult
 		if !useSnapshot {
-			readResults = parallelCalendarReads(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+			parallelCalendarReadsWaves(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
 				return deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
-			})
-		}
-		for i := 0; i < len(readResults); i++ {
-			result, err := readResults[i].value, readResults[i].err
-			if err != nil {
-				// Do not mask an authentication or security error as a warning.
-				if ie := icloud.AsICloudError(err); ie != nil {
-					switch ie.Code {
-					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
-						icloud.CodeAuthentication, icloud.CodeAuthorization,
-						icloud.CodePayloadTooLarge, icloud.CodeProtocolError:
-						return errResult(deps.Redactor, "searching events", err), nil
+			}, func(i int, result icloud.SearchResult, err error) bool {
+
+				if err != nil {
+					// Do not mask an authentication or security error as a warning.
+					if ie := icloud.AsICloudError(err); ie != nil {
+						switch ie.Code {
+						case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
+							icloud.CodeAuthentication, icloud.CodeAuthorization,
+							icloud.CodePayloadTooLarge, icloud.CodeProtocolError:
+							fatal = errResult(deps.Redactor, "searching events", err)
+							return false
+						}
+					}
+					if !multi {
+						fatal = errResult(deps.Redactor, "searching events", err)
+						return false
+					}
+					partialFailure = true
+					// Do not echo full calendar paths in warnings (audit policy).
+					// Agents already know selected calendars from args or
+					// list_calendars; index correlates multi-calendar failures.
+					warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf(
+						"calendar[%d] query failed: %v", i, err)))
+					return true
+				}
+				if result.TruncatedByExpansion {
+					truncatedByExpansion = true
+				}
+				batch := result.Events
+				for j := range batch {
+					batch[j].Calendar = calendarPaths[i]
+				}
+				if query != "" {
+					batch = filterByQuery(batch, query)
+				}
+				batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
+				// Always query every selected calendar (fairness). Cap in-memory
+				// accumulation after filters; overflow fails closed below.
+				if !materializationOverflow {
+					if len(all)+len(batch) > icloud.MaxMultiSearchMaterialized {
+						materializationOverflow = true
+					} else {
+						all = append(all, batch...)
 					}
 				}
-				if !multi {
-					return errResult(deps.Redactor, "searching events", err), nil
+				if materializationOverflow {
+					// Definitive overflow: do not schedule another wave.
+					return false
 				}
-				partialFailure = true
-				// Do not echo full calendar paths in warnings (audit policy).
-				// Agents already know selected calendars from args or
-				// list_calendars; index correlates multi-calendar failures.
-				warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf(
-					"calendar[%d] query failed: %v", i, err)))
-				continue
-			}
-			if result.TruncatedByExpansion {
-				truncatedByExpansion = true
-			}
-			batch := result.Events
-			for j := range batch {
-				batch[j].Calendar = calendarPaths[i]
-			}
-			if query != "" {
-				batch = filterByQuery(batch, query)
-			}
-			batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
-			// Always query every selected calendar (fairness). Cap in-memory
-			// accumulation after filters; overflow fails closed below.
-			if !materializationOverflow {
-				if len(all)+len(batch) > icloud.MaxMultiSearchMaterialized {
-					materializationOverflow = true
-				} else {
-					all = append(all, batch...)
-				}
-			}
+				return true
+			})
+		}
+		if fatal != nil {
+			return fatal, nil
 		}
 		if err := ctx.Err(); err != nil {
 			return errResult(deps.Redactor, "searching events", err), nil
@@ -398,12 +407,21 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				return writeCalendarEncoded(deps.Redactor, encoded), nil
 			}
 			lastIndex := pageStart + len(resp.Events) - 1
-			if lastIndex+1 < total {
+			if lastIndex+1 < total && cursorGeneration != "" {
 				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest, cursorGeneration)
 				if mintErr != nil {
 					return errResult(deps.Redactor, "cursor parameter", mintErr), nil
 				}
 				resp.NextCursor = token
+				resp.Truncated = true
+				encoded, err = json.Marshal(&resp)
+				if err != nil {
+					return errResult(deps.Redactor, "formatting response", err), nil
+				}
+			}
+			if lastIndex+1 < total && cursorGeneration == "" {
+				resp.Warnings = append(resp.Warnings,
+					"the result snapshot exceeded the 32 MiB cursor cache budget; narrow the range or use compact mode")
 				resp.Truncated = true
 				encoded, err = json.Marshal(&resp)
 				if err != nil {

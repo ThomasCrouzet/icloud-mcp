@@ -187,19 +187,31 @@ func searchScopedContacts(ctx context.Context, scopes config.ResourceScopes, ser
 	}
 	sort.Strings(ids)
 	var combined contacts.SearchResult
+	remainingCards := contacts.MaxCardsScanned
+	remainingBytes := int64(contacts.MaxReportBytes)
 	for _, id := range ids {
+		if remainingCards <= 0 || remainingBytes <= 0 {
+			combined.ScanLimitReached = true
+			break
+		}
 		bookOpts := opts
 		bookOpts.AddressBook = id
+		bookOpts.RemainingCards = remainingCards
+		bookOpts.RemainingBytes = remainingBytes
 		part, err := service.SearchContacts(ctx, bookOpts)
 		if err != nil {
 			return contacts.SearchResult{}, err
 		}
+		remainingCards -= part.ScannedCards
+		remainingBytes -= part.UsedBytes
 		combined.Contacts = append(combined.Contacts, filterContactsByBook(part.Contacts, id)...)
 		combined.Truncated = combined.Truncated || part.Truncated
 		combined.ScanLimitReached = combined.ScanLimitReached || part.ScanLimitReached
 	}
+	combined.ScannedCards = contacts.MaxCardsScanned - remainingCards
+	combined.UsedBytes = contacts.MaxReportBytes - remainingBytes
 	sortContactSummaries(&combined)
-	if opts.Limit > 0 && len(combined.Contacts) > opts.Limit {
+	if !opts.PageAll && opts.Limit > 0 && len(combined.Contacts) > opts.Limit {
 		combined.Contacts = combined.Contacts[:opts.Limit]
 		combined.Truncated = true
 	}

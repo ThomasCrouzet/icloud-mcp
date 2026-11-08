@@ -990,3 +990,37 @@ func TestSearchScanGenerationsStayIndependent(t *testing.T) {
 		t.Fatal("unknown generation was loaded")
 	}
 }
+
+func TestSearchScanCacheHonorsByteBudget(t *testing.T) {
+	codec := newSearchCursorCodec()
+	var query searchCursorDigest
+	big := strings.Repeat("n", 8<<20)
+	for i := 0; i < 4; i++ {
+		generation := codec.storeScan(query, searchScanSnapshot{rows: []searchCursorRow{{
+			event: icloud.Event{UID: "u", Notes: big},
+		}}})
+		if generation == "" {
+			t.Fatalf("snapshot %d was refused", i)
+		}
+	}
+	codec.mu.Lock()
+	total := 0
+	for _, snapshot := range codec.scans {
+		total += snapshot.bytes
+	}
+	count := len(codec.scans)
+	codec.mu.Unlock()
+	if total > maxSearchScanBytes {
+		t.Fatalf("cache bytes = %d, want at most %d", total, maxSearchScanBytes)
+	}
+	if count == 0 || count >= 4 {
+		t.Fatalf("cache entries = %d, want bounded eviction below 4", count)
+	}
+
+	oversized := codec.storeScan(query, searchScanSnapshot{rows: []searchCursorRow{{
+		event: icloud.Event{UID: "huge", Notes: strings.Repeat("n", maxSearchScanBytes+1)},
+	}}})
+	if oversized != "" {
+		t.Fatal("an oversized snapshot was retained")
+	}
+}

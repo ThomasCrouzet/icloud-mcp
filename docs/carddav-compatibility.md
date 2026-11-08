@@ -135,8 +135,19 @@ Local matching is:
 
 All selected books share total limits of 2,000 decoded cards and 32 MiB of
 REPORT responses. Results sort by normalized display name, then UID, then book.
-The default result limit is 50, and the maximum is 100. There is no offset or
-continuation cursor.
+The default result limit is 50, and the maximum is 100. A call without `cursor`
+keeps that single-page result and returns no continuation.
+
+`cursor="start"` opts into bounded continuation. The service scans the same
+aggregate 2,000-card and 32 MiB budget and keeps the complete bounded match set,
+then the handler returns one page of at most `limit` summaries. `nextCursor` is
+a signed `c1` token that expires after 300 seconds and binds the address book
+and every filter; `limit` is not bound and may change. A later page re-runs the
+bounded scan and returns rows strictly after the last emitted sort key
+(normalized display name, UID, then address book). A forged, expired, or
+cross-filter token fails before any backend call. A `scanLimitReached` result
+issues no token because later rows are not reachable within the budget. The
+token holds no raw vCard or private field value.
 
 `truncated` means that the result count or byte limit removed matches.
 `scanLimitReached` means that the scan limit excluded selected cards or books.

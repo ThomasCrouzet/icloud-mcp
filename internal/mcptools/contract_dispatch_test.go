@@ -113,7 +113,7 @@ func contractBusinessFixtures() map[string]contractBusinessFixture {
 		"get_contact":     {book, nil}, "create_contact": {map[string]any{"address_book": "$book", "display_name": "New synthetic"}, contact},
 		"update_contact":    {map[string]any{"address_book": "$book", "uid": "contact", "display_name": "Changed"}, contractMerge(contractOmit(contact, "client_uid"), map[string]any{"etag": contractETag, "idempotency_key": "update-key"})},
 		"delete_contact":    {book, map[string]any{"etag": contractETag, "dry_run": true}},
-		"search_contacts":   {map[string]any{}, map[string]any{"address_book": "$book", "query": "Synthetic", "email": "reply", "phone": "1234", "include_groups": true, "limit": 1}},
+		"search_contacts":   {map[string]any{}, map[string]any{"address_book": "$book", "query": "Synthetic", "email": "reply", "phone": "1234", "include_groups": true, "limit": 1, "cursor": "start"}},
 		"get_message":       {identity(), map[string]any{"max_body_bytes": 4, "allow_html_fallback": true}},
 		"search_messages":   {map[string]any{"mailbox": "INBOX"}, map[string]any{"query": "Synthetic", "from": "reply", "to": "fixture", "subject": "Synthetic", "since": "2026-07-01", "before": "2026-07-03", "unseen_only": true, "flagged_only": true, "before_uid": 3, "uid_validity": 9, "limit": 1}},
 		"set_message_flags": {contractMerge(identity(), map[string]any{"operation": "add", "flags": []any{"seen"}}), map[string]any{"expected_modseq": 42}},

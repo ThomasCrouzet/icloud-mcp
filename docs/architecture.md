@@ -161,11 +161,13 @@ Cursor mode uses strict keyset ordering and collapses exact duplicate rows only
 in that opt-in path. A call without `cursor` keeps the legacy ordering,
 duplicates, offset window, and no `nextCursor`.
 
-The first cursor page performs one normal bounded fetch. It reuses the
-four-worker fan-out, the 2,500 per-calendar limit, the 10,000 filtered
-materialized budget, the 256 KiB serialized result, and all recurrence and
-deadline limits. The completed scan is retained in process memory for at most
-300 seconds, in at most four generation-scoped snapshots. Later pages of the
+The first cursor page performs one normal bounded fetch in waves of at most
+four calendars. It keeps one wave of backend results alive, applies the 2,500
+per-calendar limit and the 10,000 filtered materialized budget during the
+merge, and stops scheduling waves after a definitive overflow. It also keeps
+the 256 KiB serialized result and all recurrence and deadline limits. The
+completed scan is retained in process memory for at most 300 seconds, in at
+most four generation-scoped snapshots and at most 32 MiB of row text. Later pages of the
 same generation read that snapshot without another backend fetch. There is no
 background worker, disk store, or cross-process cache. A snapshot is never
 written to logs.
