@@ -210,6 +210,12 @@ jobs:
       - name: security guardrails
         run: python3 scripts/security_guards.py .
 
+      - name: documentation consistency
+        run: make check-docs
+
+      - name: platform claim consistency
+        run: make check-platforms
+
       - name: binary size budget (linux/arm64)
         run: |
           # Static stripped arm64 binary should stay under 20 MiB.
@@ -260,6 +266,9 @@ jobs:
           - runner: ubuntu-latest
             asset_os: linux
             asset_arch: amd64
+          - runner: ubuntu-24.04-arm
+            asset_os: linux
+            asset_arch: arm64
           - runner: macos-15
             asset_os: darwin
             asset_arch: arm64
@@ -303,14 +312,10 @@ jobs:
           (cd dist && shasum -a 256 -c "$checksums")
           mkdir native-smoke
           tar -xzf "dist/$archive" -C native-smoke
-          got="$(native-smoke/icloud-mcp -version)"
-          test "$got" = "$VERSION"
-          if env -i PATH="$PATH" native-smoke/icloud-mcp >native-smoke/stdout.log 2>native-smoke/stderr.log; then
-            echo "offline configuration unexpectedly started the server" >&2
-            exit 1
-          fi
-          grep -qi 'configuration error' native-smoke/stderr.log
-          echo "native_smoke version=$got os=$ASSET_OS arch=$ASSET_ARCH"
+          python3 scripts/native_smoke.py \
+            --binary native-smoke/icloud-mcp \
+            --version "$VERSION" \
+            --tools 7
 
   # Tag releases only after CI and secret scan succeed on the same ref.
   release:
