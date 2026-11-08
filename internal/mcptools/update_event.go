@@ -83,7 +83,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		update := &icloud.EventUpdate{
 			IfMatchETag:         etag,
-			AllowGroupScheduled: deps.CalendarWriteExplicit && acknowledgeScheduling,
+			AllowGroupScheduled: deps.CalendarScheduleExplicit && acknowledgeScheduling,
 		}
 
 		optionalString := func(key string) (string, bool, error) {
@@ -229,6 +229,11 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				"url":           update.URL,
 				"scope":         update.Scope,
 				"recurrence_id": update.RecurrenceID,
+				// Approval inputs are part of the request identity. A key
+				// cannot replay a cached outcome after the acknowledgement or
+				// the effective operator grant changed.
+				"acknowledge_scheduling": acknowledgeScheduling,
+				"allow_group_scheduled":  update.AllowGroupScheduled,
 			})
 			if err != nil {
 				return deny("validation", err)

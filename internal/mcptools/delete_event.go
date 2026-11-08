@@ -95,7 +95,7 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 		opts := &icloud.DeleteOptions{
 			IfMatchETag:         etag,
 			DryRun:              dryRun,
-			AllowGroupScheduled: deps.CalendarDeleteExplicit && acknowledgeScheduling,
+			AllowGroupScheduled: deps.CalendarScheduleExplicit && acknowledgeScheduling,
 		}
 		switch scope {
 		case "", "series":

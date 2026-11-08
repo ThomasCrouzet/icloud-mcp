@@ -607,3 +607,20 @@ func TestContactsReadHandlersAreConcurrentSafe(t *testing.T) {
 		t.Fatalf("concurrent calls = search %d, get %d", snapshot.searchCalls, snapshot.getCalls)
 	}
 }
+
+func TestCreateContactRejectsConflictingAliases(t *testing.T) {
+	args := contactsRawArgs{
+		"address_book":    json.RawMessage(`"book-AAAAAAAAAAAAAAAAAAAAAA"`),
+		"display_name":    json.RawMessage(`"Synthetic"`),
+		"client_uid":      json.RawMessage(`"uid-a"`),
+		"idempotency_key": json.RawMessage(`"uid-b"`),
+	}
+	if _, err := parseCreateContactInput(args); err == nil {
+		t.Fatal("conflicting client_uid and idempotency_key were accepted")
+	}
+	args["idempotency_key"] = json.RawMessage(`"uid-a"`)
+	input, err := parseCreateContactInput(args)
+	if err != nil || input.ClientUID != "uid-a" {
+		t.Fatalf("identical aliases = %#v, %v", input, err)
+	}
+}

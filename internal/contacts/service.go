@@ -150,6 +150,9 @@ type CreateResult struct {
 	ETag             string `json:"etag,omitempty"`
 	ResultIncomplete bool   `json:"resultIncomplete,omitempty"`
 	Warning          string `json:"warning,omitempty"`
+	// Reconciled is true when a supplied client_uid already identified a
+	// contact with identical modeled content. No second resource was created.
+	Reconciled bool `json:"reconciled,omitempty"`
 }
 
 // UpdateResult describes a definitively applied update.

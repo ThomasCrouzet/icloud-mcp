@@ -133,6 +133,15 @@ Global read-only removes every granted write and send tool. An unset
 `ICLOUD_MCP_PERMISSIONS` grants reads only.
 Requested Mail send still requires a recipient allowlist at boot.
 
+`list_mailboxes` returns a mailbox only when at least one effective Mail
+capability reaches it. Each entry carries `accessModes` with the applicable
+subset of `read`, `mutate`, and `archive`. Scope inheritance means a mailbox
+allowed by `mail.read` is also mutable and archivable unless a narrower
+`mail.mutate` or `mail.archive` scope is set. A mailbox that is only a mutation
+or archive target is listed with those modes and never advertised as readable.
+`search_messages`, `get_message`, and `reply_message` still enforce
+`mail.read` independently.
+
 ### Calendar read resource scopes
 
 `search_events` and `find_free_slots` share scope-aware Calendar selection.
@@ -145,6 +154,22 @@ scope. Rejection occurs before event queries, without echoing forbidden paths.
 The default unscoped configuration and an explicit `calendar.read=*` permit all
 discovered calendars. These read operations emit no mutation audit records.
 Local capability and health output does not contain Calendar paths.
+
+## Group-scheduled Calendar mutations
+
+An event with `ORGANIZER` or `ATTENDEE` can cause a scheduling-capable server to
+notify third parties. Updating or deleting it requires all of:
+
+- `calendar.write` or `calendar.delete` for the calendar resource,
+- the separate `calendar.schedule` operator grant,
+- `acknowledge_scheduling=true` on that call,
+- the current strong ETag, checked before the mutation.
+
+`calendar.write` does not imply `calendar.schedule`. A model cannot mint the
+operator grant or bypass the per-call acknowledgement. A changed resource
+invalidates the ETag check before any backend mutation. Ordinary
+non-scheduled writes and reads are unchanged. This gate does not claim that
+iCloud sends notifications; that remains provider evidence under #123.
 
 ## SMTP recipient authorization
 

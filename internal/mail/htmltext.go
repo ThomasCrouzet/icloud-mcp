@@ -48,13 +48,8 @@ func htmlToText(input string, maxBytes int) (string, bool, error) {
 			switch lower {
 			case "script", "style", "template", "head":
 				if !closing && !selfClosing {
-					lowerInput := strings.ToLower(input[end+1:])
-					match := strings.Index(lowerInput, "</"+lower)
-					if match < 0 {
-						return "", false, errMalformedHTML
-					}
-					closeEnd := htmlTagEnd(input, end+1+match)
-					if closeEnd < 0 {
+					closeEnd, found := findExactCloseTag(input, end+1, lower)
+					if !found {
 						return "", false, errMalformedHTML
 					}
 					index = closeEnd + 1
@@ -90,6 +85,35 @@ func htmlToText(input string, maxBytes int) (string, bool, error) {
 		return truncateUTF8(normalized, maxBytes), true, nil
 	}
 	return normalized, false, nil
+}
+
+// findExactCloseTag scans forward once for the exact case-insensitive closing
+// tag name. A prefix such as </scripture> is not accepted as </script>, and
+// the scan does not allocate a lowercased copy of the remaining input.
+func findExactCloseTag(input string, from int, name string) (int, bool) {
+	for index := from; index < len(input); index++ {
+		if input[index] != '<' {
+			continue
+		}
+		if strings.HasPrefix(input[index:], "<!--") {
+			end := strings.Index(input[index+4:], "-->")
+			if end < 0 {
+				return 0, false
+			}
+			index += 4 + end + 2
+			continue
+		}
+		end := htmlTagEnd(input, index)
+		if end < 0 {
+			return 0, false
+		}
+		raw := strings.TrimSpace(input[index+1 : end])
+		if strings.HasPrefix(raw, "/") && strings.EqualFold(htmlTagName(raw), name) {
+			return end, true
+		}
+		index = end
+	}
+	return 0, false
 }
 
 func htmlTagEnd(input string, start int) int {

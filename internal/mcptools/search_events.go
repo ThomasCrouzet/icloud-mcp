@@ -193,6 +193,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 
 		var cursorQuery searchCursorDigest
 		var cursorPosition searchCursorDigest
+		cursorGeneration := ""
 		haveCursorPosition := false
 		if cursorMode {
 			scopeValues, scopeRestricted := calendarReadScope(deps.ResourceScopes)
@@ -200,7 +201,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly,
 				compact, expandRecurrence, scopeValues, scopeRestricted)
 			if cursorToken != "" {
-				position, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
+				position, generation, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
 				if verifyErr != nil {
 					return errResult(deps.Redactor, "cursor parameter", verifyErr), nil
 				}
@@ -209,6 +210,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 						reason, searchCursorMessage(reason))), nil
 				}
 				cursorPosition = position
+				cursorGeneration = generation
 				haveCursorPosition = true
 			}
 		}
@@ -223,9 +225,14 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		var snapshot searchScanSnapshot
 		useSnapshot := false
 		if cursorMode && haveCursorPosition {
-			if cached, ok := cursorCodec.loadScan(cursorQuery); ok {
-				snapshot, useSnapshot = cached, true
+			cached, ok := cursorCodec.loadScan(cursorQuery, cursorGeneration)
+			if !ok {
+				// The original generation expired or was evicted. Never rebase
+				// this token onto a newer snapshot with the same query.
+				return errResult(deps.Redactor, "validation", searchCursorValidationError(
+					searchCursorReasonStale, searchCursorMessage(searchCursorReasonStale))), nil
 			}
+			snapshot, useSnapshot = cached, true
 		}
 		var readResults []calendarReadResult[icloud.SearchResult]
 		if !useSnapshot {
@@ -313,7 +320,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				// is retried on the next page instead of freezing an incomplete
 				// snapshot.
 				if !partialFailure {
-					cursorCodec.storeScan(cursorQuery, searchScanSnapshot{
+					cursorGeneration = cursorCodec.storeScan(cursorQuery, searchScanSnapshot{
 						rows:                 rows,
 						warnings:             append([]string(nil), warnings...),
 						truncatedByExpansion: truncatedByExpansion,
@@ -392,7 +399,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			}
 			lastIndex := pageStart + len(resp.Events) - 1
 			if lastIndex+1 < total {
-				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest)
+				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest, cursorGeneration)
 				if mintErr != nil {
 					return errResult(deps.Redactor, "cursor parameter", mintErr), nil
 				}

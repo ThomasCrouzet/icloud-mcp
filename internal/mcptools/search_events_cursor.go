@@ -39,9 +39,18 @@ const (
 type searchCursorDigest [sha256.Size]byte
 
 type searchCursorPayload struct {
-	Exp      int64  `json:"exp"`
-	Query    string `json:"q"`
-	Position string `json:"p"`
+	Exp        int64  `json:"exp"`
+	Query      string `json:"q"`
+	Position   string `json:"p"`
+	Generation string `json:"g"`
+}
+
+// searchScanKey isolates each completed scan. A new cursor=start for the same
+// query keeps an independent generation, so an outstanding token never
+// advances inside a later snapshot.
+type searchScanKey struct {
+	query      searchCursorDigest
+	generation string
 }
 
 type searchCursorCodec struct {
@@ -51,7 +60,7 @@ type searchCursorCodec struct {
 	err error
 
 	mu    sync.Mutex
-	scans map[searchCursorDigest]searchScanSnapshot
+	scans map[searchScanKey]searchScanSnapshot
 }
 
 func (c *searchCursorCodec) lifetime() time.Duration {
@@ -68,6 +77,7 @@ const maxSearchScanSnapshots = 4
 // searchScanSnapshot is a short-lived, process-local result of one completed
 // cursor scan. It is never written to disk or logs.
 type searchScanSnapshot struct {
+	generation           string
 	rows                 []searchCursorRow
 	warnings             []string
 	truncatedByExpansion bool
@@ -75,14 +85,20 @@ type searchScanSnapshot struct {
 	created              time.Time
 }
 
-func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchScanSnapshot) {
+func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchScanSnapshot) string {
 	if c == nil {
-		return
+		return ""
 	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return ""
+	}
+	generation := hex.EncodeToString(nonce[:])
+	snapshot.generation = generation
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.scans == nil {
-		c.scans = make(map[searchCursorDigest]searchScanSnapshot, maxSearchScanSnapshots)
+		c.scans = make(map[searchScanKey]searchScanSnapshot, maxSearchScanSnapshots)
 	}
 	for key, existing := range c.scans {
 		if c.currentTime().Sub(existing.created) >= c.lifetime() {
@@ -90,7 +106,7 @@ func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchS
 		}
 	}
 	for len(c.scans) >= maxSearchScanSnapshots {
-		var oldestKey searchCursorDigest
+		var oldestKey searchScanKey
 		var oldest time.Time
 		first := true
 		for key, existing := range c.scans {
@@ -101,21 +117,23 @@ func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchS
 		delete(c.scans, oldestKey)
 	}
 	snapshot.created = c.currentTime()
-	c.scans[query] = snapshot
+	c.scans[searchScanKey{query: query, generation: generation}] = snapshot
+	return generation
 }
 
-func (c *searchCursorCodec) loadScan(query searchCursorDigest) (searchScanSnapshot, bool) {
-	if c == nil {
+func (c *searchCursorCodec) loadScan(query searchCursorDigest, generation string) (searchScanSnapshot, bool) {
+	if c == nil || generation == "" {
 		return searchScanSnapshot{}, false
 	}
+	key := searchScanKey{query: query, generation: generation}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	snapshot, ok := c.scans[query]
+	snapshot, ok := c.scans[key]
 	if !ok {
 		return searchScanSnapshot{}, false
 	}
 	if c.currentTime().Sub(snapshot.created) >= c.lifetime() {
-		delete(c.scans, query)
+		delete(c.scans, key)
 		return searchScanSnapshot{}, false
 	}
 	return snapshot, true
@@ -209,14 +227,15 @@ func hasExplicitSearchSelection(req mcp.CallToolRequest) bool {
 	return false
 }
 
-func (c *searchCursorCodec) mint(query, position searchCursorDigest) (string, error) {
+func (c *searchCursorCodec) mint(query, position searchCursorDigest, generation string) (string, error) {
 	if !c.available() {
 		return "", searchCursorUnavailableError()
 	}
 	payload := searchCursorPayload{
-		Exp:      c.currentTime().Add(searchCursorTTL).Unix(),
-		Query:    hex.EncodeToString(query[:]),
-		Position: hex.EncodeToString(position[:]),
+		Exp:        c.currentTime().Add(searchCursorTTL).Unix(),
+		Query:      hex.EncodeToString(query[:]),
+		Position:   hex.EncodeToString(position[:]),
+		Generation: generation,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -236,56 +255,58 @@ func (c *searchCursorCodec) mint(query, position searchCursorDigest) (string, er
 	return token, nil
 }
 
-func (c *searchCursorCodec) verify(token string, wantQuery searchCursorDigest) (searchCursorDigest, string, error) {
-	var position searchCursorDigest
+func (c *searchCursorCodec) verify(token string, wantQuery searchCursorDigest) (position searchCursorDigest, generation, reason string, err error) {
 	if !c.available() {
-		return position, "", searchCursorUnavailableError()
+		return position, "", "", searchCursorUnavailableError()
 	}
 	if token == "" || len(token) > maxSearchCursorTokenLen {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] != searchCursorVersion || parts[1] == "" || parts[2] == "" {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil || len(raw) == 0 || len(raw) > maxSearchCursorPayloadBytes {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	mac, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil || len(mac) != sha256.Size {
-		return position, searchCursorReasonSignature, nil
+		return position, "", searchCursorReasonSignature, nil
 	}
 	expected := hmac.New(sha256.New, c.key[:])
 	_, _ = expected.Write([]byte(parts[0] + "." + parts[1]))
 	if !hmac.Equal(expected.Sum(nil), mac) {
-		return position, searchCursorReasonSignature, nil
+		return position, "", searchCursorReasonSignature, nil
 	}
 
 	var payload searchCursorPayload
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	if payload.Exp <= 0 || !isSearchCursorHex(payload.Query) || !isSearchCursorHex(payload.Position) {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	if c.currentTime().Unix() >= payload.Exp {
-		return position, searchCursorReasonExpired, nil
+		return position, "", searchCursorReasonExpired, nil
 	}
 	if payload.Query != hex.EncodeToString(wantQuery[:]) {
-		return position, searchCursorReasonQueryMismatch, nil
+		return position, "", searchCursorReasonQueryMismatch, nil
+	}
+	if decodedGeneration, genErr := hex.DecodeString(payload.Generation); genErr != nil || len(decodedGeneration) != 16 {
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	decoded, err := hex.DecodeString(payload.Position)
 	if err != nil || len(decoded) != sha256.Size {
-		return position, searchCursorReasonMalformed, nil
+		return position, "", searchCursorReasonMalformed, nil
 	}
 	copy(position[:], decoded)
-	return position, "", nil
+	return position, payload.Generation, "", nil
 }
 
 func isSearchCursorHex(value string) bool {
@@ -306,6 +327,7 @@ type searchCursorQueryBinding struct {
 	Version          int      `json:"v"`
 	Start            string   `json:"start"`
 	End              string   `json:"end"`
+	Timezone         string   `json:"timezone"`
 	Calendars        []string `json:"calendars"`
 	Query            string   `json:"query"`
 	UID              string   `json:"uid"`
@@ -327,6 +349,7 @@ func searchCursorQueryDigest(start, end time.Time, calendars []string, query, ui
 		Version:          searchCursorVersionNumber,
 		Start:            start.UTC().Format(time.RFC3339Nano),
 		End:              end.UTC().Format(time.RFC3339Nano),
+		Timezone:         start.Location().String(),
 		Calendars:        canonicalSearchCursorStrings(calendars),
 		Query:            query,
 		UID:              uid,

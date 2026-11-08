@@ -826,7 +826,8 @@ func TestSearchEventsCursorStaleAnchor(t *testing.T) {
 		t.Fatalf("cached page searched %d times", svc.SearchCallCount-before)
 	}
 
-	// After expiry the scan refreshes and the missing anchor is stale.
+	// After expiry the original generation is gone. The token must fail as
+	// stale instead of rebasing onto a newer scan.
 	now = now.Add(2 * time.Second)
 	res, err := handler(context.Background(), newReq(cursorBaseArgs("/cal/a/", 2, 0, firstPayload.NextCursor)))
 	if err != nil {
@@ -836,8 +837,8 @@ func TestSearchEventsCursorStaleAnchor(t *testing.T) {
 	if reason := cursorValidationReason(t, payload); reason != searchCursorReasonStale {
 		t.Fatalf("stale reason = %q", reason)
 	}
-	if svc.SearchCallCount != before+1 {
-		t.Fatalf("stale check searches = %d, want %d", svc.SearchCallCount, before+1)
+	if svc.SearchCallCount != before {
+		t.Fatalf("stale check rescanned: %d searches", svc.SearchCallCount-before)
 	}
 }
 
@@ -940,10 +941,16 @@ func TestSearchScanSnapshotBoundAndExpiry(t *testing.T) {
 	now := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	codec := newSearchCursorCodec()
 	codec.now = func() time.Time { return now }
+	var firstKey searchCursorDigest
+	firstKey[0] = 1
+	firstGeneration := ""
 	for i := range maxSearchScanSnapshots + 2 {
 		var key searchCursorDigest
 		key[0] = byte(i + 1)
-		codec.storeScan(key, searchScanSnapshot{rows: []searchCursorRow{{}}})
+		generation := codec.storeScan(key, searchScanSnapshot{rows: []searchCursorRow{{}}})
+		if i == 0 {
+			firstGeneration = generation
+		}
 		now = now.Add(time.Second)
 	}
 	codec.mu.Lock()
@@ -952,13 +959,34 @@ func TestSearchScanSnapshotBoundAndExpiry(t *testing.T) {
 	if got != maxSearchScanSnapshots {
 		t.Fatalf("snapshots = %d, want %d", got, maxSearchScanSnapshots)
 	}
-	var key searchCursorDigest
-	key[0] = 1
-	if _, ok := codec.loadScan(key); ok {
+	if _, ok := codec.loadScan(firstKey, firstGeneration); ok {
 		t.Fatal("oldest snapshot was not evicted")
 	}
 	now = now.Add(searchCursorTTL)
-	if _, ok := codec.loadScan(key); ok {
+	if _, ok := codec.loadScan(firstKey, firstGeneration); ok {
 		t.Fatal("expired snapshot was returned")
+	}
+}
+
+func TestSearchScanGenerationsStayIndependent(t *testing.T) {
+	codec := newSearchCursorCodec()
+	var query searchCursorDigest
+	firstRows := []searchCursorRow{{event: icloud.Event{UID: "a"}}, {event: icloud.Event{UID: "b"}}}
+	secondRows := []searchCursorRow{{event: icloud.Event{UID: "a"}}, {event: icloud.Event{UID: "x"}}, {event: icloud.Event{UID: "b"}}}
+	first := codec.storeScan(query, searchScanSnapshot{rows: firstRows})
+	second := codec.storeScan(query, searchScanSnapshot{rows: secondRows})
+	if first == second || first == "" || second == "" {
+		t.Fatalf("generations = %q / %q", first, second)
+	}
+	loaded, ok := codec.loadScan(query, first)
+	if !ok || len(loaded.rows) != 2 || loaded.rows[1].event.UID != "b" {
+		t.Fatalf("first generation = %#v, %v", loaded.rows, ok)
+	}
+	loaded, ok = codec.loadScan(query, second)
+	if !ok || len(loaded.rows) != 3 {
+		t.Fatalf("second generation = %#v, %v", loaded.rows, ok)
+	}
+	if _, ok := codec.loadScan(query, "00000000000000000000000000000000"); ok {
+		t.Fatal("unknown generation was loaded")
 	}
 }

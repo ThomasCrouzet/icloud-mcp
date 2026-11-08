@@ -225,3 +225,25 @@ func TestCreateEventHandler_RejectsBadRRule(t *testing.T) {
 		t.Error("CreateEvent should not have been called")
 	}
 }
+
+func TestCreateEventRejectsConflictingAliasesBeforeService(t *testing.T) {
+	svc := &icloud.MockService{CreatedUID: "alias-uid"}
+	handler := createEventHandler(testDeps(svc))
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"title":           "Meeting",
+		"start":           "2026-07-01T10:00:00Z",
+		"end":             "2026-07-01T11:00:00Z",
+		"calendar":        "/cal/home/",
+		"client_uid":      "uid-a",
+		"idempotency_key": "uid-b",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("conflicting aliases were accepted")
+	}
+	if svc.CreateCallCount != 0 {
+		t.Fatalf("conflicting aliases reached CreateEvent %d times", svc.CreateCallCount)
+	}
+}

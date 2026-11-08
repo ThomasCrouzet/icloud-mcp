@@ -1098,3 +1098,28 @@ func TestLoad_ResourceScopes(t *testing.T) {
 		t.Fatalf("loaded calendar scope = %v, %v", values, restricted)
 	}
 }
+
+func TestCalendarSchedulePermissionIsSeparate(t *testing.T) {
+	permissions, err := ParsePermissions("calendar.read,calendar.write,calendar.schedule")
+	if err != nil {
+		t.Fatalf("ParsePermissions() error = %v", err)
+	}
+	if !permissions.ExplicitCalendarWrite() || !permissions.ExplicitCalendarSchedule() {
+		t.Fatal("calendar.schedule was not parsed as a separate grant")
+	}
+	writeOnly, err := ParsePermissions("calendar.read,calendar.write")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeOnly.ExplicitCalendarSchedule() {
+		t.Fatal("calendar.write implied calendar.schedule")
+	}
+
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "user@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "app-specific-password")
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,calendar.schedule")
+	if _, err := Load(); err == nil {
+		t.Fatal("calendar.schedule without a write or delete grant was accepted")
+	}
+}

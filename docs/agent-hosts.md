@@ -66,12 +66,17 @@ Contacts names fail closed. Unknown, duplicate, empty, or malformed entries fail
 before network access.
 
 `ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
-`calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
+`calendar.delete`, `calendar.schedule`, `contacts.read`, `contacts.write`,
+`contacts.delete`,
 `mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`.
 Unknown, duplicate, or empty tokens cause a boot error. A Contacts or Mail token
 needs its domain switch. An unset or empty value grants reads only for the
 enabled domains. Name every effect. The Mail write and send flags do not add
 one. Global read-only still removes every mutation and send tool.
+`calendar.schedule` is a separate operator grant for group-scheduled mutations.
+It requires `calendar.write` or `calendar.delete` and still needs the per-call
+`acknowledge_scheduling` acknowledgement and a fresh strong ETag. A model with
+only `calendar.write` cannot self-authorize those mutations.
 
 The server trims log levels and ignores case. It accepts `debug` or `-4`,
 `info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized

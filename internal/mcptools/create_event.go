@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -120,11 +121,15 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return deny("validation", err)
 		}
-		if clientUID == "" {
-			clientUID, err = optionalStringArg(req, "idempotency_key", "")
-			if err != nil {
-				return deny("validation", err)
+		idempotencyKey, err := optionalStringArg(req, "idempotency_key", "")
+		if err != nil {
+			return deny("validation", err)
+		}
+		if idempotencyKey != "" {
+			if clientUID != "" && clientUID != idempotencyKey {
+				return deny("validation", errors.New("client_uid and idempotency_key must be identical when both are supplied"))
 			}
+			clientUID = idempotencyKey
 		}
 
 		if err := icloud.ValidateCalendarPath(calendarPath); err != nil {

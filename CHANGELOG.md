@@ -45,6 +45,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fail a CalDAV or CardDAV REPORT with a failed resource or missing requested
   data as `partial_failure`, so availability cannot advertise free time from an
   incomplete result.
+- Reject a recurring-series start move when EXDATE or occurrence overrides
+  exist, while keeping title-only and anchor-free series edits.
+- Bind cursor tokens to an immutable scan generation and the effective
+  timezone; an expired or evicted generation returns `stale_cursor` instead of
+  continuing inside a newer snapshot.
+- Make `create_event` and `create_contact` reject conflicting `client_uid` and
+  `idempotency_key`, reconcile an identical retry, and conflict on different
+  content before a second resource is created.
+- Require the separate `calendar.schedule` operator grant, in addition to
+  `calendar.write` or `calendar.delete`, `acknowledge_scheduling`, and a fresh
+  ETag, for group-scheduled mutations.
+- Bind the scheduling acknowledgement and effective approval into the
+  `update_event` idempotency fingerprint.
+- List a mailbox only when an effective capability reaches it and report
+  `accessModes` so a mutation target is not mistaken for readable mail.
+- Make blocked HTML element removal exact-name and near-linear in the input
+  size, so a `</scripture>` prefix cannot expose discarded content.
 
 ## [1.0.0] - 2026-11-08
 

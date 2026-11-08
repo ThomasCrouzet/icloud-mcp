@@ -53,9 +53,10 @@ const (
 type Permissions struct {
 	configured bool
 
-	calendarRead   bool
-	calendarWrite  bool
-	calendarDelete bool
+	calendarRead     bool
+	calendarWrite    bool
+	calendarDelete   bool
+	calendarSchedule bool
 
 	contactsRead   bool
 	contactsWrite  bool
@@ -94,6 +95,8 @@ func ParsePermissions(value string) (Permissions, error) {
 			permissions.calendarWrite = true
 		case "calendar.delete":
 			permissions.calendarDelete = true
+		case "calendar.schedule":
+			permissions.calendarSchedule = true
 		case "contacts.read":
 			permissions.contactsRead = true
 		case "contacts.write":
@@ -126,6 +129,11 @@ func (p Permissions) ExplicitCalendarWrite() bool { return p.configured && p.cal
 
 // ExplicitCalendarDelete reports an operator-granted Calendar delete capability.
 func (p Permissions) ExplicitCalendarDelete() bool { return p.configured && p.calendarDelete }
+
+// ExplicitCalendarSchedule reports the separate operator grant required for a
+// mutation of a group-scheduled event. Ordinary Calendar write or delete does
+// not imply it.
+func (p Permissions) ExplicitCalendarSchedule() bool { return p.configured && p.calendarSchedule }
 
 // Effective applies the global read-only kill switch.
 func (p Permissions) Effective(readOnly bool) Permissions {
@@ -519,6 +527,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%s requires %s=true", enableMailSendEnvVar, enableMailEnvVar)
 	}
 	if c.Permissions.Configured() {
+		if c.Permissions.ExplicitCalendarSchedule() && !c.Permissions.ExplicitCalendarWrite() && !c.Permissions.ExplicitCalendarDelete() {
+			return fmt.Errorf("%s: calendar.schedule requires calendar.write or calendar.delete", permissionsEnvVar)
+		}
 		if c.Permissions.RequestedContactsRead() || c.Permissions.RequestedContactsMutation() {
 			if !c.EnableContacts {
 				return fmt.Errorf("%s requires %s=true for Contacts capabilities", permissionsEnvVar, enableContactsEnvVar)

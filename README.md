@@ -60,7 +60,7 @@ See the [threat model and reporting policy](SECURITY.md) and
 
 | Capability | Operations | Enablement |
 |---|---|---|
-| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | Reads always on; `calendar.write` and `calendar.delete` in `ICLOUD_MCP_PERMISSIONS` are required for effects |
+| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | Reads always on; `calendar.write` and `calendar.delete` in `ICLOUD_MCP_PERMISSIONS` are required for effects; group-scheduled mutations also need `calendar.schedule` and `acknowledge_scheduling` |
 | Contacts | List books; search and get contacts; create, update, and delete vCard 3.0 contacts | Reads require `ICLOUD_MCP_ENABLE_CONTACTS=true`; writes require `contacts.write` or `contacts.delete` |
 | Mail read | List mailboxes; search messages; get plain text and attachment metadata | `ICLOUD_MCP_ENABLE_MAIL=true` |
 | Mail mutation | Change flags; move or trash a message | Mail plus `mail.mutate` or `mail.trash` |
@@ -86,9 +86,11 @@ closed. The variable is invalid if an action is unknown, duplicated, empty, or a
 Calendar path is malformed.
 
 `ICLOUD_MCP_PERMISSIONS` names every capability. It takes a comma-separated
-list: `calendar.read`, `calendar.write`, `calendar.delete`, `contacts.read`,
-`contacts.write`, `contacts.delete`, `mail.read`, `mail.mutate`, `mail.trash`,
-`mail.send`, and `mail.archive`. Domain switches still enable a domain. Global
+list: `calendar.read`, `calendar.write`, `calendar.delete`, `calendar.schedule`,
+`contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`, `mail.mutate`,
+`mail.trash`, `mail.send`, and `mail.archive`. `calendar.schedule` is a separate
+operator grant for group-scheduled Calendar mutations and requires
+`calendar.write` or `calendar.delete`. Domain switches still enable a domain. Global
 read-only still removes every mutation and send. With no value, enabled
 domains are read-only. No switch, flag, or omission implies an effect. For
 example, `calendar.read,mail.read,mail.send` gives Calendar reads and Mail send

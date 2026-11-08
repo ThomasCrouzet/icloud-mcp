@@ -48,7 +48,10 @@ the active connection.
 LIST supplies mailbox names, hierarchy delimiters, and attributes. The server
 does not infer a mailbox purpose from an English display name. This rule applies
 to Inbox, Sent, Trash, and other purposes. `list_mailboxes` sends no STATUS
-fan-out and returns at most 200 items.
+fan-out and returns at most 200 items. It lists a mailbox only when an effective
+Mail capability reaches it and sets `accessModes` to `read`, `mutate`, and
+`archive` as applicable. A mutation-only or archive-only target is not shown as
+readable.
 
 A message identity is:
 

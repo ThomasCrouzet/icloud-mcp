@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -851,6 +852,51 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 		return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 	}
 	return nil
+}
+
+// objectContentFingerprint compares the modeled master VEVENT properties that
+// a create request controls. Server-managed fields (DTSTAMP, SEQUENCE,
+// CREATED, LAST-MODIFIED) and property order do not participate.
+func objectContentFingerprint(cal *ical.Calendar) (string, bool) {
+	if cal == nil {
+		return "", false
+	}
+	names := map[string]bool{
+		ical.PropUID: true, ical.PropSummary: true, ical.PropLocation: true,
+		ical.PropDescription: true, ical.PropDateTimeStart: true, ical.PropDateTimeEnd: true,
+		ical.PropDuration: true, ical.PropRecurrenceRule: true, ical.PropExceptionDates: true,
+		ical.PropStatus: true, ical.PropTransparency: true, ical.PropURL: true,
+	}
+	var lines []string
+	for _, child := range cal.Children {
+		if child == nil || child.Name != ical.CompEvent {
+			continue
+		}
+		if len(child.Props[ical.PropRecurrenceID]) > 0 {
+			continue
+		}
+		for name := range names {
+			for _, property := range child.Props[name] {
+				entry := name
+				for param, values := range property.Params {
+					for _, value := range values {
+						entry += ";" + param + "=" + value
+					}
+				}
+				lines = append(lines, entry+":"+property.Value)
+			}
+		}
+		for _, alarm := range child.Children {
+			if alarm == nil || alarm.Name != ical.CompAlarm {
+				continue
+			}
+			for _, property := range alarm.Props[ical.PropTrigger] {
+				lines = append(lines, ical.PropTrigger+":"+property.Value)
+			}
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n"), true
 }
 
 func remoteEventFieldLimit(name string) int {

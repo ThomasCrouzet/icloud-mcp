@@ -258,17 +258,18 @@ Each continuation is a stateless `v1` token with a base64url payload and an
 HMAC-SHA256 signature. The payload holds only a positive expiry, a query digest,
 and a last-row identity digest. It never holds a raw query, UID, title, calendar
 path, ETag, or internal href. The 32-byte key lives for one registered handler.
+The payload also carries an unpredictable generation ID for the completed scan.
 A restart or new registration invalidates all tokens. A token expires 300
 seconds after issuance and can be reused as a read until then. It is not
 encrypted, a lease, or a single-use credential.
 
-The token binds the normalized range, explicit selected calendars, result
-filters, default presence, compact and recurrence modes, and the current
-`calendar.read` scope. `limit` is not bound. The explicit selection and scope,
-token structure, signature, expiry, and query binding are checked before any
-Calendar backend access. A missing resume anchor is checked against the
-process-local scan snapshot. If the snapshot is absent or expired, one normal
-bounded fetch checks the anchor; a stale token never causes an unbounded scan.
+The token binds the normalized range, its effective timezone, explicit selected
+calendars, result filters, default presence, compact and recurrence modes, and
+the current `calendar.read` scope. `limit` is not bound. The explicit selection
+and scope, token structure, signature, expiry, and query binding are checked
+before any Calendar backend access. A continuation loads only its own
+generation. If that generation is absent, expired, or evicted, the call returns
+`stale_cursor` without a backend fetch; it never rebases onto a newer scan.
 
 Cursor mode keeps the primary order start, UID, calendar, then title. It adds
 recurrence ID, end time, override flag, internal path, ETag, and a full-row
@@ -284,12 +285,14 @@ events in one calendar fails closed before paging. Pagination does not permit
 loading a whole history.
 
 The completed scan is kept in process memory for at most 300 seconds, the
-cursor lifetime, in at most four snapshots. Later pages of the same bound query
-reuse it without another backend REPORT. A partial failure is not cached. The
-snapshot is never written to disk or logs and disappears on process exit. This
-turns a multi-page continuation into a bounded snapshot: a source edit after
-the first page is not visible until the snapshot expires, and `total` is the
-snapshot count.
+cursor lifetime, in at most four generation-scoped snapshots. Later pages of the
+same generation reuse it without another backend REPORT. A repeated
+`cursor=start` with the same query creates an independent generation instead of
+overwriting an unexpired one; budget pressure evicts the oldest generation, and
+its outstanding tokens then return `stale_cursor`. A partial failure is not
+cached. The snapshot is never written to disk or logs and disappears on process
+exit. A source edit after the first page is not visible to that generation, and
+`total` is that generation's snapshot count.
 
 `nextCursor` is emitted only when an explicit selection has a complete page with
 at least one later row. It is omitted on `partialFailure`, recurrence truncation,
@@ -300,9 +303,9 @@ budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
 
-`total` is the bounded snapshot count while the snapshot is live. If the last
-row identity disappears or changes after a refresh, the cursor is stale and the
-caller restarts. Within a live snapshot, inserted or moved rows do not appear.
+`total` is the bounded snapshot count while the generation is live. A token
+whose generation expired or was evicted is stale and the caller restarts. Within
+a live generation, inserted or moved rows do not appear.
 No provider-level snapshot isolation or exhaustive coverage is claimed.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.

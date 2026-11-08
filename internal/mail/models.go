@@ -40,9 +40,10 @@ type Config struct {
 // Mailbox is one bounded LIST response item. Delimiter is empty when the
 // server returned NIL.
 type Mailbox struct {
-	Name       string   `json:"name"`
-	Delimiter  string   `json:"delimiter,omitempty"`
-	Attributes []string `json:"attributes,omitempty"`
+	Name        string   `json:"name"`
+	Delimiter   string   `json:"delimiter,omitempty"`
+	Attributes  []string `json:"attributes,omitempty"`
+	AccessModes []string `json:"accessModes,omitempty"`
 }
 
 type ListMailboxesResult struct {

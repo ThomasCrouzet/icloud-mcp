@@ -406,3 +406,51 @@ func TestDuplicateExactUIDLookupFailsClosed(t *testing.T) {
 	_, err := client.GetContact(context.Background(), book.Identifier, "ClientA")
 	requireCode(t, err, CodeProtocolError)
 }
+
+func TestCreateContactReconcilesClientUID(t *testing.T) {
+	cards := map[string]string{"/home/book/imported-name.vcf": v3Card("client-x", "Imported")}
+	fixture := &multiCardFixture{cards: cards}
+	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+
+	result, err := client.CreateContact(context.Background(), &CreateContactInput{
+		AddressBook: book.Identifier,
+		DisplayName: "Imported",
+		Name:        StructuredName{FamilyName: "Imported"},
+		ClientUID:   "client-x",
+	})
+	if err != nil || !result.Reconciled || result.UID != "client-x" {
+		t.Fatalf("reconciled create = %#v, %v", result, err)
+	}
+	if len(fixture.recordsFor(http.MethodPut)) != 0 {
+		t.Fatal("reconciled create issued a PUT")
+	}
+
+	_, err = client.CreateContact(context.Background(), &CreateContactInput{
+		AddressBook: book.Identifier,
+		DisplayName: "Different",
+		Name:        StructuredName{FamilyName: "Different"},
+		ClientUID:   "client-x",
+	})
+	requireCode(t, err, CodeConflict)
+	if len(fixture.recordsFor(http.MethodPut)) != 0 {
+		t.Fatal("conflicting create issued a PUT")
+	}
+}
+
+func TestCreateContactUsesDeterministicResourceName(t *testing.T) {
+	fixture := &crudFixture{}
+	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	if _, err := client.CreateContact(context.Background(), &CreateContactInput{
+		AddressBook: book.Identifier, DisplayName: "Named", Name: StructuredName{FamilyName: "Named"},
+		ClientUID: "stable-client-uid",
+	}); err != nil {
+		t.Fatalf("CreateContact() error = %v", err)
+	}
+	puts := fixture.recordsFor(http.MethodPut)
+	want := "/home/book/" + deterministicContactResourceName("stable-client-uid")
+	if len(puts) != 1 || puts[0].path != want {
+		t.Fatalf("create target = %#v, want %s", puts, want)
+	}
+}

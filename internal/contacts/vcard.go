@@ -3,6 +3,7 @@ package contacts
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -945,6 +946,24 @@ func modeledAddresses(fields []*vcard.Field) ([]PostalAddress, FieldTruncation) 
 
 func cardIsGroup(card vcard.Card) bool {
 	return card.Kind() == vcard.KindGroup || strings.EqualFold(strings.TrimSpace(card.Value(appleGroupField)), "group")
+}
+
+// contactContentFingerprint compares the modeled content of an existing
+// contact. Resource identity, ETag, and truncation metadata are excluded.
+func contactContentFingerprint(object *addressObject) string {
+	return contactFingerprint(newCardView(object.card, object.raw), object.version)
+}
+
+func contactFingerprint(view cardView, version string) string {
+	detail := cardDetail(view, version, "", "")
+	detail.ETag = ""
+	detail.TruncatedFields = nil
+	detail.MatchedFieldOmitted = false
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func readableETag(etag string) string {

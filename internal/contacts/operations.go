@@ -2,7 +2,9 @@ package contacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/xml"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -368,17 +370,43 @@ func (c *Client) CreateContact(ctx context.Context, input *CreateContactInput) (
 			return CreateResult{}, err
 		}
 	}
-	resourceID, err := uuidV4()
-	if err != nil {
-		return CreateResult{}, err
+	// A supplied client UID uses a deterministic resource name, so a retry
+	// after a lost acknowledgement targets the same href and If-None-Match
+	// protects the logical identity even when the server does not enforce
+	// CARDDAV:no-uid-conflict across random paths.
+	resourceName := ""
+	if input.ClientUID != "" {
+		resourceName = deterministicContactResourceName(input.ClientUID)
+	} else {
+		resourceID, idErr := uuidV4()
+		if idErr != nil {
+			return CreateResult{}, idErr
+		}
+		resourceName = resourceID + ".vcf"
 	}
-	target := childResourceURL(book.url, resourceID+".vcf")
+	target := childResourceURL(book.url, resourceName)
 	if err := c.validateURL(target); err != nil {
 		return CreateResult{}, err
 	}
 	encoded, err := encodeNewCard(input, uid, book.public.MaxResourceSize)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	if input.ClientUID != "" {
+		existing, lookupErr := c.findByUID(ctx, book, uid)
+		if lookupErr == nil {
+			createdCard, createdVersion, createdRaw, decodeErr := decodeRawCard(encoded)
+			if decodeErr != nil {
+				return CreateResult{}, decodeErr
+			}
+			if contactContentFingerprint(existing) != contactFingerprint(newCardView(createdCard, createdRaw), createdVersion) {
+				return CreateResult{}, newError(CodeConflict, http.StatusConflict, "a contact with this UID already exists with different content")
+			}
+			return CreateResult{AddressBook: input.AddressBook, UID: uid, ETag: readableETag(existing.etag), Reconciled: true}, nil
+		}
+		if typed := AsError(lookupErr); typed == nil || typed.Code != CodeNotFound {
+			return CreateResult{}, lookupErr
+		}
 	}
 	header := make(http.Header)
 	header.Set("Content-Type", "text/vcard; charset=utf-8")
@@ -502,6 +530,11 @@ func (c *Client) DeleteContact(ctx context.Context, input *DeleteContactInput) (
 		return DeleteResult{}, classifyDAVError(response, false)
 	}
 	return result, nil
+}
+
+func deterministicContactResourceName(uid string) string {
+	sum := sha256.Sum256([]byte(uid))
+	return fmt.Sprintf("%x.vcf", sum[:16])
 }
 
 func childResourceURL(collection *url.URL, name string) *url.URL {

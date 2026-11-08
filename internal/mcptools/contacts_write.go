@@ -112,12 +112,15 @@ func parseCreateContactInput(args contactsRawArgs) (*contacts.CreateContactInput
 			*target = value
 		}
 	}
-	if input.ClientUID == "" {
-		if alias, present, parseErr := contactsString(args, "idempotency_key", false, contactsMaxUIDBytes, true); parseErr != nil {
-			return nil, parseErr
-		} else if present {
-			input.ClientUID = alias
+	alias, aliasPresent, aliasErr := contactsString(args, "idempotency_key", false, contactsMaxUIDBytes, true)
+	if aliasErr != nil {
+		return nil, aliasErr
+	}
+	if aliasPresent {
+		if input.ClientUID != "" && input.ClientUID != alias {
+			return nil, fmt.Errorf("client_uid and idempotency_key must be identical when both are supplied")
 		}
+		input.ClientUID = alias
 	}
 	if input.ClientUID != "" && strings.TrimSpace(input.ClientUID) == "" {
 		return nil, fmt.Errorf("client_uid cannot contain only whitespace")
