@@ -50,8 +50,8 @@ func TestAllDayRecurringCivilDayBoundary(t *testing.T) {
 	paris := mustLocation(t, "Europe/Paris")
 	master := Event{
 		UID: "all-day-series", AllDay: true,
-		StartTime: time.Date(2026, 3, 28, 0, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC),
+		StartTime:  time.Date(2026, 3, 28, 0, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC),
 		Recurrence: "FREQ=DAILY;COUNT=3",
 	}
 	start := time.Date(2026, 3, 28, 23, 30, 0, 0, time.UTC).In(paris)
