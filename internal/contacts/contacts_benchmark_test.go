@@ -2,8 +2,11 @@ package contacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -15,18 +18,33 @@ const (
 	contactsBenchmarkCount = 2000
 )
 
+type contactsBenchmarkCard struct {
+	href string
+	card string
+}
+
 func contactsBenchmarkReport() string {
-	cards := make(map[string]string, contactsBenchmarkCount)
+	cards := make([]contactsBenchmarkCard, 0, contactsBenchmarkCount)
 	for i := range contactsBenchmarkCount {
 		uid := fmt.Sprintf("u-%04d", i)
 		name := fmt.Sprintf("Contact %04d", i)
-		cards["/home/book/"+uid+".vcf"] = v3Card(uid, name,
-			fmt.Sprintf("EMAIL:contact-%04d@example.test", i),
-			fmt.Sprintf("TEL:+3310000%04d", i),
-			"ORG:Benchmark Org",
-		)
+		cards = append(cards, contactsBenchmarkCard{
+			href: "/home/book/" + uid + ".vcf",
+			card: v3Card(uid, name,
+				fmt.Sprintf("EMAIL:contact-%04d@example.test", i),
+				fmt.Sprintf("TEL:+3310000%04d", i),
+				"ORG:Benchmark Org",
+			),
+		})
 	}
-	return multiCardResponseXML(cards)
+	sort.Slice(cards, func(i, j int) bool { return cards[i].href < cards[j].href })
+	var body strings.Builder
+	body.WriteString(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">`)
+	for _, item := range cards {
+		body.WriteString(`<D:response><D:href>` + xmlEscape(item.href) + `</D:href><D:propstat><D:prop><D:getetag>&quot;e&quot;</D:getetag><C:address-data>` + xmlEscape(item.card) + `</C:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`)
+	}
+	body.WriteString(`</D:multistatus>`)
+	return body.String()
 }
 
 type contactsBenchmarkFixture struct {
@@ -76,6 +94,20 @@ func (f *contactsBenchmarkFixture) search(tb testing.TB) {
 	if result.ScanLimitReached || result.Truncated {
 		tb.Fatalf("contacts result reached a cap: %+v", result)
 	}
+}
+
+func TestContactsBenchmarkReportDeterministic(t *testing.T) {
+	first := contactsBenchmarkReport()
+	firstHash := sha256.Sum256([]byte(first))
+	for iteration := 0; iteration < 20; iteration++ {
+		later := contactsBenchmarkReport()
+		laterHash := sha256.Sum256([]byte(later))
+		if later != first {
+			t.Fatalf("contacts benchmark fixture bytes differ between runs: first=%d later=%d iteration=%d first_sha256=%x later_sha256=%x",
+				len(first), len(later), iteration, firstHash, laterHash)
+		}
+	}
+	t.Logf("fixture_seed=%s size=%d report_bytes=%d report_sha256=%x", contactsBenchmarkSeed, contactsBenchmarkCount, len(first), firstHash)
 }
 
 func TestContactsBenchmarkScenarios(t *testing.T) {

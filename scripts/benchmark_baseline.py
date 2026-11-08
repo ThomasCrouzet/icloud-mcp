@@ -30,10 +30,15 @@ PACKAGES = [
     "./internal/mail/imapadapter",
     "./internal/mcptools",
 ]
-SCENARIO_TESTS = (
-    "TestCalendarBenchmarkScenarios|TestContactsBenchmarkScenarios|"
-    "TestMailBenchmarkScenarios|TestIMAPWireBenchmarkScenario|TestMCPBenchmarkScenarios"
-)
+MODULE_PREFIX = "github.com/ThomasCrouzet/icloud-mcp"
+REQUIRED_SCENARIOS = {
+    f"{MODULE_PREFIX}/internal/icloud": "TestCalendarBenchmarkScenarios",
+    f"{MODULE_PREFIX}/internal/contacts": "TestContactsBenchmarkScenarios",
+    f"{MODULE_PREFIX}/internal/mail": "TestMailBenchmarkScenarios",
+    f"{MODULE_PREFIX}/internal/mail/imapadapter": "TestIMAPWireBenchmarkScenario",
+    f"{MODULE_PREFIX}/internal/mcptools": "TestMCPBenchmarkScenarios",
+}
+SCENARIO_TESTS = "|".join(REQUIRED_SCENARIOS.values())
 BENCH_LINE = re.compile(
     r"^(Benchmark\S+?)(?:-\d+)?\s+(\d+)\s+(\S+)\s+ns/op(?:\s+(.*))?$"
 )
@@ -56,6 +61,7 @@ REQUIRED_BENCHMARKS = {
     "BenchmarkMailGetNearLimitBody/NearLimitBody": ("payload-bytes", "refused", "service-call/op"),
     "BenchmarkMailGetNearLimitBody/OverLimitBodyRefusal": ("payload-bytes", "refused", "service-call/op"),
     "BenchmarkIMAPWireMetadata": ("wire-rpc/op", "metadata-messages", "header-bytes", "sparse-uid-base"),
+    "BenchmarkIMAPWireBodyNearLimit": ("wire-rpc/op", "body-bytes", "mime-header-bytes", "sparse-uid-base"),
     "BenchmarkAvailabilityBudget/HighCardinality": ("range-hours", "worker-limit"),
     "BenchmarkAvailabilityBudget/Overflow": ("range-hours", "worker-limit"),
     "BenchmarkAvailabilityBudget/ManyEmpty": ("range-hours", "worker-limit"),
@@ -215,26 +221,78 @@ def parse_benchmarks(log_text: str) -> list[dict]:
     return records
 
 
-def validate_baseline(records: list[dict], required: dict[str, tuple[str, ...]]) -> list[str]:
+def validate_baseline(
+    records: list[dict], required: dict[str, tuple[str, ...]], expected_count: int
+) -> list[str]:
+    if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 1:
+        return [f"requested count must be a positive integer, got {expected_count!r}"]
     errors: list[str] = []
     if not records:
         errors.append("no benchmark results were parsed")
+    by_name: dict[str, list[dict]] = {}
     for record in records:
-        if record.get("bytes_per_op") is None:
-            errors.append(f"{record.get('name', 'unknown')}: missing B/op")
-        if record.get("allocs_per_op") is None:
-            errors.append(f"{record.get('name', 'unknown')}: missing allocs/op")
-    by_name: dict[str, dict] = {}
-    for record in records:
-        by_name.setdefault(record["name"], record)
+        by_name.setdefault(record.get("name", "unknown"), []).append(record)
+    for name, samples in by_name.items():
+        if len(samples) != expected_count:
+            errors.append(f"sample count {len(samples)} for {name}, want {expected_count}")
+        for index, record in enumerate(samples, start=1):
+            if record.get("bytes_per_op") is None:
+                errors.append(f"{name} sample {index} of {expected_count}: missing B/op")
+            if record.get("allocs_per_op") is None:
+                errors.append(f"{name} sample {index} of {expected_count}: missing allocs/op")
     for name, required_metrics in required.items():
-        record = by_name.get(name)
-        if record is None:
+        samples = by_name.get(name)
+        if samples is None:
             errors.append(f"missing benchmark {name}")
             continue
-        for metric in required_metrics:
-            if metric not in record.get("custom_metrics", {}):
-                errors.append(f"missing metric {metric} for {name}")
+        for index, record in enumerate(samples, start=1):
+            for metric in required_metrics:
+                if metric not in record.get("custom_metrics", {}):
+                    errors.append(f"missing metric {metric} for {name} sample {index} of {expected_count}")
+    return errors
+
+
+def parse_scenario_events(log_text: str) -> list[dict]:
+    events: list[dict] = []
+    for line_number, line in enumerate(log_text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError as error:
+            raise BenchmarkParseError(f"scenario event line {line_number}: invalid JSON: {error}") from error
+        if not isinstance(event, dict):
+            raise BenchmarkParseError(f"scenario event line {line_number}: not a JSON object")
+        action = event.get("Action")
+        test = event.get("Test")
+        package = event.get("Package")
+        if action in {"run", "pass", "fail", "skip"} and test:
+            events.append({"action": action, "package": package, "test": test})
+    return events
+
+
+def validate_scenarios(events: list[dict], required: dict[str, str]) -> list[str]:
+    expected = {(package, test) for package, test in required.items()}
+    observed: dict[tuple[str, str], list[str]] = {}
+    for event in events:
+        key = (event.get("package"), event.get("test"))
+        if key in expected:
+            observed.setdefault(key, []).append(event.get("action", ""))
+    errors: list[str] = []
+    for package, test in sorted(expected):
+        actions = observed.get((package, test), [])
+        if not actions:
+            errors.append(f"missing scenario execution {test} in {package}")
+            continue
+        if "skip" in actions:
+            errors.append(f"scenario {test} in {package} was skipped")
+        if "fail" in actions:
+            errors.append(f"scenario {test} in {package} failed")
+        if "run" not in actions:
+            errors.append(f"scenario {test} in {package} did not run")
+        if "pass" not in actions:
+            errors.append(f"scenario {test} in {package} did not pass")
     return errors
 
 
@@ -296,9 +354,64 @@ def run_command(
     }
 
 
+def check_manifest(path_value: str, requested_count: int | None, allow_partial: bool) -> int:
+    path = Path(path_value).resolve()
+    validation_errors: list[str] = []
+    records: list[dict] = []
+    events: list[dict] = []
+    scenario_errors: list[str] = []
+    manifest_count = None
+    try:
+        data = json.loads(path.read_text())
+    except OSError as error:
+        validation_errors.append(f"cannot read manifest {path}: {error}")
+    except json.JSONDecodeError as error:
+        validation_errors.append(f"manifest {path} is invalid JSON: {error}")
+    else:
+        candidates = data.get("benchmarks")
+        if isinstance(candidates, list):
+            records = candidates
+        else:
+            validation_errors.append("manifest benchmarks must be a list")
+        settings = data.get("benchmark_settings")
+        if isinstance(settings, dict):
+            manifest_count = settings.get("count")
+        count = requested_count if requested_count is not None else manifest_count
+        required = {} if allow_partial else REQUIRED_BENCHMARKS
+        validation_errors.extend(validate_baseline(records, required, count))
+        scenario_events = data.get("scenario_events")
+        if isinstance(scenario_events, list):
+            events = scenario_events
+            scenario_errors = validate_scenarios(events, REQUIRED_SCENARIOS)
+        else:
+            scenario_errors = ["missing scenario events"]
+        validation_errors.extend(scenario_errors)
+    validation_ok = not validation_errors
+    complete = validation_ok and not allow_partial
+    print(
+        json.dumps(
+            {
+                "manifest": str(path),
+                "requested_count": requested_count,
+                "manifest_count": manifest_count,
+                "benchmark_records": len(records),
+                "benchmark_names": len({record.get("name") for record in records if isinstance(record, dict)}),
+                "scenario_events": len(events),
+                "scenario_validation_ok": not scenario_errors,
+                "validation_ok": validation_ok,
+                "complete": complete,
+                "validation_errors": validation_errors,
+            },
+            indent=2,
+        )
+    )
+    return 0 if validation_ok else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence-dir", required=True, help="Absolute output directory outside the repository")
+    parser.add_argument("--evidence-dir", help="Absolute output directory outside the repository")
+    parser.add_argument("--check-manifest", default=None, help="Validate a retained manifest and exit without running Go")
     parser.add_argument("--mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--bench", default="Benchmark", help="Go benchmark regular expression")
     parser.add_argument("--benchtime", default=None, help="Go -benchtime value; defaults to 1x for smoke and 500ms for full")
@@ -313,6 +426,13 @@ def main() -> int:
     parser.add_argument("--repo", default=None, help="Repository root; defaults to the current directory")
     args = parser.parse_args()
 
+    if args.count is not None and args.count < 1:
+        parser.error("--count must be a positive integer")
+    if args.check_manifest:
+        return check_manifest(args.check_manifest, args.count, args.allow_partial)
+    if not args.evidence_dir:
+        parser.error("--evidence-dir is required unless --check-manifest is used")
+
     repo = Path(args.repo or os.getcwd()).resolve()
     if not (repo / "go.mod").exists():
         parser.error(f"repository root is missing go.mod: {repo}")
@@ -325,7 +445,7 @@ def main() -> int:
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     benchtime = args.benchtime or ("1x" if args.mode == "smoke" else "500ms")
-    count = args.count or (1 if args.mode == "smoke" else 3)
+    count = args.count if args.count is not None else (1 if args.mode == "smoke" else 3)
 
     credential_names = sorted(name for name in os.environ if name.startswith("ICLOUD_"))
     env = {key: value for key, value in os.environ.items() if not key.startswith("ICLOUD_")}
@@ -347,7 +467,7 @@ def main() -> int:
         "-count=1",
         "-timeout",
         f"{max(60, args.timeout // 2)}s",
-        "-v",
+        "-json",
     ]
     bench_command = [
         "go",
@@ -367,12 +487,22 @@ def main() -> int:
 
     commands = []
     smoke = run_command(
-        smoke_command, repo, env, args.timeout, evidence_dir / "scenario-smoke.log", evidence_dir / "scenario-smoke.err"
+        smoke_command, repo, env, args.timeout, evidence_dir / "scenario-smoke.json", evidence_dir / "scenario-smoke.err"
     )
     commands.append(smoke)
+    scenario_events: list[dict] = []
+    scenario_errors: list[str] = []
+    try:
+        scenario_events = parse_scenario_events((evidence_dir / "scenario-smoke.json").read_text())
+    except BenchmarkParseError as error:
+        scenario_errors.append(str(error))
+    scenario_errors.extend(validate_scenarios(scenario_events, REQUIRED_SCENARIOS))
+    if smoke["exit_code"] != 0:
+        scenario_errors.insert(0, f"scenario command exited {smoke['exit_code']}")
+    (evidence_dir / "scenario-events.json").write_text(json.dumps(scenario_events, indent=2) + "\n")
     benches: list[dict] = []
     parse_error = None
-    if smoke["exit_code"] == 0:
+    if smoke["exit_code"] == 0 and not scenario_errors:
         bench = run_command(
             bench_command, repo, env, args.timeout, evidence_dir / "benchmark.log", evidence_dir / "benchmark.err"
         )
@@ -384,9 +514,10 @@ def main() -> int:
             except BenchmarkParseError as error:
                 parse_error = str(error)
     required = {} if args.allow_partial else REQUIRED_BENCHMARKS
-    validation_errors = validate_baseline(benches, required)
+    validation_errors = validate_baseline(benches, required, count)
     if parse_error:
         validation_errors.insert(0, f"benchmark parser rejected the raw log: {parse_error}")
+    validation_errors.extend(scenario_errors)
     validation_ok = not validation_errors
     complete = validation_ok and not args.allow_partial
 
@@ -418,11 +549,21 @@ def main() -> int:
         },
         "benchmarks": benches,
         "summary": summarise(benches),
+        "scenario_events": scenario_events,
+        "scenario_validation": {
+            "ok": not scenario_errors,
+            "errors": scenario_errors,
+            "expected": [
+                {"package": package, "test": test} for package, test in sorted(REQUIRED_SCENARIOS.items())
+            ],
+            "observed_events": len(scenario_events),
+        },
         "validation": {
             "ok": validation_ok,
             "complete": complete,
             "errors": validation_errors,
             "required_benchmark_count": len(required),
+            "requested_sample_count": count,
         },
         "limitations": [
             "The scenario smoke proves execution and business assertions, not statistical stability.",
@@ -447,6 +588,8 @@ def main() -> int:
         "validation_ok": validation_ok,
         "complete": complete,
         "validation_errors": validation_errors,
+        "scenario_validation_ok": not scenario_errors,
+        "scenario_errors": scenario_errors,
         "commands": [
             {"command": " ".join(command["command"]), "exit_code": command["exit_code"], "timed_out": command["timed_out"]}
             for command in commands

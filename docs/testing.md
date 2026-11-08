@@ -186,8 +186,24 @@ Each run writes these files outside the repository:
 | `manifest.json` | Source, environment, commands, exits, settings, parsed samples, summary, and limitations |
 | `benchmark.log` and `benchmark.err` | Raw Go benchmark output and standard error |
 | `benchmarks.json` | Parsed benchmark records, including raw lines |
-| `scenario-smoke.log` and `scenario-smoke.err` | One-pass correctness scenarios |
+| `scenario-smoke.json` and `scenario-smoke.err` | `go test -json` events for the one-pass correctness scenarios |
+| `scenario-events.json` | Minimal run, pass, fail, and skip events used for validation |
 | `environment-before.json` and `environment-after.json` | Host and toolchain snapshots |
+
+The complete predicate is exact. Every selected or required benchmark must
+report the requested positive integer sample count. Every sample must contain
+`ns/op`, `B/op`, `allocs/op`, and every required custom metric. An empty result,
+a truncated count, an extra count, or a missing field on any sample is rejected.
+The runner also requires all five expected scenario tests to emit `run` and
+`pass` events from `go test -json`, with zero `skip` or `fail` events. A
+legitimate partial benchmark selection is valid when each selected name is
+complete, but it stays incomplete.
+
+Revalidate a retained manifest without running Go:
+
+```bash
+python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.json --count 3
+```
 
 ### Scenario coverage
 
@@ -197,10 +213,11 @@ Each run writes these files outside the repository:
 | Calendar imported UID | `BenchmarkCalendarImportedUID` | One imported UID, direct `<uid>.ics` miss, plus or minus 50-year REPORT fallback | Cold uses 5 RPCs, warm discovery with a cold location cache uses 3, and a warm location cache uses 1; the internal path stays hidden |
 | Calendar fan-out and free slots | `BenchmarkAvailabilityBudget` | 4 calendars with 10,000 events, 1,024 calendars, and overflow cases | Existing accepted scenario retains the 10,000-event availability budget and four-read bound |
 | Calendar search and result | `BenchmarkSearchEventsSerialization` | 4 calendars with 10,000 events | 400 public results, 10,000 total, truncation, and 4 RPCs |
-| Contacts | `BenchmarkContactsParseSearch2000` | `contacts-index-v1`, 2,000 vCard 3.0 contacts | One query match, no scan cap, 4 cold RPCs, and 1 warm RPC |
+| Contacts | `BenchmarkContactsParseSearch2000` | `contacts-index-v1`, 2,000 sorted vCard 3.0 contacts with fixed REPORT bytes | One query match, no scan cap, 4 cold RPCs, and 1 warm RPC |
 | Mail sparse UID | `BenchmarkMailSearchSparseUID` | `mail-pattern-v1`, 30 candidates near UID 4,000,000,000 | 20 results, truncation, one bounded 5,000-UID window, and 3 service-session calls |
-| Mail body | `BenchmarkMailGetNearLimitBody` | 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
+| Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
 | Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
+| Mail wire body | `BenchmarkIMAPWireBodyNearLimit` | `imap-wire-metadata-v1`, one synthetic FETCH body over `net.Pipe` | 524,287 body bytes parsed through go-imap with the real adapter, and one wire FETCH per operation |
 | MCP refusals | `BenchmarkSearchEventsRefusals` | 10,001 materialized events, invalid limit, synthetic 429, and 2 ms cancellation | Safe error payloads, zero RPCs for input validation, and active cancellation |
 | MCP fan-out latency | `BenchmarkSearchEventsFanoutLatency` | 4 calendars with 1 ms synthetic peer latency | 4 RPCs, bounded 4-worker concurrency, and parallel elapsed time |
 | MCP schema | `BenchmarkMCPToolSchema` | `search_events` input and output schema | A non-empty serialized schema with declared properties |
@@ -210,7 +227,8 @@ The ordinary test scenarios `TestCalendarBenchmarkScenarios`,
 `TestIMAPWireBenchmarkScenario`, and `TestMCPBenchmarkScenarios` run under
 normal test discovery. They execute each fixture once and keep every business
 and refusal assertion. The Mail search scenario runs two operations. The
-scenarios prove execution, not statistical stability.
+recorder requires the five `go test -json` pass events. The scenarios prove
+execution, not statistical stability.
 
 ### Metrics and limits
 
@@ -233,10 +251,12 @@ transport frames. Mail `service-call/op` counts calls on the service test
 session. Mail `wire-rpc/op` counts actual IMAP FETCH commands parsed through the
 synthetic go-imap server and client. Mail session close commands are excluded.
 
-The Mail wire fixture sends one synthetic FETCH response through `net.Pipe` and
-parses it with the real go-imap client and adapter conversion. It covers
-metadata and curated headers for that response. It does not cover every live
-IMAP server behavior, a live mailbox, or Apple interoperability.
+The Mail wire fixture sends synthetic FETCH responses through `net.Pipe` and
+parses them with the real go-imap client and adapter conversion. It has two
+levels: metadata and curated headers, and a 524,287-byte body fetch with MIME
+header parsing. The service body benchmarks remain separate. The wire fixture
+does not cover every live IMAP server behavior, a live mailbox, or Apple
+interoperability.
 
 The Mail throughput benchmarks set the local read limiter to infinite for the
 measurement fixture. They measure per-operation work, not the 60-per-minute
