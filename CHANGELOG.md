@@ -6,7 +6,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-No unreleased changes.
+### Documentation
+- Record the verified `0.5.2` Registry record, three published MCPB packages,
+  hash and signature checks, and the retry after the first Registry asset
+  timeout.
 
 ## [0.5.2] - 2026-11-08
 

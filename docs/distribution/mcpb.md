@@ -31,8 +31,8 @@ builds from the same executable and text files have the same SHA-256.
 | Platform | Build | Bundle status |
 |----------|-------|---------------|
 | Linux amd64 | Native or cross build | Packaged. Verify runs the bundled binary on a Linux amd64 host. |
-| Linux arm64 | Cross build | Packaged. Structure and hash checks pass. No native run was performed here. |
-| macOS arm64 | Cross build | Packaged. Structure and hash checks pass. No native run was performed here. |
+| Linux arm64 | Cross build | Packaged. Native bundle smoke passes on `ubuntu-24.04-arm` in the tag workflow. |
+| macOS arm64 | Cross build | Packaged. Native bundle smoke passes on `macos-15` in the tag workflow. |
 | Windows amd64 | Compile only | Not packaged. `build` refuses `windows/amd64` unless `--allow-untested-windows` is passed. |
 
 Only linux/amd64, linux/arm64, and darwin/arm64 are release targets. The Windows
@@ -205,8 +205,8 @@ Checked on 2026-11-08.
 | Deterministic bundle build | Verified locally with synthetic and native fixtures. |
 | Manifest v0.4 validation | Verified locally with `@anthropic-ai/mcpb` 2.1.2. |
 | Linux amd64 bundle binary `-version` | Verified locally. |
-| linux/arm64 and darwin/arm64 structure and hash | Verified locally. Native run requires the matching CI runner. |
+| linux/arm64 and darwin/arm64 structure, hash, and native run | Verified on the matching CI runners for `v0.5.2`. |
 | Windows bundle | Not produced. Compile only. |
-| Release asset build, smoke, and signing of MCPB files | Wired in the tag workflow. No tagged release with bundles exists yet. |
-| Official Registry publication with packages | Workflow wired and fail-closed. No publication with packages yet. |
+| Release asset build, smoke, and signing of MCPB files | Verified for `v0.5.2`: three signed bundles with hashes in the checksums file. |
+| Official Registry publication with packages | Published `0.5.2` with three packages on 2026-11-08; `make check-registry` passes. |
 | MCPB client installation | Not performed and not claimed. |
