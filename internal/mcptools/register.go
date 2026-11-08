@@ -40,6 +40,12 @@ type Deps struct {
 	ReadOnly       bool
 	HealthEnabled  bool
 	ResourceScopes config.ResourceScopes
+
+	// CalendarWriteExplicit and CalendarDeleteExplicit report an operator
+	// capability grant from ICLOUD_MCP_PERMISSIONS. They gate the
+	// group-scheduled approval path; a legacy switch is not sufficient.
+	CalendarWriteExplicit  bool
+	CalendarDeleteExplicit bool
 }
 
 // CapabilityPlan is the immutable, effective registration plan. Its private

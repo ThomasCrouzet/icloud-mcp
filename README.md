@@ -284,7 +284,9 @@ or send without Mail is a boot error. Prefer exact recipient addresses: literal
 
 For Calendar times, use an explicit RFC3339 offset or a local time without an
 offset in `ICLOUD_MCP_DEFAULT_TZ`. Do not label a local hour with `Z`. Timed
-results include an explicit numeric offset; all-day dates use `YYYY-MM-DD`.
+results include an explicit numeric offset; all-day dates use `YYYY-MM-DD`. A
+floating source value stays offset-free and sets `isFloating`. A recurrence
+occurrence resolved from a spring gap sets `dstAdjusted`.
 See the [full configuration and date rules](docs/agent-hosts.md#configuration-reference)
 for log-level forms and optional-domain examples.
 
@@ -302,7 +304,7 @@ advance notices and explicit configuration to retain writes.
 | Logs | stdout is reserved for JSON-RPC. Operational logs and mutation audits go to stderr. `-audit-format=json` is the default; `text` is also supported. |
 | Health | Disabled by default. `-health 127.0.0.1:8797` enables loopback-only `/healthz` and `/status` with domain status and rate limits. Enabled domains start as `not_checked`. Use `-doctor` for bounded read-only probes. These are monitoring endpoints; MCP remains stdio. |
 | Read retries | Calendar and Contacts retry bounded HTTP status failures. A transient IMAP read can use one replacement session. |
-| Mutations | Calendar/Contacts writes, IMAP mutations, and SMTP never replay automatically. An `outcome_unknown` result requires reconciliation before another mutation. |
+| Mutations | Calendar/Contacts writes, IMAP mutations, and SMTP never replay automatically. An `outcome_unknown` result requires reconciliation before another mutation. An event with organizer or attendee metadata stays denied until an explicit operator permission grant, `acknowledge_scheduling=true`, and the current strong ETag are present. |
 | Update keys | `update_event` and `update_contact` retain keyed results in memory. Known results last 15 minutes; uncertain results remain until process exit. Restart removes the cache without resolving outcomes. |
 
 Use strong ETags for Calendar and Contacts updates and deletes. Creates use

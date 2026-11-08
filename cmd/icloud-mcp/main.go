@@ -162,6 +162,9 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 		Version:         version,
 		HealthEnabled:   healthEnabled,
 		ResourceScopes:  cfg.ResourceScopes,
+
+		CalendarWriteExplicit:  cfg.Permissions.ExplicitCalendarWrite(),
+		CalendarDeleteExplicit: cfg.Permissions.ExplicitCalendarDelete(),
 	}, plan)
 
 	// 6. Optional healthcheck (off by default).

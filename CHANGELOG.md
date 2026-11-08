@@ -6,6 +6,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Deny updates and deletes of an event with `ORGANIZER` or `ATTENDEE` by
+  default. The approved path needs an explicit `ICLOUD_MCP_PERMISSIONS` grant,
+  `acknowledge_scheduling=true`, and the current strong ETag. `get_event` and a
+  deletion `dry_run` report a non-sensitive risk without attendee addresses.
+- Preserve floating iCalendar values. `isFloating` marks an offset-free local
+  value; availability interprets it in the requested timezone.
+- Expand zoned recurrences on the wall clock. A spring-gap occurrence uses the
+  pre-gap offset and sets `dstAdjusted`; a fold uses the first occurrence.
+- Reject an EXDATE whose value type cannot match DTSTART, and an
+  agent-supplied local start in a daylight-saving gap.
+- `calendar_capabilities.outputFormat` is
+  `RFC3339_with_offset_or_floating`. The features map adds `floating_time` and
+  `dst_gap_fold_policy`.
+
 ### Documentation
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset

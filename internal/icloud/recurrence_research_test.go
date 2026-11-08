@@ -354,9 +354,11 @@ func TestResearchRecurrenceOccurrenceUpdatePreservesMasterAndDropsSchedulingOnOv
 	title := "Occurrence changed"
 	recID := time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC)
 	if err := m.client().UpdateEvent(context.Background(), testHomeCalendar, uid, &EventUpdate{
-		Title:        &title,
-		Scope:        ScopeOccurrence,
-		RecurrenceID: &recID,
+		Title:               &title,
+		Scope:               ScopeOccurrence,
+		RecurrenceID:        &recID,
+		IfMatchETag:         `"v1"`,
+		AllowGroupScheduled: true,
 	}); err != nil {
 		t.Fatalf("UpdateEvent: %v", err)
 	}
@@ -416,8 +418,10 @@ func TestResearchRecurrenceOccurrenceDeleteAddsExdateWithoutSeriesDelete(t *test
 
 	recID := time.Date(2026, time.July, 2, 10, 0, 0, 0, time.UTC)
 	if _, err := m.client().DeleteEvent(context.Background(), testHomeCalendar, uid, &DeleteOptions{
-		Scope:        ScopeOccurrence,
-		RecurrenceID: &recID,
+		Scope:               ScopeOccurrence,
+		RecurrenceID:        &recID,
+		IfMatchETag:         `"v1"`,
+		AllowGroupScheduled: true,
 	}); err != nil {
 		t.Fatalf("DeleteEvent: %v", err)
 	}
@@ -458,7 +462,9 @@ func TestResearchInvitationsSeriesUpdatePreservesSchedulingAndUnknownProperties(
 
 	title := "Series renamed"
 	if err := m.client().UpdateEvent(context.Background(), testHomeCalendar, uid, &EventUpdate{
-		Title: &title,
+		Title:               &title,
+		IfMatchETag:         `"v1"`,
+		AllowGroupScheduled: true,
 	}); err != nil {
 		t.Fatalf("UpdateEvent: %v", err)
 	}

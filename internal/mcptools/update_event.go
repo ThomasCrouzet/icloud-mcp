@@ -31,6 +31,7 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("recurrence_id", mcp.Description("Required for scope=occurrence; copy search_events.recurrenceId. All-day uses YYYY-MM-DD; timed values follow "+datetimeParamDescription("start", defaultLoc))),
 		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *")),
 		mcp.WithString("idempotency_key", mcp.MaxLength(icloud.MaxUIDLen), mcp.Description("Process-local key. Known outcomes stay 15 minutes; uncertain outcomes stay until process exit. Reconcile uncertain outcomes before using a new key. Different parameters conflict.")),
+		mcp.WithBoolean("acknowledge_scheduling", mcp.Description("Required for an event with organizer or attendee metadata. Use only after reviewing the notification risk; requires an explicit operator ICLOUD_MCP_PERMISSIONS grant and the current strong etag.")),
 	)
 }
 
@@ -76,8 +77,13 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err := icloud.ValidateIfMatchETag(etag); err != nil {
 			return deny("etag parameter", err)
 		}
+		acknowledgeScheduling, err := optionalBoolArg(req, "acknowledge_scheduling", false)
+		if err != nil {
+			return deny("validation", err)
+		}
 		update := &icloud.EventUpdate{
-			IfMatchETag: etag,
+			IfMatchETag:         etag,
+			AllowGroupScheduled: deps.CalendarWriteExplicit && acknowledgeScheduling,
 		}
 
 		optionalString := func(key string) (string, bool, error) {

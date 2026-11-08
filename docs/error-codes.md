@@ -22,7 +22,7 @@ Contacts, and Mail use the same public codes.
 |------|-----------|----------|
 | `validation` | no | Fix arguments; do not retry unchanged. |
 | `authentication` | no | Refresh app-specific password; do not retry. |
-| `authorization` | no | Check permission or quota. Do not retry without a change. |
+| `authorization` | no | Check permission or quota. Do not retry without a change. A group-scheduled event mutation also uses this code until the operator grant, acknowledgement, and current strong ETag are present. |
 | `not_found` | no | The resource is gone. List resources again if necessary. |
 | `conflict` | no | The create UID exists or the resource state conflicts. Key conflicts and a full cache also use this code. See the recovery rules below. |
 | `concurrent_modification` | no | Re-read with `get_*`, then patch with fresh `etag`. |

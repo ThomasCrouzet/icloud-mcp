@@ -295,6 +295,8 @@ type searchCursorRowIdentity struct {
 	Location     string `json:"location"`
 	Notes        string `json:"notes"`
 	AllDay       bool   `json:"allDay"`
+	IsFloating   bool   `json:"isFloating"`
+	DSTAdjusted  bool   `json:"dstAdjusted"`
 	Recurrence   string `json:"recurrence"`
 	Timezone     string `json:"timezone"`
 	Status       string `json:"status"`
@@ -325,6 +327,8 @@ func newSearchCursorRow(event icloud.Event) searchCursorRow {
 		Location:     event.Location,
 		Notes:        event.Notes,
 		AllDay:       event.AllDay,
+		IsFloating:   event.IsFloating,
+		DSTAdjusted:  event.DSTAdjusted,
 		Recurrence:   event.Recurrence,
 		Timezone:     event.Timezone,
 		Status:       event.Status,
