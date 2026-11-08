@@ -141,7 +141,7 @@ Use the pinned Go version from `go.mod` and the release flags. Build the
 archives first, then build bundles from the archives:
 
 ```bash
-VERSION=v0.5.1
+VERSION=v1.0.0
 make release-all VERSION="$VERSION"
 for target in linux/amd64 linux/arm64 darwin/arm64; do
   python3 scripts/mcpb.py build \
@@ -168,8 +168,8 @@ sha256sum dist/*.mcpb
 "packages": [
   {
     "registryType": "mcpb",
-    "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.1/icloud-mcp-v0.5.1-linux-amd64.mcpb",
-    "version": "0.5.1",
+    "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-linux-amd64.mcpb",
+    "version": "1.0.0",
     "fileSha256": "<64 lowercase hex characters>",
     "transport": {
       "type": "stdio"
@@ -267,7 +267,7 @@ the publisher status command, then verify again:
 
 ```bash
 /tmp/mcpbin/publisher status --status deprecated \
-  --message "Superseded by v0.5.2" \
+  --message "Superseded by v1.0.0" \
   io.github.ThomasCrouzet/icloud-mcp 0.5.1
 ```
 

@@ -23,7 +23,7 @@
   <text x="338" y="296" class="body">Calendar always enabled</text>
   <text x="338" y="324" class="body">Optional Contacts and Mail</text>
   <text x="338" y="352" class="body">Read-only removes writes</text>
-  <text x="338" y="397" class="small">7 read-only / 10 default / 23 max</text>
+  <text x="338" y="397" class="small">7 default / 24 max</text>
   <path d="M596 327H628V215H662" class="line"/>
   <path d="M628 327V305H662" class="line"/>
   <path d="M628 327V395H662" class="line"/>

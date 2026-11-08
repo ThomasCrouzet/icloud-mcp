@@ -95,9 +95,9 @@ The following table groups the complete surface:
 | Mail mutation | none | `set_message_flags`, `move_message`, `trash_message` |
 | Mail send | none | `send_message`, `reply_message` |
 
-Default registration has 10 tools: nine Calendar tools and the global capability
-tool. Global read-only with optional domains disabled has seven tools. The
-complete surface has 24 tools. Disabled tools have no handler. Disabled optional
+Default registration has seven tools: six Calendar read tools and the global
+capability tool. An explicit operator profile can enable the complete 24-tool
+surface. Disabled tools have no handler. Disabled optional
 domains have no client.
 
 The same immutable registration plan generates the local
@@ -124,8 +124,8 @@ The server exposes at most **24** tools. Disabled tools are absent from
 | Mail mutation | `set_message_flags`, `move_message`, `trash_message` |
 | Mail send | `send_message`, `reply_message` |
 
-The default surface has 10 tools. Global read-only with optional domains off
-has 7 tools. The complete surface has 24 tools.
+The default surface has seven read-only tools. The complete surface has 24
+tools with explicit permissions and domain gates.
 
 ## Domain request paths
 
