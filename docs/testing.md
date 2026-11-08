@@ -238,6 +238,11 @@ parses it with the real go-imap client and adapter conversion. It covers
 metadata and curated headers for that response. It does not cover every live
 IMAP server behavior, a live mailbox, or Apple interoperability.
 
+The Mail throughput benchmarks set the local read limiter to infinite for the
+measurement fixture. They measure per-operation work, not the 60-per-minute
+product gate. Existing Mail tests assert that the 11th burst read is rate
+limited, and the MCP refusal benchmark covers a synthetic rate-limit response.
+
 The suite covers cold and warm discovery for Calendar imported UID and Contacts.
 Calendar fan-out is parallel with at most four workers. Mail search windows and
 Contacts book scans are sequential. Synthetic latency, errors, rate-limit

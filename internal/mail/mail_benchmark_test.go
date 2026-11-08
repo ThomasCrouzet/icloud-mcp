@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/mail/imapadapter"
+	"golang.org/x/time/rate"
 )
 
 // Deterministic offline Mail benchmark fixtures. The sparse UID base is near
@@ -34,6 +35,10 @@ func newMailBenchmarkService(tb testing.TB, imap *fakeIMAP) *Client {
 		tb.Fatal(err)
 	}
 	service.now = func() time.Time { return time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC) }
+	// The throughput fixture disables the local read limiter so a large N
+	// measures per-operation work instead of the 60-per-minute product gate.
+	// Existing service tests assert that the 11th burst read is rate limited.
+	service.readLimiter = rate.NewLimiter(rate.Inf, 1)
 	return service
 }
 
