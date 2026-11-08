@@ -102,26 +102,26 @@ outside the repository for the source files.
 
 ```bash
 stage="$(mktemp -d)"
-go build -trimpath -ldflags='-s -w -X main.version=v0.5.1' \
+go build -trimpath -ldflags='-s -w -X main.version=v1.0.0' \
   -o "$stage/icloud-mcp" ./cmd/icloud-mcp
 cp LICENSE THIRD_PARTY_NOTICES.md "$stage/"
 python3 scripts/mcpb.py build \
-  --source "$stage" --target linux/amd64 --version v0.5.1
+  --source "$stage" --target linux/amd64 --version v1.0.0
 python3 scripts/mcpb.py verify \
-  dist/icloud-mcp-v0.5.1-linux-amd64.mcpb
+  dist/icloud-mcp-v1.0.0-linux-amd64.mcpb
 smoke="$(mktemp -d)"
-python3 -m zipfile -e dist/icloud-mcp-v0.5.1-linux-amd64.mcpb "$smoke"
+python3 -m zipfile -e dist/icloud-mcp-v1.0.0-linux-amd64.mcpb "$smoke"
 npx -y @anthropic-ai/mcpb@2.1.2 validate "$smoke/manifest.json"
 npx -y @anthropic-ai/mcpb@2.1.2 info \
-  dist/icloud-mcp-v0.5.1-linux-amd64.mcpb
+  dist/icloud-mcp-v1.0.0-linux-amd64.mcpb
 ```
 
 The build accepts a release archive instead of a directory:
 
 ```bash
 python3 scripts/mcpb.py build \
-  --source dist/icloud-mcp-v0.5.1-linux-amd64.tar.gz \
-  --target linux/amd64 --version v0.5.1
+  --source dist/icloud-mcp-v1.0.0-linux-amd64.tar.gz \
+  --target linux/amd64 --version v1.0.0
 ```
 
 `verify` prints one JSON object. It checks the entry set, manifest fields,
@@ -134,19 +134,19 @@ architecture; that mode still checks every structural and hash rule.
 Inspect the manifest without building:
 
 ```bash
-python3 scripts/mcpb.py manifest --target darwin/arm64 --version v0.5.1
+python3 scripts/mcpb.py manifest --target darwin/arm64 --version v1.0.0
 ```
 
 Smoke test an extracted bundle:
 
 ```bash
 smoke="$(mktemp -d)"
-python3 -m zipfile -e dist/icloud-mcp-v0.5.1-linux-amd64.mcpb "$smoke"
+python3 -m zipfile -e dist/icloud-mcp-v1.0.0-linux-amd64.mcpb "$smoke"
 chmod 755 "$smoke/server/icloud-mcp"
 "$smoke/server/icloud-mcp" -version
 ```
 
-The expected output is `v0.5.1`.
+The expected output is `v1.0.0`.
 
 `python3 scripts/check_release.py packages --dir dist` verifies every bundle
 claimed by `server.json`. It recomputes each SHA-256 and reads each manifest. It
@@ -234,7 +234,7 @@ the expected read-only shape without a host or account.
 cosign verify-blob \
   --certificate bundle.mcpb.pem \
   --signature bundle.mcpb.sig \
-  --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v0.5.1" \
+  --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.0.0" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   bundle.mcpb
 ```

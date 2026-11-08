@@ -12,9 +12,10 @@ an attacker can manipulate the host LLM and invoke any registered tool. This
 assumption applies to all hosts and model vendors.
 
 The effective blast radius includes all enabled domains and capabilities for
-one configured iCloud account. If you disable global read-only mode, the host
-can change Calendar and Contacts data. It can also change Mail flags, move or
-trash messages, and send Mail to configured recipients.
+one configured iCloud account. Global read-only is the safe default. If you
+explicitly grant Calendar or Contacts write permissions, the host can change
+that data. If you grant Mail mutation or send permissions, it can change flags,
+move or trash messages, and send Mail to configured recipients.
 
 ### Shared-process residual risk
 

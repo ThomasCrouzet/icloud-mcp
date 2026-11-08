@@ -97,9 +97,10 @@ without Calendar, Contacts, or Mail mutation tools.
 <!-- readme:section interface -->
 ## MCP tools
 
-The server registers **10 tools by default**, **7 with global read-only and
-optional domains off**, and **24 with all gates on**. Disabled tools are absent
-from discovery. The MCP interface provides tools over **stdio**.
+The server registers **7 tools with the default read-only profile**, including
+the global capability tool, and **24 when explicit permissions and domain gates enable every capability**.
+Disabled tools are absent from discovery. The MCP interface provides tools over
+**stdio**.
 
 | Tool | Input | Result | Account changes |
 |---|---|---|---|
@@ -161,23 +162,23 @@ exists, this page does not claim that an MCPB host install was performed.
 ### Path A: MCPB bundle (host installation unverified)
 
 1. Download the bundle for your platform from the
-   [`v0.5.2` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v0.5.2):
-   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-amd64.mcpb),
-   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-arm64.mcpb),
+   [`v1.0.0` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v1.0.0):
+   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-linux-amd64.mcpb),
+   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-linux-arm64.mcpb),
    or
-   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-darwin-arm64.mcpb).
+   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-darwin-arm64.mcpb).
 2. Download
-   [`icloud-mcp-v0.5.2-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-checksums.txt)
+   [`icloud-mcp-v1.0.0-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-checksums.txt)
    and the matching `.sig` and `.pem` files. Verify the bytes:
 
    ```sh
-   shasum -a 256 -c icloud-mcp-v0.5.2-checksums.txt
+   shasum -a 256 -c icloud-mcp-v1.0.0-checksums.txt
    cosign verify-blob \
-     --certificate icloud-mcp-v0.5.2-linux-amd64.mcpb.pem \
-     --signature icloud-mcp-v0.5.2-linux-amd64.mcpb.sig \
-     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v0.5.2" \
+     --certificate icloud-mcp-v1.0.0-linux-amd64.mcpb.pem \
+     --signature icloud-mcp-v1.0.0-linux-amd64.mcpb.sig \
+     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.0.0" \
      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-     icloud-mcp-v0.5.2-linux-amd64.mcpb
+     icloud-mcp-v1.0.0-linux-amd64.mcpb
    ```
 
 3. Open the `.mcpb` file in your MCPB-capable host, or use that host's install
@@ -209,7 +210,7 @@ Download the archive for Linux amd64/arm64 or macOS arm64 from the
 checksum and signature, then extract it:
 
 ```sh
-tar -xzf icloud-mcp-v0.5.2-linux-amd64.tar.gz
+tar -xzf icloud-mcp-v1.0.0-linux-amd64.tar.gz
 ./icloud-mcp -version
 ```
 
@@ -353,12 +354,12 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_MCP_RESOURCE_SCOPES` | No | All resources | Per-action Calendar, Contacts, and Mail resource allowlists |
 | `ICLOUD_MCP_LOG_LEVEL` | No | `info` | Operational stderr log level |
 | `ICLOUD_MCP_DEFAULT_TZ` | No | `UTC` | IANA zone for Calendar times without an offset and recurring-write fallback |
-| `ICLOUD_MCP_ENABLE_CONTACTS` | No | `false` | Enable Contacts; writes also require read-only to be off |
+| `ICLOUD_MCP_ENABLE_CONTACTS` | No | `false` | Enable Contacts reads; writes require `contacts.write` or `contacts.delete` |
 | `ICLOUD_MCP_ENABLE_MAIL` | No | `false` | Enable Mail reads |
 | `ICLOUD_MAIL_ADDRESS` | When Mail is on | None | Full iCloud Mail address; supports `file://` |
 | `ICLOUD_MAIL_PASSWORD` | No | `ICLOUD_PASSWORD` | Separate Mail app-specific password; supports `file://` |
-| `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No | `false` | Enable IMAP mutations; requires Mail |
-| `ICLOUD_MCP_ENABLE_MAIL_SEND` | No | `false` | Enable SMTP send; requires Mail and a recipient policy |
+| `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No | `false` | Compatibility gate only; Mail mutation requires `mail.mutate` or `mail.trash` |
+| `ICLOUD_MCP_ENABLE_MAIL_SEND` | No | `false` | Compatibility gate only; send requires `mail.send` and a recipient policy |
 | `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | When send is requested | None | Comma-separated exact addresses, or literal `*` |
 
 Boolean values accept unset, `0`, `false`, `1`, and `true`; the parser trims
@@ -375,10 +376,13 @@ occurrence resolved from a spring gap sets `dstAdjusted`.
 See the [full configuration and date rules](docs/agent-hosts.md#configuration-reference)
 for log-level forms and optional-domain examples.
 
-The future default-read-only migration targets **breaking v1.0.0**, not a
-v0.5.x patch. This change does not flip any current default or release a version.
-See the [migration plan](docs/agent-hosts.md#future-v100-default-migration) for
-advance notices and explicit configuration to retain writes.
+Version **1.0.0** makes read-only the default. An unset
+`ICLOUD_MCP_PERMISSIONS` grants reads only; a domain switch or
+`ICLOUD_MCP_READ_ONLY=false` does not grant an effect. Existing v0.x
+configurations that relied on implicit Calendar or Contacts writes must add the
+exact tokens before upgrading. See the
+[v1.0.0 migration](docs/agent-hosts.md#v100-default-migration) for the token
+list and examples.
 
 <!-- readme:section operations -->
 ## Operations

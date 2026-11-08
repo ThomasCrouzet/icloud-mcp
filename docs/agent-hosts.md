@@ -35,12 +35,12 @@ Exactly **14** product environment variables:
 | `ICLOUD_MCP_RESOURCE_SCOPES` | all resources | Optional action resource allowlists for Calendar paths, Contacts address books, and Mail mailboxes. |
 | `ICLOUD_MCP_LOG_LEVEL` | `info` | Stderr level. See the accepted forms below. |
 | `ICLOUD_MCP_DEFAULT_TZ` | `UTC` | IANA zone for offset-less Calendar inputs and recurring-write fallback. |
-| `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts tools. Writes require read-only mode to be off. |
+| `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts reads. Writes require `contacts.write` or `contacts.delete`. |
 | `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads. Requires a Mail address and password. |
 | `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
 | `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
-| `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Three IMAP mutation tools. |
-| `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | `send_message` and `reply_message` (independent of Mail write). |
+| `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Compatibility gate. Mutation tools require `mail.mutate` or `mail.trash`. |
+| `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | Compatibility gate. Send tools require `mail.send`. |
 | `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send is on. Use exact addresses or literal `*`. Literal `*` causes a boot warning. Use exact addresses when possible. |
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
@@ -51,8 +51,9 @@ before the server starts.
 
 Mail write or send without Mail causes a boot error. Mail without an address or
 password also causes a boot error. Send without a recipient policy causes a
-boot error, including in read-only mode. Global read-only can coexist with write
-and send flags, but it prevents their registration.
+boot error, including in read-only mode. The Mail write and send flags are
+compatibility gates only: they never grant a tool. Global read-only can coexist
+with them, but it prevents registration of any effect.
 
 `ICLOUD_MCP_RESOURCE_SCOPES` uses `action=value[,value]` entries separated by
 `;`. Actions are `calendar.read`, `calendar.write`, `calendar.delete`,
@@ -66,11 +67,11 @@ before network access.
 
 `ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
 `calendar.delete`, `contacts.read`, `contacts.write`, `contacts.delete`,
-`mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`. Unknown, duplicate,
-or empty tokens cause a boot error. A Contacts or Mail token needs its domain
-switch. When the variable is set, it replaces `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
-`ICLOUD_MCP_ENABLE_MAIL_SEND`, and the implicit Calendar and Contacts write
-rules. Global read-only still removes every mutation and send tool.
+`mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`.
+Unknown, duplicate, or empty tokens cause a boot error. A Contacts or Mail token
+needs its domain switch. An unset or empty value grants reads only for the
+enabled domains. Name every effect. The Mail write and send flags do not add
+one. Global read-only still removes every mutation and send tool.
 
 The server trims log levels and ignores case. It accepts `debug` or `-4`,
 `info`, `warn`, `warning`, or `2`, and `error` or `4`. Unset or unrecognized
@@ -167,8 +168,8 @@ live account tool or `-doctor`. Dependencies must already be available for a
 fully disconnected build. Keep the result JSON, transcripts, and fixture identities private.
 
 The Go scenarios load the same files and clear inherited `ICLOUD_*` values.
-They verify exact manifests, unrelated gates, missing domain gates, legacy defaults,
-and denied effects. Genuine handlers and services use counted synthetic DAV and
+They verify exact manifests, unrelated gates, missing domain gates, safe
+read-only defaults, explicit profiles, and denied effects. Genuine handlers and services use counted synthetic DAV and
 verified STARTTLS Mail peers. Allowed writes and send must act exactly once;
 forbidden resources and recipients must fail before backend access without disclosure.
 

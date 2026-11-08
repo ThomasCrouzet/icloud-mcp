@@ -38,14 +38,13 @@ icloud-mcp -help
 | Version | Available diagnostics |
 |---|---|
 | v0.4.3 | No `-doctor` or `-doctor-format` flags. Use the credential-free checks below. |
-| v0.5.0 and v0.5.1 | `-doctor` and `-doctor-format=json` run bounded, authenticated, read-only domain probes. Mail failures report a sanitized error code. |
-| Unreleased source | The same probes add optional Mail `stage` and `reason` fields for observed connection, TLS, or LOGIN rejection failures. |
+| v0.5.0 to v1.0.0 | `-doctor` and `-doctor-format=json` run bounded, authenticated, read-only domain probes. Mail failures report a sanitized error code. v0.5.2 and v1.0.0 also add optional Mail `stage` and `reason` fields for observed connection, TLS, or LOGIN rejection failures. |
 
 The v0.4.3 statement comes from its
 [tagged command source](https://github.com/ThomasCrouzet/icloud-mcp/blob/v0.4.3/cmd/icloud-mcp/main.go).
 The released doctor behavior appears in the
-[v0.5.1 command source](https://github.com/ThomasCrouzet/icloud-mcp/blob/v0.5.1/cmd/icloud-mcp/doctor.go).
-Unreleased source is not a promise about an installed binary.
+[v1.0.0 command source](https://github.com/ThomasCrouzet/icloud-mcp/blob/v1.0.0/cmd/icloud-mcp/doctor.go).
+Check the installed binary version before relying on a diagnostic field.
 Check `-version` and `-help` before using these flags.
 
 With a supporting binary and your existing local credential configuration, run

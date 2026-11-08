@@ -4,10 +4,16 @@ This file documents all notable project changes. It uses the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-11-08
+
+This major release makes read-only the default. Calendar, Contacts, and Mail
+effects now require explicit permission tokens. It also adds group-scheduled
+mutation approval, floating and DST-aware Calendar time semantics, modern
+`2026-07-28` MCP protocol support, bounded cursor snapshots, exact release
+candidate provenance, and a new persistent-release path.
 
 ### Changed
-- **Breaking, target v1.0.0:** an unset `ICLOUD_MCP_PERMISSIONS` now grants
+- **Breaking:** an unset `ICLOUD_MCP_PERMISSIONS` now grants
   reads only. Domain switches, `ICLOUD_MCP_ENABLE_MAIL_WRITE`,
   `ICLOUD_MCP_ENABLE_MAIL_SEND`, and `ICLOUD_MCP_READ_ONLY=false` no longer
   imply an effect. Name `calendar.write`, `calendar.delete`, `contacts.write`,

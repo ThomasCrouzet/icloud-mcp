@@ -138,7 +138,8 @@ def manifest_for(target, version, allow_untested_windows=False):
             "title": "Capability list",
             "description": (
                 "Optional comma-separated capabilities, for example "
-                "calendar.read,calendar.write. Empty uses the documented switches."
+                "calendar.read,calendar.write. Empty grants reads only; name "
+                "every effect explicitly."
             ),
             "required": False,
             "sensitive": False,
@@ -165,7 +166,8 @@ def manifest_for(target, version, allow_untested_windows=False):
             "type": "string",
             "title": "Enable Contacts",
             "description": (
-                "true enables Contacts. Writes follow read_only and permissions."
+                "true enables Contacts reads. Writes require contacts.write or "
+                "contacts.delete in permissions."
             ),
             "required": False,
             "default": "false",
@@ -199,7 +201,10 @@ def manifest_for(target, version, allow_untested_windows=False):
         "enable_mail_write": {
             "type": "string",
             "title": "Enable Mail mutation",
-            "description": "true enables Mail flag, move, and trash tools.",
+            "description": (
+                "Compatibility gate. Mail mutation tools require mail.mutate or "
+                "mail.trash in permissions."
+            ),
             "required": False,
             "default": "false",
             "sensitive": False,
@@ -208,7 +213,8 @@ def manifest_for(target, version, allow_untested_windows=False):
             "type": "string",
             "title": "Enable Mail send",
             "description": (
-                "true enables SMTP send tools. Requires exact recipient policy."
+                "Compatibility gate. Send tools require mail.send in permissions "
+                "and an exact recipient policy."
             ),
             "required": False,
             "default": "false",
