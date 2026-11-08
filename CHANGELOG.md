@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Build release archives and MCPB bundles once per tag, native-test those exact
+  bytes on all three platforms, and sign and publish the same bytes. A digest
+  mismatch, missing candidate, or substituted asset blocks publication. Only a
+  tag or explicit manual `native` run can create the candidate artifact.
+
 ### Documentation
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset

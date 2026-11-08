@@ -25,7 +25,7 @@ BUILDFLAGS := -trimpath -buildvcs=false -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 RELEASE_FILES := LICENSE THIRD_PARTY_NOTICES.md
 
-.PHONY: build check-release-version check-release-clean check-release-metadata check-registry check-docs check-platforms release release-all install test protocol-evidence bench-smoke bench-full lint vet cover clean help
+.PHONY: build check-release-version check-release-clean check-release-metadata check-release-candidates check-registry check-docs check-platforms release release-all install test protocol-evidence bench-smoke bench-full lint vet cover clean help
 
 build: ## Build a local binary with the host toolchain. Include VERSION (default dev).
 	@mkdir -p $(BIN_DIR)
@@ -50,6 +50,10 @@ check-release-clean:
 
 check-release-metadata: ## Validate server.json and the CHANGELOG.md section. No network.
 	python3 scripts/check_release.py metadata
+
+check-release-candidates: ## Self-test exact release candidate digest verification.
+	python3 scripts/verify_release_candidates.py selftest
+	python3 -m unittest scripts/test_verify_release_candidates.py
 
 check-registry: ## Verify the published registry matches server.json and the changelog.
 	python3 scripts/check_release.py registry

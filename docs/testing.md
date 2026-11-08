@@ -443,24 +443,38 @@ Package coverage floors are:
 | `internal/mail/imapadapter` | 60% |
 | `cmd/icloud-mcp` | 55% |
 
-Tag releases publish only after CI, gitleaks, release metadata, and the native
-smoke matrix jobs succeed on the same ref. The same tag builds and verifies one
-MCPB bundle per target, appends the bundle hashes to the checksums file, and
-signs the archives, bundles, and checksums before it creates the release. See the `release` job in
-`.github/workflows/ci.yml`. GitHub archives use `make release-all` with Go
-1.26.10 pinned. The setting is
-`check-latest: false`.
+Tag releases build the candidate bytes exactly once, in `release-candidates`.
+That job runs `make release-all` with Go 1.26.10 pinned (`check-latest: false`),
+builds one MCPB bundle per target, appends the bundle hashes to the checksums
+file, validates `server.json` package hashes, and writes
+`candidate-digests.txt`. It uploads the directory as one immutable artifact.
+Only tag pushes and explicit manual `native` runs reach this job, so files
+produced by an untrusted pull request cannot be promoted.
+
+The three native jobs download that artifact and run no compiler for the
+product. Each verifies `candidate-digests.txt`, extracts the exact archive and
+bundle, runs `scripts/native_smoke.py`, validates the manifest, re-collects the
+digests, and requires byte equality before and after execution. It uploads its
+tested digest file. The publication job downloads the same candidate artifact
+and all three native digest files, verifies them again, signs those exact bytes
+with cosign keyless, and creates the GitHub Release. It never rebuilds.
+
+`scripts/verify_release_candidates.py` rejects a missing, extra, stale, altered,
+or checksum-mismatched file. `make check-release-candidates` runs its
+tamper-and-delete self-test in CI. Logs record the tag, source SHA, and
+candidate manifest digest.
 
 Local `make release` remains the digest-pinned container path for linux/arm64.
 CI also smoke-builds `windows/amd64`. GitHub Release archives do not contain
 that build.
 
-Tag and manual `native` CI runs extract the matching production archive on
-native GitHub-hosted runners. They verify checksums, version output, an offline
+Tag and manual `native` CI runs test the exact candidate archive on native
+GitHub-hosted runners. They verify checksums, version output, an offline
 configuration failure, a path with spaces, a synthetic MCP `initialize` and
 read-only `tools/list`, and a clean SIGTERM exit. The matrix covers Linux amd64 on
 `ubuntu-latest`, Linux arm64 on `ubuntu-24.04-arm`, and macOS arm64 on
-`macos-15`. The command is `python3 scripts/native_smoke.py`.
+`macos-15`. The command is `python3 scripts/native_smoke.py`. Publication is
+tag-only.
 
 Windows remains compile-only and has no published archive or runtime support
 claim. See [platform support](platform-support.md) for the compiled, published,
@@ -491,9 +505,9 @@ Registry-only manual runs do not enable release metadata or native smoke.
 It runs only through the manual `published registry verification` workflow or
 locally after publication. A pending next version does not fail `main`.
 
-The tag job in `ci.yml` builds archives with `make release-all`, signs them with
-cosign keyless, and creates the GitHub Release. It does not publish registry
-metadata. Publish only after the archives exist.
+The tag job in `ci.yml` downloads the native-tested candidate bytes, signs them
+with cosign keyless, and creates the GitHub Release. It does not publish
+registry metadata. Publish only after the archives exist.
 
 ```bash
 mcp-publisher login github
