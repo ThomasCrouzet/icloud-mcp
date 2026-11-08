@@ -38,6 +38,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   safely when no permitted calendars remain.
 
 ### Added
+- Add opt-in `search_events` continuation beyond the legacy first 400 rows.
+  `cursor="start"` begins strict keyset paging; signed 5-minute tokens bind the
+  query, explicit calendars, filters, and resource scope. Calls without `cursor`
+  keep legacy ordering, duplicate handling, offset behavior, and no
+  `nextCursor`. Keep every per-calendar, materialized, byte, recurrence, and
+  deadline limit. No cache, snapshot, or exhaustive provider claim is added.
 - Add five executable least-privilege stdio profiles with offline startup, manifest,
   scope-denial, and synthetic effect checks. Separate read-only first run from scoped
   write/send opt-ins. Document a future breaking v1.0.0 default-read-only target;

@@ -154,6 +154,22 @@ materialized events cause `payload_too_large`. The per-calendar REPORT
 materialization limit is 2,500. When `<uid>.ics` is missing, imported-UID REPORT
 fallback uses a 50-year window on each side of now.
 
+`search_events` can opt into bounded continuation with `cursor="start"`. The
+initial marker is not a token. Later pages use a signed, stateless token that
+binds the query, explicit calendars, filters, and read scope. The token expires
+after 300 seconds and is valid only for the handler registration that signed it.
+Cursor mode uses strict keyset ordering and collapses exact duplicate rows only
+in that opt-in path. A call without `cursor` keeps the legacy ordering,
+duplicates, offset window, and no `nextCursor`.
+
+Every cursor page repeats one normal bounded fetch. It reuses the four-worker
+fan-out, the 2,500 per-calendar limit, the 10,000 filtered materialized budget,
+the 256 KiB serialized result, and all recurrence and deadline limits. There is
+no collection cache, snapshot, background worker, or persistent store. The
+serializer reserves room for the token and metadata before it selects the last
+emitted row. Incomplete results suppress the continuation. `total` is the
+current fetch count, and source changes can duplicate or omit rows.
+
 #### Availability materialization
 
 `find_free_slots` filters calendar scopes before reads or event accounting.

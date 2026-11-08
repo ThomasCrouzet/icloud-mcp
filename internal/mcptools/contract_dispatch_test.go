@@ -108,7 +108,7 @@ func contractBusinessFixtures() map[string]contractBusinessFixture {
 		"get_event":       {map[string]any{"calendar": contractCalendar, "uid": "event"}, nil},
 		"update_event":    {map[string]any{"calendar": contractCalendar, "uid": "event", "title": "Changed"}, map[string]any{"location": "Changed room", "notes": "Changed notes", "start": "2026-07-01T09:00:00Z", "end": "2026-07-01T12:00:00Z", "status": "TENTATIVE", "transparency": "TRANSPARENT", "url": "https://example.invalid/changed", "etag": contractETag, "idempotency_key": "update-key", "scope": "occurrence", "recurrence_id": "2026-07-02T10:00:00Z"}},
 		"delete_event":    {map[string]any{"calendar": contractCalendar, "uid": "event"}, map[string]any{"dry_run": true, "etag": contractETag, "scope": "occurrence", "recurrence_id": "2026-07-02T10:00:00Z"}},
-		"search_events":   {when, map[string]any{"calendar": contractCalendar, "calendars": contractCalendar, "uid": "event", "query": "Synthetic", "limit": 1, "offset": 1, "all_day": false, "status": "CONFIRMED", "busy_only": true, "include_cancelled": true, "compact": true, "expand_recurrence": false}},
+		"search_events":   {when, map[string]any{"calendar": contractCalendar, "calendars": contractCalendar, "uid": "event", "query": "Synthetic", "limit": 1, "offset": 1, "all_day": false, "status": "CONFIRMED", "busy_only": true, "include_cancelled": true, "compact": true, "expand_recurrence": false, "cursor": "start"}},
 		"find_free_slots": {map[string]any{"start": when["start"], "end": when["end"], "duration_minutes": 60}, map[string]any{"calendar": contractCalendar, "calendars": contractCalendar, "timezone": "Europe/Paris", "working_hours_start": "09:00", "working_hours_end": "17:00", "days_of_week": "wed,thu", "buffer_before_minutes": 15, "buffer_after_minutes": 15, "include_all_day_busy": false, "limit": 2}},
 		"get_contact":     {book, nil}, "create_contact": {map[string]any{"address_book": "$book", "display_name": "New synthetic"}, contact},
 		"update_contact":    {map[string]any{"address_book": "$book", "uid": "contact", "display_name": "Changed"}, contractMerge(contractOmit(contact, "client_uid"), map[string]any{"etag": contractETag, "idempotency_key": "update-key"})},
@@ -165,6 +165,10 @@ func (f *contractRuntime) arguments(name, property string) map[string]any {
 	if property == "all_day" && args["all_day"] == true {
 		args["start"] = "2026-07-01"
 		args["end"] = "2026-07-02"
+	}
+	if name == "search_events" && property == "cursor" {
+		args["calendar"] = contractCalendar
+		args["offset"] = 0
 	}
 	for key, value := range args {
 		if text, ok := value.(string); ok && text == "$book" {

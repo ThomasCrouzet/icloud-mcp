@@ -184,6 +184,60 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - Sort order is start, UID, calendar, then title. Identical events from
   different calendars therefore keep a deterministic order.
 - This failure occurs before the public sorted result limit of 400 events.
+
+### Bounded cursor continuation
+
+`search_events` has two explicit modes. A call without `cursor` keeps the legacy
+response. It keeps the legacy ordering, duplicate handling, offset meaning and
+first-400 row window. It never returns `nextCursor`.
+
+A call with `cursor: "start"` opts into bounded keyset paging. It needs a
+nonempty explicit `calendar` or `calendars` selection and `offset: 0`. `limit`
+stays 1 to 400 and can change between pages. Empty or malformed cursor values
+are validation errors.
+
+Each continuation is a stateless `v1` token with a base64url payload and an
+HMAC-SHA256 signature. The payload holds only a positive expiry, a query digest,
+and a last-row identity digest. It never holds a raw query, UID, title, calendar
+path, ETag, or internal href. The 32-byte key lives for one registered handler.
+A restart or new registration invalidates all tokens. A token expires 300
+seconds after issuance and can be reused as a read until then. It is not
+encrypted, a lease, or a single-use credential.
+
+The token binds the normalized range, explicit selected calendars, result
+filters, default presence, compact and recurrence modes, and the current
+`calendar.read` scope. `limit` is not bound. The explicit selection and scope,
+token structure, signature, expiry, and query binding are checked before any
+Calendar backend access. A missing resume anchor is stale source: it needs one
+normal bounded fetch to detect, with no rescan or amplification.
+
+Cursor mode keeps the primary order start, UID, calendar, then title. It adds
+recurrence ID, end time, override flag, internal path, ETag, and a full-row
+digest as strict tie-breaks. Exact duplicate backend rows in one calendar are
+collapsed only in this opt-in mode. Distinct calendars and recurring overrides
+stay distinct. Legacy duplicate handling does not change.
+
+Every page still queries each selected calendar with at most four concurrent
+reads. It keeps the 2,500 expanded-event per-calendar limit, the 10,000 filtered
+materialized limit, the 366-day range, ten explicit calendars, the 32 MiB REPORT
+limit, and all recurrence work caps. More than 2,500 expanded events in one
+calendar fails closed before paging. Pagination does not permit loading a whole
+history.
+
+`nextCursor` is emitted only when an explicit selection has a complete page with
+at least one later row. It is omitted on `partialFailure`, recurrence truncation,
+materialization overflow, authentication, authorization, protocol or payload
+errors, cancellation, and deadline. In cursor mode `truncated` is true when rows
+remain or the result is incomplete. A result beyond the 256 KiB serialized
+budget uses only rows that fit with the token and metadata. If zero rows fit, it
+returns no cursor and asks for a narrower range, compact mode, or fewer
+calendars.
+
+`total` is the current bounded fetch count, not a snapshot. If the last row
+identity disappears or changes, the cursor is stale and the caller restarts.
+Rows inserted before the anchor can be omitted. A row moved from before to after
+the anchor can appear again. A row moved after to before can be omitted. No
+snapshot isolation or exhaustive provider coverage is claimed.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.
 - The search reserves selector reachability proof work before iteration.
