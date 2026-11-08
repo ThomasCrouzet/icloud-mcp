@@ -61,6 +61,11 @@ threat model.
 
 ## Windows decision record
 
+The reasoned no-go is recorded in
+[decision 0002](decisions/0002-windows-support.md). It covers recorded demand,
+the Windows ACL gap, native test requirements, and the conditions that would
+reopen the decision.
+
 Windows amd64 stays compile-only. It has no published archive and no runtime
 support claim.
 

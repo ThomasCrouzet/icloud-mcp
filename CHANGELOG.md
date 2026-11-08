@@ -46,6 +46,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returns `-32022` with the requested version and supported list.
 
 ### Documentation
+- Record the Windows no-go decision: no observed demand plus an unresolved ACL
+  and native-run gap keep `windows/amd64` compile-only. List the evidence
+  required to reopen it.
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset
   timeout.
