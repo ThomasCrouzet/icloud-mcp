@@ -142,7 +142,7 @@ func TestCuratedHeaderAndCopyUIDParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if headers.MessageID != "message@example.com" || len(headers.References) != 2 || len(headers.ReplyTo) != 1 {
+	if headers.MessageID != "<message@example.com>" || len(headers.References) != 2 || len(headers.ReplyTo) != 1 {
 		t.Fatalf("headers = %#v", headers)
 	}
 	for _, data := range [][]byte{

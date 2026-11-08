@@ -744,11 +744,7 @@ func mailOptionalUnsigned(args map[string]any, name string, bits int) (uint64, b
 
 func mailUnsigned(raw any, bits int) (uint64, error) {
 	if number, ok := raw.(json.Number); ok {
-		value, err := strconv.ParseUint(string(number), 10, bits)
-		if err != nil {
-			return 0, err
-		}
-		return value, nil
+		return mailExactUnsigned(number, bits)
 	}
 	var value uint64
 	switch number := raw.(type) {

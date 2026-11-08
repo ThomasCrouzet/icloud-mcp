@@ -507,6 +507,17 @@ func parseCuratedHeaders(data []byte) (CuratedHeaders, error) {
 	if err != nil {
 		return CuratedHeaders{}, &Error{Kind: ErrorProtocol}
 	}
+	// go-message returns parsed IDs without brackets. Keep the canonical
+	// threading representation expected by reply validation, within existing bounds.
+	if messageID != "" {
+		messageID = "<" + messageID + ">"
+	}
+	for i := range inReplyTo {
+		inReplyTo[i] = "<" + inReplyTo[i] + ">"
+	}
+	for i := range references {
+		references[i] = "<" + references[i] + ">"
+	}
 	replyRaw, err := header.AddressList("Reply-To")
 	if err != nil || len(replyRaw) > maxAddresses {
 		return CuratedHeaders{}, &Error{Kind: ErrorProtocol}

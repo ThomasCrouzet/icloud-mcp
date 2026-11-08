@@ -283,9 +283,9 @@ func TestProtocolMailReplyScopeSourceIdentity(t *testing.T) {
 			calls      [5]int32
 			code       string
 		}{
-			// The adapter strips Message-ID brackets, so the current service rejects
-			// this valid source before SMTP. Scope denial must precede even that read.
-			{"valid-source", 9, 2, [5]int32{1, 0, 1, 1, 0}, "validation"},
+			// A canonical source reaches this fixture's SMTP dial refusal.
+			// Scope denial must still precede the source read and SMTP access.
+			{"valid-source", 9, 2, [5]int32{1, 0, 1, 1, 1}, "unavailable"},
 			{"stale-validity", 8, 2, [5]int32{1, 0, 1, 0, 0}, "concurrent_modification"},
 			{"forged-uid", 9, 3, [5]int32{1, 0, 1, 1, 0}, "not_found"},
 			{"zero-uid", 9, 0, [5]int32{}, ""},
