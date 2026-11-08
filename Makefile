@@ -21,7 +21,7 @@ GOLANG_IMAGE ?= golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e4
 # GitHub tag releases use release-all after CI passes.
 # Local make release uses a Docker image with a fixed digest.
 LDFLAGS  := -s -w -X main.version=$(VERSION)
-BUILDFLAGS := -trimpath -ldflags='$(LDFLAGS)'
+BUILDFLAGS := -trimpath -buildvcs=false -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 RELEASE_FILES := LICENSE THIRD_PARTY_NOTICES.md
 
@@ -92,7 +92,7 @@ release: check-release-version check-release-clean ## Static linux/arm64 archive
 		docker run --rm -v "$(CURDIR):/src" -v "$$stage:/out" -w /src \
 			-e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
 			$(GOLANG_IMAGE) \
-			go build -trimpath -ldflags='$(LDFLAGS)' -o /out/$(PROJECT) ./cmd/$(PROJECT); \
+			go build -trimpath -buildvcs=false -ldflags='$(LDFLAGS)' -o /out/$(PROJECT) ./cmd/$(PROJECT); \
 		cp "$$stage/$(PROJECT)" "$$stage/package/$(PROJECT)"; \
 		cp $(RELEASE_FILES) "$$stage/package/"; \
 		COPYFILE_DISABLE=1 tar -czf "$$stage/$$archive" -C "$$stage/package" $(PROJECT) $(RELEASE_FILES); \

@@ -149,7 +149,7 @@ jobs:
             fi
             echo "::group::build $target"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="-s -w -X main.version=${version}" \
+              go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${version}" \
               -o "$out" ./cmd/icloud-mcp
             file "$out"
             if [ "$target" = "linux/amd64" ]; then
