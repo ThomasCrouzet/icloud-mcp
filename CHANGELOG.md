@@ -38,6 +38,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   safely when no permitted calendars remain.
 
 ### Added
+- Add a real-iCloud compatibility evidence matrix that marks every live
+  capability `UNVERIFIED` until a recorded run, plus a privacy-safe live
+  evidence harness that checks gates without network access and writes
+  sanitized JSON and Markdown artifacts to a directory outside the repository.
 - Add opt-in `search_events` continuation beyond the legacy first 400 rows.
   `cursor="start"` begins strict keyset paging; signed 5-minute tokens bind the
   query, explicit calendars, filters, and resource scope. Calls without `cursor`
