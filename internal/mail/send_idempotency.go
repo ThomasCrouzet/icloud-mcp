@@ -190,7 +190,7 @@ func preDispatchSendErrorCode(code Code) bool {
 func sendIdempotencyFullError() *Error {
 	return &Error{
 		Code:    CodeConflict,
-		Message: "send idempotency capacity is full; no SMTP submission was dispatched for this key",
+		Message: "send idempotency capacity is full; no SMTP submission was dispatched for this request",
 		Reconciliation: "Keep the same key and unchanged parameters. Existing keys can still return " +
 			"their retained results. Capacity recovers only when retained definitive outcomes expire. " +
 			"Pending or uncertain outcomes stay until process exit. Do not restart or use a " +

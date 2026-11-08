@@ -197,9 +197,13 @@ The response keeps `status: accepted` and reports `archivalStatus: failed` or `u
 It also includes a bounded `archivalError`, not raw server text.
 Inspect Sent before recovery. Never resend or blindly repeat APPEND to repair archival.
 
-Identical keyed sends retain both submission and archival outcomes until process exit.
-Changing `archive_sent` with the same key returns `conflict` without another submission.
-Omission and false have the same preference. Restarting does not resolve an uncertain outcome.
+Accepted and definitive rejected submission and archival results share the same
+15-minute completion-based retention. Pending, ambiguous, and unclassified state
+stays pinned until process exit. Changing `archive_sent` with the same key returns
+`conflict` while the key is retained, without another submission. Omission and false
+have the same preference. After expiry or restart the key is a new operation; it has
+no conflict guarantee and does not prove the earlier outcome failed. Restarting does
+not resolve an uncertain outcome.
 
 ## Internal retries
 

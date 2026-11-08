@@ -130,11 +130,12 @@ func TestSendIdempotencyDefinitiveSaturationRecoversAtRetention(t *testing.T) {
 	if strings.Contains(public.Message, "new process") || strings.Contains(public.Message, "different key") {
 		t.Fatalf("saturation message gives unsafe recovery advice: %q", public.Message)
 	}
-	if !strings.Contains(public.Message, "no SMTP submission") ||
+	if !strings.Contains(public.Message, "no SMTP submission was dispatched for this request") ||
+		strings.Contains(public.Message, "for this key") ||
 		!strings.Contains(public.Reconciliation, "Keep the same key") ||
 		!strings.Contains(public.Reconciliation, "Check Sent") ||
 		!strings.Contains(public.Reconciliation, "process exit") {
-		t.Fatalf("saturation guidance is incomplete: %+v", public)
+		t.Fatalf("saturation guidance is incomplete or key-history scoped: %+v", public)
 	}
 	if got := lifecycleDataCount(log); got != maxSendIdempotencyEntries {
 		t.Fatalf("saturated request dispatched SMTP: DATA = %d", got)
@@ -280,8 +281,9 @@ func TestSendIdempotencyAmbiguousOutcomeNeverExpires(t *testing.T) {
 
 	_, err = lifecycleSend(service, "ambiguous-128", "body-ambiguous-128")
 	public := mustLifecycleCode(t, err, CodeConflict)
-	if !strings.Contains(public.Message, "no SMTP submission") {
-		t.Fatalf("ambiguous saturation message = %q", public.Message)
+	if !strings.Contains(public.Message, "no SMTP submission was dispatched for this request") ||
+		strings.Contains(public.Message, "for this key") {
+		t.Fatalf("ambiguous saturation message is not request scoped: %q", public.Message)
 	}
 	if got := lifecycleDataCount(log); got != maxSendIdempotencyEntries {
 		t.Fatalf("ambiguous saturation dispatched SMTP: DATA = %d", got)
