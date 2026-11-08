@@ -46,6 +46,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   capability `UNVERIFIED` until a recorded run, plus a privacy-safe live
   evidence harness that checks gates without network access and writes
   sanitized JSON and Markdown artifacts to a directory outside the repository.
+- Record the recurrence and invitation interoperability decision in
+  `docs/decisions/0001-recurrence-and-invitations.md`. Characterize RDATE,
+  `THISANDFUTURE`, DST, all-day, conflicting overrides, and partial-series
+  edits. Keep the fail-closed behavior and report the floating-time read and
+  group-scheduled notification gaps. Add synthetic fixtures in
+  `internal/icloud/recurrence_research_test.go`.
 - Add `make check-docs` and `make check-platforms` consistency gates, a
   documented source-of-truth table, and a native Linux arm64 release smoke. The
   smoke runs the extracted archive through version, fail-closed configuration,
