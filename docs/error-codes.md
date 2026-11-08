@@ -35,6 +35,14 @@ Contacts, and Mail use the same public codes.
 | `outcome_unknown` | no | The mutation might already have succeeded. Follow `reconciliation`. Read the resource before choosing a new update key. |
 | `internal_error` | no | Report the failure with redacted logs. If a mutation was possible, read the resource before another update. |
 
+`search_events` cursor failures use `validation` with a bounded
+`details.cursor` reason. The reasons are `malformed`, `signature`, `expired`,
+`query_mismatch`, `stale`, `selection_required`, and `offset_not_allowed`.
+Malformed, forged, expired, cross-query, cross-calendar, and cross-scope tokens
+fail before Calendar access. A stale anchor needs one normal bounded fetch. No
+cursor error echoes the token or a raw query, path, UID, or title. These are not
+new public error codes.
+
 ## Mail doctor diagnostics (unreleased)
 
 Mail doctor adds optional `stage` and `reason` fields without changing public

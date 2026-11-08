@@ -162,7 +162,7 @@ func TestContractExactPublishedBoundaries(t *testing.T) {
 						before := f.counts()
 						res := f.call(t, name, args)
 						resource := property.path[0] == "calendar" && keyword == "maxLength"
-						semantic := resource || property.path[0] == "timezone" && keyword == "maxLength" || len(property.path) > 1 && property.path[len(property.path)-1] == "value" && keyword == "minLength"
+						semantic := resource || property.path[0] == "timezone" && keyword == "maxLength" || len(property.path) > 1 && property.path[len(property.path)-1] == "value" && keyword == "minLength" || property.path[0] == "cursor" && keyword == "maxLength"
 						if semantic {
 							text := resultText(t, res)
 							payload := contractPayload(t, res)

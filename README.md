@@ -105,7 +105,7 @@ from discovery. The MCP interface provides tools over **stdio**.
 |---|---|---|---|
 | `icloud_capabilities` | No arguments | Enabled domains, effective capabilities, version, tool names and count | None; the call uses local state |
 | `list_calendars` | No arguments | Calendar names and paths for subsequent calls | None |
-| `search_events` | `start`, `end`; optional calendar and filters | Sorted event page with `calendar`, recurrence occurrences, and truncation or failure warnings | None |
+| `search_events` | `start`, `end`; optional calendar, filters, and cursor | Sorted event page with `calendar`, recurrence occurrences, truncation or failure warnings, and optional `nextCursor` | None |
 | `update_event` | `calendar`, `uid`, changed fields; optional `etag`, `idempotency_key`, occurrence scope | Updated event or a structured error | Conditional Calendar write |
 | `get_message` | `mailbox`, `uid_validity`, `uid`; optional body limit and HTML fallback | Message metadata and bounded plain text | None; EXAMINE and PEEK preserve read state |
 | `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |

@@ -38,6 +38,7 @@ func newSearchEventsTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithBoolean("expand_recurrence", mcp.DefaultBool(true), mcp.Description("Expand recurring occurrences")),
 		mcp.WithInteger("limit", mcp.DefaultNumber(100), mcp.Min(1), mcp.Max(icloud.MaxResults), mcp.Description("Page size; max 400")),
 		mcp.WithInteger("offset", mcp.DefaultNumber(0), mcp.Min(0), mcp.Description("Pagination offset")),
+		mcp.WithString("cursor", mcp.MaxLength(maxSearchCursorTokenLen), mcp.Description("Opaque continuation from a previous search_events result. Use start for the first cursor page. Requires calendar or calendars, offset 0, and the same filters. Expires after 5 minutes.")),
 	)
 }
 
@@ -69,11 +70,16 @@ type searchEventsResponse struct {
 	TruncatedByExpansion bool             `json:"truncatedByExpansion,omitempty"`
 	MultiCalendarCapped  bool             `json:"multiCalendarCapped,omitempty"`
 	PartialFailure       bool             `json:"partialFailure,omitempty"`
+	NextCursor           string           `json:"nextCursor,omitempty"`
 	Warnings             []string         `json:"warnings,omitempty"`
 	Events               []searchEventDTO `json:"events"`
 }
 
 func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
+	return searchEventsHandlerWithCodec(deps, newSearchCursorCodec())
+}
+
+func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		startStr, err := req.RequireString("start")
 		if err != nil {
@@ -95,9 +101,25 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
 
+		cursorMode, cursorToken, err := readSearchCursorArg(req)
+		if err != nil {
+			return errResult(deps.Redactor, "cursor parameter", err), nil
+		}
+		if cursorMode && !hasExplicitSearchSelection(req) {
+			return errResult(deps.Redactor, "validation", searchCursorValidationError(
+				searchCursorReasonSelectionRequired, "cursor requires a nonempty calendar or calendars selection")), nil
+		}
+		if cursorMode && !cursorCodec.available() {
+			return errResult(deps.Redactor, "cursor parameter", searchCursorUnavailableError()), nil
+		}
+
 		calendarPaths, err := resolveSearchCalendars(ctx, deps, req)
 		if err != nil {
 			return errResult(deps.Redactor, "calendar parameter", err), nil
+		}
+		if cursorMode && len(calendarPaths) == 0 {
+			return errResult(deps.Redactor, "validation", searchCursorValidationError(
+				searchCursorReasonSelectionRequired, "cursor requires a nonempty calendar or calendars selection")), nil
 		}
 		singleCalendar := req.GetString("calendar", "") != "" || req.GetString("calendars", "") != ""
 
@@ -156,6 +178,32 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		if offset < 0 {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("offset must be non-negative")), nil
+		}
+		if cursorMode && offset != 0 {
+			return errResult(deps.Redactor, "validation", searchCursorValidationError(
+				searchCursorReasonOffsetNotAllowed, "cursor requires offset 0")), nil
+		}
+
+		var cursorQuery searchCursorDigest
+		var cursorPosition searchCursorDigest
+		haveCursorPosition := false
+		if cursorMode {
+			scopeValues, scopeRestricted := calendarReadScope(deps.ResourceScopes)
+			cursorQuery = searchCursorQueryDigest(start, end, calendarPaths, query, uidFilter,
+				statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly,
+				compact, expandRecurrence, scopeValues, scopeRestricted)
+			if cursorToken != "" {
+				position, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
+				if verifyErr != nil {
+					return errResult(deps.Redactor, "cursor parameter", verifyErr), nil
+				}
+				if reason != "" {
+					return errResult(deps.Redactor, "validation", searchCursorValidationError(
+						reason, searchCursorMessage(reason))), nil
+				}
+				cursorPosition = position
+				haveCursorPosition = true
+			}
 		}
 
 		var all []icloud.Event
@@ -230,6 +278,103 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			)), nil
 		}
 
+		if cursorMode {
+			rows := make([]searchCursorRow, len(all))
+			for i := range all {
+				rows[i] = newSearchCursorRow(all[i])
+			}
+			sortSearchCursorRows(rows)
+			rows = collapseSearchCursorRows(rows)
+			total := len(rows)
+			pageStart := 0
+			if haveCursorPosition {
+				index, ok := findSearchCursorRow(rows, cursorPosition)
+				if !ok {
+					return errResult(deps.Redactor, "validation", searchCursorValidationError(
+						searchCursorReasonStale, searchCursorMessage(searchCursorReasonStale))), nil
+				}
+				pageStart = index + 1
+			}
+			if pageStart > total {
+				pageStart = total
+			}
+			pageEnd := pageStart + limit
+			if pageEnd > total {
+				pageEnd = total
+			}
+			page := make([]icloud.Event, pageEnd-pageStart)
+			for i := pageStart; i < pageEnd; i++ {
+				page[i-pageStart] = rows[i].event
+			}
+			truncated := pageEnd < total || truncatedByExpansion || partialFailure
+			resp := searchEventsResponse{
+				Count:                len(page),
+				Total:                total,
+				Offset:               0,
+				Limit:                limit,
+				Truncated:            truncated,
+				TruncatedByExpansion: truncatedByExpansion,
+				PartialFailure:       partialFailure,
+				Warnings:             warnings,
+				Events:               eventsToDTO(page, compact, deps.DefaultLocation),
+			}
+			if partialFailure || truncatedByExpansion {
+				encoded, fitErr := fitSearchEventsJSON(deps.Redactor, &resp, 0)
+				if fitErr != nil {
+					return errResult(deps.Redactor, "formatting response", fitErr), nil
+				}
+				if len(page) > 0 && len(resp.Events) == 0 {
+					resp.Warnings = append(resp.Warnings,
+						"serialized result exceeded 256 KiB; narrow the range, use compact, or select fewer calendars")
+					resp.Truncated = true
+					encoded, err = json.Marshal(&resp)
+					if err != nil {
+						return errResult(deps.Redactor, "formatting response", err), nil
+					}
+				}
+				return writeCalendarEncoded(deps.Redactor, encoded), nil
+			}
+			if len(page) == 0 {
+				return writeSearchEventsJSON(deps.Redactor, &resp, 0), nil
+			}
+			encoded, fitErr := fitSearchEventsJSON(deps.Redactor, &resp, maxSearchCursorEnvelopeBytes)
+			if fitErr != nil {
+				return errResult(deps.Redactor, "formatting response", fitErr), nil
+			}
+			if len(resp.Events) == 0 {
+				resp.Warnings = append(resp.Warnings,
+					"serialized result exceeded 256 KiB; narrow the range, use compact, or select fewer calendars")
+				resp.Truncated = true
+				encoded, err = json.Marshal(&resp)
+				if err != nil {
+					return errResult(deps.Redactor, "formatting response", err), nil
+				}
+				return writeCalendarEncoded(deps.Redactor, encoded), nil
+			}
+			lastIndex := pageStart + len(resp.Events) - 1
+			if lastIndex+1 < total {
+				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest)
+				if mintErr != nil {
+					return errResult(deps.Redactor, "cursor parameter", mintErr), nil
+				}
+				resp.NextCursor = token
+				resp.Truncated = true
+				encoded, err = json.Marshal(&resp)
+				if err != nil {
+					return errResult(deps.Redactor, "formatting response", err), nil
+				}
+			}
+			if len(redact(deps.Redactor, string(encoded))) > maxCalendarResultBytes {
+				resp.NextCursor = ""
+				resp.Truncated = true
+				encoded, fitErr = fitSearchEventsJSON(deps.Redactor, &resp, 0)
+				if fitErr != nil {
+					return errResult(deps.Redactor, "formatting response", fitErr), nil
+				}
+			}
+			return writeCalendarEncoded(deps.Redactor, encoded), nil
+		}
+
 		// Stable sort: start ascending, then UID, calendar, then title. The
 		// calendar tie-breaker keeps identical events from different
 		// collections in a deterministic order.
@@ -279,39 +424,60 @@ func searchEventsHandler(deps Deps) server.ToolHandlerFunc {
 			Warnings:             warnings,
 			Events:               eventsToDTO(page, compact, deps.DefaultLocation),
 		}
-		return writeSearchEventsJSON(deps.Redactor, &resp), nil
+		return writeSearchEventsJSON(deps.Redactor, &resp, 0), nil
 	}
 }
 
-func writeSearchEventsJSON(red *security.Redactor, resp *searchEventsResponse) *mcp.CallToolResult {
+func writeSearchEventsJSON(red *security.Redactor, resp *searchEventsResponse, reserve int) *mcp.CallToolResult {
 	if resp == nil {
 		return errResult(red, "formatting response", icloud.NewError(icloud.CodeInternal, 0, "Calendar search result is missing", nil))
 	}
+	encoded, err := fitSearchEventsJSON(red, resp, reserve)
+	if err != nil {
+		return errResult(red, "formatting response", err)
+	}
+	return writeCalendarEncoded(red, encoded)
+}
+
+// fitSearchEventsJSON applies the serialized result budget in place. The reserve
+// leaves room for the nextCursor field and its token in the final encoding.
+func fitSearchEventsJSON(red *security.Redactor, resp *searchEventsResponse, reserve int) ([]byte, error) {
+	if reserve < 0 {
+		reserve = 0
+	}
+	budget := maxCalendarResultBytes - reserve
+	if budget < 1 {
+		budget = 1
+	}
 	allEvents := resp.Events
+	resp.NextCursor = ""
 	probe := *resp
 	probe.Events = []searchEventDTO{}
 	probe.Count = len(allEvents)
 	probe.Truncated = true
 	base, err := json.Marshal(probe)
 	if err != nil {
-		return errResult(red, "formatting response", err)
+		return nil, err
 	}
 	used := len(red.Redact(string(base)))
-	if used > maxCalendarResultBytes {
-		return writeCalendarEncoded(red, base)
+	if used > budget {
+		resp.Events = []searchEventDTO{}
+		resp.Count = 0
+		resp.Truncated = true
+		return base, nil
 	}
 
 	selected := make([]searchEventDTO, 0, len(allEvents))
 	for i := range allEvents {
 		encoded, err := json.Marshal(allEvents[i])
 		if err != nil {
-			return errResult(red, "formatting response", err)
+			return nil, err
 		}
 		addition := len(red.Redact(string(encoded)))
 		if len(selected) > 0 {
 			addition++ // comma between event objects
 		}
-		if used+addition > maxCalendarResultBytes {
+		if used+addition > budget {
 			break
 		}
 		selected = append(selected, allEvents[i])
@@ -326,13 +492,13 @@ func writeSearchEventsJSON(red *security.Redactor, resp *searchEventsResponse) *
 	for {
 		encoded, err := json.Marshal(resp)
 		if err != nil {
-			return errResult(red, "formatting response", err)
+			return nil, err
 		}
-		if len(red.Redact(string(encoded))) <= maxCalendarResultBytes {
-			return writeCalendarEncoded(red, encoded)
+		if len(red.Redact(string(encoded))) <= budget {
+			return encoded, nil
 		}
 		if len(resp.Events) == 0 {
-			return writeCalendarEncoded(red, encoded)
+			return encoded, nil
 		}
 		resp.Events = resp.Events[:len(resp.Events)-1]
 		resp.Count = len(resp.Events)
