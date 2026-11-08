@@ -25,7 +25,7 @@ BUILDFLAGS := -trimpath -ldflags='$(LDFLAGS)'
 TARGETS  := linux/amd64 linux/arm64 darwin/arm64
 RELEASE_FILES := LICENSE THIRD_PARTY_NOTICES.md
 
-.PHONY: build check-release-version check-release-clean check-release-metadata check-registry release release-all install test protocol-evidence bench-smoke bench-full lint vet cover clean help
+.PHONY: build check-release-version check-release-clean check-release-metadata check-registry check-docs check-platforms release release-all install test protocol-evidence bench-smoke bench-full lint vet cover clean help
 
 build: ## Build a local binary with the host toolchain. Include VERSION (default dev).
 	@mkdir -p $(BIN_DIR)
@@ -53,6 +53,14 @@ check-release-metadata: ## Validate server.json and the CHANGELOG.md section. No
 
 check-registry: ## Verify the published registry matches server.json and the changelog.
 	python3 scripts/check_release.py registry
+
+check-docs: ## Check public documentation against source and itself. No network.
+	python3 scripts/check_docs.py
+	python3 -m unittest scripts/test_check_docs.py
+
+check-platforms: ## Check platform claims against Makefile TARGETS and the CI matrix.
+	python3 scripts/check_platforms.py
+	python3 -m unittest scripts/test_check_platforms.py
 
 release: check-release-version check-release-clean ## Static linux/arm64 archive with a fixed Go 1.26.10 container.
 	@set -eu; \

@@ -88,8 +88,9 @@ Calendar path is malformed.
 `ICLOUD_MCP_PERMISSIONS` optionally replaces the implicit write rules. It takes
 a comma-separated list: `calendar.read`, `calendar.write`, `calendar.delete`,
 `contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`,
-`mail.mutate`, `mail.trash`, and `mail.send`. Domain switches still enable a
-domain. Global read-only still removes every mutation and send. With no value,
+`mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`. Domain switches
+still enable a domain. Global read-only still removes every mutation and send.
+With no value,
 the legacy switches above keep their documented behavior. For example,
 `calendar.read,mail.read,mail.send` gives Calendar reads and Mail send without
 Calendar, Contacts, or Mail mutation tools.
@@ -365,12 +366,14 @@ The implemented scope is iCloud Calendar with optional Contacts and Mail.
 | Target | Published archive | Native release smoke | Status |
 |--------|-------------------|----------------------|--------|
 | Linux amd64 | Yes | Ubuntu GitHub-hosted runner | Supported |
-| Linux arm64 | Yes | Compile and archive only | Supported |
+| Linux arm64 | Yes | Ubuntu arm64 GitHub-hosted runner | Supported |
 | macOS arm64 | Yes | macOS GitHub-hosted arm64 runner | Supported |
 | Windows amd64 | No | None | Compile-only, explicit scope decision |
 
 Windows has no signed archive and no runtime support claim. Compilation is not
-evidence of file-credential handling, service startup, or installation.
+evidence of file-credential handling, service startup, or installation. See the
+[platform support and evidence matrix](docs/platform-support.md) for the
+compiled, published, archive-verified, and native-executed distinction.
 
 Install without Go by downloading `icloud-mcp-vX.Y.Z-<os>-<arch>.tar.gz` and
 `icloud-mcp-vX.Y.Z-checksums.txt` from the release. Verify the checksum and
