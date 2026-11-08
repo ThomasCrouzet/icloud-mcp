@@ -11,6 +11,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -46,7 +47,78 @@ type searchCursorPayload struct {
 type searchCursorCodec struct {
 	key [sha256.Size]byte
 	now func() time.Time
+	ttl time.Duration
 	err error
+
+	mu    sync.Mutex
+	scans map[searchCursorDigest]searchScanSnapshot
+}
+
+func (c *searchCursorCodec) lifetime() time.Duration {
+	if c != nil && c.ttl > 0 {
+		return c.ttl
+	}
+	return searchCursorTTL
+}
+
+// maxSearchScanSnapshots bounds process-local continuation snapshots. Each
+// snapshot holds at most the existing 10,000-event materialization budget.
+const maxSearchScanSnapshots = 4
+
+// searchScanSnapshot is a short-lived, process-local result of one completed
+// cursor scan. It is never written to disk or logs.
+type searchScanSnapshot struct {
+	rows                 []searchCursorRow
+	warnings             []string
+	truncatedByExpansion bool
+	partialFailure       bool
+	created              time.Time
+}
+
+func (c *searchCursorCodec) storeScan(query searchCursorDigest, snapshot searchScanSnapshot) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.scans == nil {
+		c.scans = make(map[searchCursorDigest]searchScanSnapshot, maxSearchScanSnapshots)
+	}
+	for key, existing := range c.scans {
+		if c.currentTime().Sub(existing.created) >= c.lifetime() {
+			delete(c.scans, key)
+		}
+	}
+	for len(c.scans) >= maxSearchScanSnapshots {
+		var oldestKey searchCursorDigest
+		var oldest time.Time
+		first := true
+		for key, existing := range c.scans {
+			if first || existing.created.Before(oldest) {
+				oldestKey, oldest, first = key, existing.created, false
+			}
+		}
+		delete(c.scans, oldestKey)
+	}
+	snapshot.created = c.currentTime()
+	c.scans[query] = snapshot
+}
+
+func (c *searchCursorCodec) loadScan(query searchCursorDigest) (searchScanSnapshot, bool) {
+	if c == nil {
+		return searchScanSnapshot{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	snapshot, ok := c.scans[query]
+	if !ok {
+		return searchScanSnapshot{}, false
+	}
+	if c.currentTime().Sub(snapshot.created) >= c.lifetime() {
+		delete(c.scans, query)
+		return searchScanSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 func newSearchCursorCodec() *searchCursorCodec {

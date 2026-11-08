@@ -218,6 +218,12 @@ python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.j
 | Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
 | Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
 
+`BenchmarkSearchEventsCursorPagination` drives ten 400-row pages over a
+4,000-event synthetic calendar. It reports `rpc/page`: the process-local scan
+snapshot makes the first page scan once and later pages add no REPORT, so the
+measured value is 0.1. The previous implementation queried every calendar on
+every page, which is 1.0.
+
 The availability collector converts each completed read batch to merged busy
 intervals and then drops the event payloads. It still counts every returned
 record toward the 10,000-event budget before filtering. On the fixed

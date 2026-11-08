@@ -6,6 +6,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Reuse one bounded process-local scan for `search_events` cursor pages
+  instead of querying every selected calendar again. The snapshot lives at most
+  300 seconds, holds at most four queries and the existing 10,000-event budget,
+  and is never written to disk. A partial failure is not cached. Pagination is
+  now snapshot-like for the token lifetime.
+
 ### Documentation
 - Record the verified `0.5.2` Registry record, three published MCPB packages,
   hash and signature checks, and the retry after the first Registry asset

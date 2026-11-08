@@ -213,10 +213,20 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		var partialFailure bool
 		var materializationOverflow bool
 		multi := len(calendarPaths) > 1 || !singleCalendar
-		readResults := parallelCalendarReads(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
-			return deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
-		})
-		for i := range calendarPaths {
+		var snapshot searchScanSnapshot
+		useSnapshot := false
+		if cursorMode && haveCursorPosition {
+			if cached, ok := cursorCodec.loadScan(cursorQuery); ok {
+				snapshot, useSnapshot = cached, true
+			}
+		}
+		var readResults []calendarReadResult[icloud.SearchResult]
+		if !useSnapshot {
+			readResults = parallelCalendarReads(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+				return deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
+			})
+		}
+		for i := 0; i < len(readResults); i++ {
 			result, err := readResults[i].value, readResults[i].err
 			if err != nil {
 				// Do not mask an authentication or security error as a warning.
@@ -279,12 +289,31 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		}
 
 		if cursorMode {
-			rows := make([]searchCursorRow, len(all))
-			for i := range all {
-				rows[i] = newSearchCursorRow(all[i])
+			var rows []searchCursorRow
+			if useSnapshot {
+				rows = snapshot.rows
+				warnings = append([]string(nil), snapshot.warnings...)
+				truncatedByExpansion = snapshot.truncatedByExpansion
+				partialFailure = snapshot.partialFailure
+			} else {
+				rows = make([]searchCursorRow, len(all))
+				for i := range all {
+					rows[i] = newSearchCursorRow(all[i])
+				}
+				sortSearchCursorRows(rows)
+				rows = collapseSearchCursorRows(rows)
+				// Cache only a complete multi-calendar scan. A partial failure
+				// is retried on the next page instead of freezing an incomplete
+				// snapshot.
+				if !partialFailure {
+					cursorCodec.storeScan(cursorQuery, searchScanSnapshot{
+						rows:                 rows,
+						warnings:             append([]string(nil), warnings...),
+						truncatedByExpansion: truncatedByExpansion,
+						partialFailure:       partialFailure,
+					})
+				}
 			}
-			sortSearchCursorRows(rows)
-			rows = collapseSearchCursorRows(rows)
 			total := len(rows)
 			pageStart := 0
 			if haveCursorPosition {
