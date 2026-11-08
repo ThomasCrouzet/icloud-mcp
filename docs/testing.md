@@ -444,7 +444,9 @@ Package coverage floors are:
 | `cmd/icloud-mcp` | 55% |
 
 Tag releases publish only after CI, gitleaks, release metadata, and the native
-smoke matrix jobs succeed on the same ref. See the `release` job in
+smoke matrix jobs succeed on the same ref. The same tag builds and verifies one
+MCPB bundle per target, appends the bundle hashes to the checksums file, and
+signs the archives, bundles, and checksums before it creates the release. See the `release` job in
 `.github/workflows/ci.yml`. GitHub archives use `make release-all` with Go
 1.26.10 pinned. The setting is
 `check-latest: false`.

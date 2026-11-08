@@ -66,14 +66,10 @@ The official Registry schema dated 2025-12-11 accepts a `packages` array. For
 type is `stdio`. The package version equals the server version. This project has
 no remote endpoint and declares no `remotes`.
 
-The official publisher used here is `mcp-publisher` 1.8.8. The linux/amd64
-release archive has this SHA-256:
-
-```text
-09f1fa70ee146b640584274a1a6b2b8a0310b05d4321fa9224e6df6a016d67f4
-```
-
-The verified commands are `init`, `login`, `logout`, `publish`, `status`, and
+The official publisher used here is `mcp-publisher` 1.8.8, built from the
+`github.com/modelcontextprotocol/registry` module through the Go module proxy
+and its checksum database. The verified commands are `init`, `login`, `logout`,
+`publish`, `status`, and
 `validate`. `login github-oidc` uses GitHub Actions OIDC. The workflow keeps
 `permissions: contents: read` and `id-token: write`, and uses no long-lived
 token.
@@ -193,23 +189,16 @@ fails, or the published packages do not match.
 For a manual publisher run from a workstation, use the device flow:
 
 ```bash
-curl -fsSL -o /tmp/mcp-publisher.tar.gz \
-  https://github.com/modelcontextprotocol/registry/releases/download/v1.8.8/mcp-publisher_linux_amd64.tar.gz
-printf '%s  %s\n' \
-  09f1fa70ee146b640584274a1a6b2b8a0310b05d4321fa9224e6df6a016d67f4 \
-  /tmp/mcp-publisher.tar.gz | sha256sum -c -
-curl -fsSL -o /tmp/publisher.sigstore.json \
-  https://github.com/modelcontextprotocol/registry/releases/download/v1.8.8/mcp-publisher_linux_amd64.tar.gz.sigstore.json
-cosign verify-blob \
-  --bundle /tmp/publisher.sigstore.json \
-  --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/v1.8.8" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  /tmp/mcp-publisher.tar.gz
-tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp mcp-publisher
-/tmp/mcp-publisher validate server.json
-/tmp/mcp-publisher login github
-/tmp/mcp-publisher publish server.json
+GOBIN=/tmp/mcpbin go install \
+  github.com/modelcontextprotocol/registry/cmd/publisher@v1.8.8
+/tmp/mcpbin/publisher validate server.json
+/tmp/mcpbin/publisher login github
+/tmp/mcpbin/publisher publish server.json
 ```
+
+The Go module proxy and checksum database pin the publisher source. The
+workflow uses the same command and never downloads an unverified binary from a
+release asset.
 
 `login github` prints a device code. Complete the authorization in a browser.
 The token stays in the publisher configuration, outside the repository.
@@ -233,7 +222,7 @@ Registry records are append-only in normal use. Correct a bad publication with
 the publisher status command, then verify again:
 
 ```bash
-/tmp/mcp-publisher status --status deprecated \
+/tmp/mcpbin/publisher status --status deprecated \
   --message "Superseded by v0.5.2" \
   io.github.ThomasCrouzet/icloud-mcp 0.5.1
 ```

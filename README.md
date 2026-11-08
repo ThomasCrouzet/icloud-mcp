@@ -158,10 +158,13 @@ go env GOPATH GOBIN
 The executable is installed in `GOBIN` when set, otherwise in `bin` under
 `GOPATH` (normally `$HOME/go/bin`). Use its absolute path in the host config.
 
-Without Go, use a [release archive](https://github.com/ThomasCrouzet/icloud-mcp/releases)
-for Linux amd64/arm64 or macOS arm64. Archives include checksums, cosign
-signatures, and certificates. Follow the
-[release verification procedure](docs/testing.md#release-metadata-and-registry).
+Without Go, choose an MCPB bundle for an MCPB-capable host, or a
+[release archive](https://github.com/ThomasCrouzet/icloud-mcp/releases) for
+Linux amd64/arm64 or macOS arm64. Bundles carry the same native binary and a
+read-only Calendar default. Archives include checksums, cosign signatures, and
+certificates. Follow the
+[release verification procedure](docs/testing.md#release-metadata-and-registry)
+and the [MCPB guide](docs/distribution/mcpb.md).
 
 ### Prepare credentials
 
