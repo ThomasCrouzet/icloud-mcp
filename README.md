@@ -376,7 +376,8 @@ process lifecycle. See the [package map](docs/architecture.md#packages).
 
 ### Direct dependencies
 
-The single Go module has exactly **10 direct dependencies**. Exact versions
+The single Go module has **11 direct requirements**: **10 runtime dependencies**
+and **one explicit test dependency**. Exact versions
 are in [go.mod](go.mod); required notices are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -392,6 +393,7 @@ are in [go.mod](go.mod); required notices are in
 | `github.com/emersion/go-message` | MIME parsing and bounded plain-text handling |
 | `github.com/emersion/go-smtp` | SMTP submission with STARTTLS |
 | `github.com/emersion/go-sasl` | SASL PLAIN authentication after STARTTLS |
+| `github.com/santhosh-tekuri/jsonschema/v6` | Test-only explicit import for conformance checks of published schemas and actual outputs; the validator already exists transitively through the MCP SDK |
 
 <a id="license"></a>
 <!-- readme:section license -->
