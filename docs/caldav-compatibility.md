@@ -57,6 +57,11 @@ empty selections. Availability rejects explicitly empty selections.
   REPORT path.
 - Imported-UID lookup always sends another GET before a mutation. This step
   preserves VERSION, PRODID, and VTIMEZONE.
+- A 207 Multi-Status is not proof that each matched resource succeeded. A
+  failed response or propstat status, a missing resource href, or a missing
+  `calendar-data` value returns `partial_failure`. Availability fails closed
+  and never derives free slots from an incomplete REPORT. A 207 with zero
+  `DAV:response` elements is a valid empty result.
 - REPORT payloads are incomplete for encoding with go-ical.
 
 ## Event text
@@ -121,9 +126,20 @@ the complete object. Identical UIDs in different calendars stay isolated.
   that overlap the range start.
 - Each override must have a unique recurrence identifier and a recurring master.
   Ambiguous objects return `protocol_error` before use or mutation.
+- Each VEVENT must contain exactly one DTSTART. A missing or duplicate start,
+  a duplicate DTEND or DURATION, both DTEND and DURATION, or a duplicate
+  DTSTAMP fails closed with `protocol_error` before search, get, expansion,
+  availability, or mutation. A missing start never becomes a year-1 busy
+  interval.
 - When DTEND is missing, DURATION sets the duration. Calendar days and weeks
   follow local time across DST.
 - Without DURATION, an all-day event ends on the next civil day.
+- A VALUE=DATE event is a civil day in the effective query timezone, not a UTC
+  instant. Search and availability project both bounds onto local midnight, so
+  a Paris all-day event overlaps a UTC query that covers Paris midnight.
+- A timed event with DTSTART and no DTEND or DURATION has zero duration. It is
+  a point: it matches when `rangeStart <= DTSTART < rangeEnd`, and availability
+  does not invent a busy interval for it.
 - An occurrence override copies the master duration form. A DURATION with days
   or weeks stays nominal across DST. An elapsed DURATION stays elapsed.
 - A title-only occurrence update does not change its start or end.
@@ -148,8 +164,11 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
   the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
   `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
-- Availability interprets a floating event in the requested timezone, so it
-  cannot make the same wall-clock slot look free.
+- Availability interprets a floating event in the requested timezone before
+  querying and filtering, so it cannot make the same wall-clock slot look free.
+  A naive `start` or `end` with an explicit `timezone` is parsed in that
+  timezone, not in the default location. Gap and fold wall times use the same
+  RFC 5545 resolver as recurrence expansion.
 - A timed recurring create writes TZID and a generated VTIMEZONE. It uses the
   explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback. A start that
   does not exist in that zone fails before the request.

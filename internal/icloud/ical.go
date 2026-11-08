@@ -801,6 +801,22 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 		if len(uidProps) != 1 || uidProps[0].Value == "" {
 			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 		}
+		// RFC 5545 section 3.6.1 requires exactly one DTSTART, and DTEND and
+		// DURATION are each optional at most once and mutually exclusive.
+		// Without this check a missing start becomes Go's zero time and a
+		// duplicate is silently selected by Props.Get.
+		if len(child.Props[ical.PropDateTimeStart]) != 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid or missing start time", nil)
+		}
+		if len(child.Props[ical.PropDateTimeEnd]) > 1 || len(child.Props[ical.PropDuration]) > 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has duplicate time properties", nil)
+		}
+		if len(child.Props[ical.PropDateTimeEnd]) == 1 && len(child.Props[ical.PropDuration]) == 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has both an end time and a duration", nil)
+		}
+		if len(child.Props[ical.PropDateTimeStamp]) > 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has duplicate time properties", nil)
+		}
 		uidProp := &uidProps[0]
 		if uid == "" {
 			uid = uidProp.Value

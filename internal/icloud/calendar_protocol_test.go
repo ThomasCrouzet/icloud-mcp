@@ -475,6 +475,13 @@ func TestCalendarObjectIdentityValidation(t *testing.T) {
 		strings.Replace(valid, "UID:uid-a\r\nRECURRENCE-ID", "UID:uid-b\r\nRECURRENCE-ID", 1),
 		strings.Replace(valid, "RECURRENCE-ID:20260702T090000Z\r\n", "", 1),
 		strings.Replace(valid, "UID:uid-a\r\nDTSTART", "DTSTART", 1),
+		strings.Replace(valid, "DTSTART:20260701T090000Z\r\n", "", 1),
+		strings.Replace(valid, "DTSTART:20260701T090000Z\r\n", "DTSTART:20260701T090000Z\r\nDTSTART:20260701T090000Z\r\n", 1),
+		strings.Replace(valid, "DTSTART:20260701T090000Z\r\n", "DTSTART:20260701T090000Z\r\nDTEND:20260701T100000Z\r\nDTEND:20260701T110000Z\r\n", 1),
+		strings.Replace(valid, "DTSTART:20260701T090000Z\r\n", "DTSTART:20260701T090000Z\r\nDTEND:20260701T100000Z\r\nDURATION:PT1H\r\n", 1),
+		strings.Replace(valid, "DTSTART:20260701T090000Z\r\n", "DTSTART:20260701T090000Z\r\nDTSTAMP:20260701T090000Z\r\nDTSTAMP:20260701T090000Z\r\n", 1),
+		"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:uid-a\r\nDTEND:20261109T110000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+		"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:uid-a\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
 	}
 	for _, data := range invalid {
 		calendar, err := decodeRemoteCalendar(strings.NewReader(data))

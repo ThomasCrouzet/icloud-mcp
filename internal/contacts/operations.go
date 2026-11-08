@@ -79,9 +79,15 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 	}
 	objects := make([]addressObject, 0, len(rows))
 	for _, row := range rows {
+		if strings.TrimSpace(row.Href) == "" {
+			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, 0, "Contacts REPORT returned a resource without an href")
+		}
+		if status := strings.TrimSpace(row.Status); status != "" && !statusIsOK(status) {
+			return nil, false, int64(len(response.Body)), newError(CodePartialFailure, 0, "Contacts REPORT returned an incomplete resource result")
+		}
 		prop := successfulProp(row)
 		if prop == nil || !prop.AddressData.Present || strings.TrimSpace(prop.AddressData.Value) == "" {
-			continue
+			return nil, false, int64(len(response.Body)), newError(CodePartialFailure, 0, "Contacts REPORT returned an incomplete resource result")
 		}
 		resourceURL, resolveErr := resolveAndValidate(c, response.URL, row.Href)
 		if resolveErr != nil {

@@ -149,13 +149,8 @@ func TestDAVMultistatusStatusParsingIsExact(t *testing.T) {
 	body := strings.Replace(cardResponseXML("/home/book/u.vcf", `"etag"`, card), "HTTP/1.1 200 OK", "HTTP/1.1 1200 OK", 1)
 	client := NewClient(discoveryDoer(body), "https://contacts.icloud.com/", allowContactsHost)
 	book := discoveredBook(t, client)
-	result, err := client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier})
-	if err != nil {
-		t.Fatalf("SearchContacts() error = %v", err)
-	}
-	if len(result.Contacts) != 0 {
-		t.Fatalf("malformed 1200 propstat returned contacts: %#v", result.Contacts)
-	}
+	_, err := client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier})
+	requireCode(t, err, CodePartialFailure)
 }
 
 func TestDiscoveryPreservesAuthoritiesAndValidatesShardCallback(t *testing.T) {

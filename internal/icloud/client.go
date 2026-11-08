@@ -1068,9 +1068,18 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 
 	var objs []extcaldav.CalendarObject
 	for _, r := range responses {
+		if strings.TrimSpace(r.Href) == "" {
+			return nil, NewError(CodeProtocolError, resp.StatusCode, "Calendar REPORT response has an invalid resource href", nil)
+		}
+		// A top-level 207 does not prove that each matched resource
+		// succeeded. Silently skipping a failed resource would make a search
+		// or an availability result look complete when it is not.
+		if status := strings.TrimSpace(r.Status); status != "" && !isOKStatus(status) {
+			return nil, NewError(CodePartialFailure, 0, "Calendar REPORT returned an incomplete resource result", nil)
+		}
 		prop := mergedOKProp(r)
 		if prop == nil || prop.CalendarData == "" {
-			continue
+			return nil, NewError(CodePartialFailure, 0, "Calendar REPORT returned an incomplete resource result", nil)
 		}
 		cal, derr := decodeRemoteCalendar(strings.NewReader(prop.CalendarData))
 		if derr != nil {

@@ -31,6 +31,7 @@ type msMultistatus struct {
 
 type msResponse struct {
 	Href      string       `xml:"href"`
+	Status    string       `xml:"status"`
 	Propstats []msPropstat `xml:"propstat"`
 }
 

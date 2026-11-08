@@ -255,6 +255,24 @@ func TestCreateEncodesEscapedSeparators(t *testing.T) {
 	}
 }
 
+func TestContactsReportRejectsIncompleteResources(t *testing.T) {
+	failed := `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` +
+		`<D:response><D:href>/home/book/a.vcf</D:href><D:propstat><D:prop><D:getetag>&quot;e&quot;</D:getetag></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status></D:propstat></D:response>` +
+		`</D:multistatus>`
+	client := NewClient(discoveryDoer(failed), "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	_, err := client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier})
+	requireCode(t, err, CodePartialFailure)
+
+	missing := `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` +
+		`<D:response><D:href>/home/book/a.vcf</D:href><D:propstat><D:prop><D:getetag>&quot;e&quot;</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>` +
+		`</D:multistatus>`
+	client = NewClient(discoveryDoer(missing), "https://contacts.icloud.com/", allowContactsHost)
+	book = discoveredBook(t, client)
+	_, err = client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier})
+	requireCode(t, err, CodePartialFailure)
+}
+
 func TestPerContactTruncationMetadata(t *testing.T) {
 	fixture := &multiCardFixture{cards: map[string]string{"/home/book/t.vcf": truncatedCard()}}
 	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)

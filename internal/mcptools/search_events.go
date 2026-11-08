@@ -99,6 +99,11 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
+		effective := icloud.ResolveLocation(deps.DefaultLocation)
+		// Keep the instant but adopt the configured zone so floating and
+		// VALUE=DATE filtering uses one effective civil-time policy.
+		start = start.In(effective)
+		end = end.In(effective)
 		if err := icloud.ValidateRange(start, end); err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}

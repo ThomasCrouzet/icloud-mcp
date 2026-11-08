@@ -23,6 +23,7 @@ var errAddressDataTooLarge = errors.New("address-data exceeds card limit")
 
 type multiStatusResponse struct {
 	Href      string        `xml:"href"`
+	Status    string        `xml:"status"`
 	Propstats []davPropstat `xml:"propstat"`
 }
 

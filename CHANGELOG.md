@@ -35,6 +35,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of rejecting them.
 - Validate the exact requested flag delta after a conditional IMAP STORE even
   when MODSEQ increased, so an unsolicited FETCH cannot report a false success.
+- Reject a VEVENT without exactly one DTSTART, or with duplicate time
+  properties, before search, expansion, availability, or mutation.
+- Include a zero-duration timed event at the inclusive search start and exclude
+  it at the exclusive end.
+- Compare VALUE=DATE events as civil days in the effective query timezone, and
+  interpret floating events and naive free-slot input in the requested zone
+  before filtering.
+- Fail a CalDAV or CardDAV REPORT with a failed resource or missing requested
+  data as `partial_failure`, so availability cannot advertise free time from an
+  incomplete result.
 
 ## [1.0.0] - 2026-11-08
 
