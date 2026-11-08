@@ -82,6 +82,9 @@ type BodyPart struct {
 	Size        uint32
 	InlinePlain bool
 	Attachment  bool
+	// AlternativeGroup identifies the nearest multipart/alternative ancestor.
+	// Parts in one group are equivalent representations of the same content.
+	AlternativeGroup string
 }
 
 type CuratedHeaders struct {

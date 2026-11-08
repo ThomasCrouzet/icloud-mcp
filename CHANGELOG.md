@@ -25,6 +25,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `update_contact` as non-idempotent, so host confirmation prompts reflect the
   fields those tools can clear or replace.
 - Document the reviewed annotation contract for every mutation tool.
+- Keep the search continuation above the lowest selected UID when every chosen
+  candidate is expunged before metadata FETCH, so a live match is not skipped.
+- Join independent `multipart/mixed` plain parts in order and keep one
+  representation per `multipart/alternative` group in `get_message`, with
+  explicit omission warnings.
+- Read reply threading metadata without fetching message bodies, fall back to
+  `In-Reply-To` when `References` is absent, and bound long reference chains
+  instead of rejecting them.
 
 ## [1.0.0] - 2026-11-08
 

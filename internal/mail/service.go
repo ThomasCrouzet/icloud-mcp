@@ -394,6 +394,7 @@ func (s *Client) SearchMessages(ctx context.Context, input SearchInput) (SearchR
 			found = found[:limit]
 			countTruncated = true
 		}
+		requested := append([]uint32(nil), found...)
 		result.ScanLimitReached = scanned == MaxUIDsScanned && high > 0
 		if len(found) > 0 {
 			metadata, fetchErr := session.FetchMetadata(found, false)
@@ -415,6 +416,12 @@ func (s *Client) SearchMessages(ctx context.Context, input SearchInput) (SearchR
 		case countTruncated || byteTruncated:
 			if len(result.Messages) > 0 {
 				result.NextBeforeUID = result.Messages[len(result.Messages)-1].UID
+			} else if len(requested) > 0 {
+				// Every selected candidate vanished between UID SEARCH and
+				// UID FETCH. Resume just below the lowest requested UID, not
+				// at the whole-window boundary, so a still-present match
+				// between the window floor and that candidate is not skipped.
+				result.NextBeforeUID = requested[len(requested)-1]
 			} else if high > 0 {
 				result.NextBeforeUID = high + 1
 			}

@@ -97,10 +97,20 @@ section.
 Read tools select mailboxes read-only and use PEEK. They must not set Seen.
 
 `get_message` first gets metadata, BODYSTRUCTURE, and four additional headers:
-Message-ID, In-Reply-To, References, and Reply-To. It selects the first inline
-`text/plain` leaf without attachment or filename semantics. Then, bounded
+Message-ID, In-Reply-To, References, and Reply-To. It selects inline
+`text/plain` leaves without attachment or filename semantics. Then, bounded
 partial PEEK requests get the MIME header and body. It never gets an unbounded
 `BODY.PEEK[]`.
+
+Parts of `multipart/mixed` are independent. The client joins each selected
+plain part in document order with a blank line, within `max_body_bytes`. When a
+later part does not fit, the result keeps the earlier bounded text, sets
+`bodyOmitted`, and adds a `body_truncated` warning. Parts of one
+`multipart/alternative` are equivalent: the client skips whitespace-only
+representatives within the group, keeps the first meaningful plain
+representation, and never concatenates the alternatives. A part that is
+malformed or too large adds `body_decode_failed` or `body_too_large`; the client
+continues with the other independent parts.
 
 The result contains selected envelope and header metadata. It also contains
 decoded plain text and attachment metadata. It never contains raw MIME, raw
@@ -111,11 +121,11 @@ attachments. It does not inspect them for body text.
 
 If no plain text exists, the result has metadata with `html_only` or
 `no_plain_text`, unless `allow_html_fallback` is true. This opt-in also treats
-empty or whitespace-only decoded plain text as unavailable. It checks later
-inline plain parts for meaningful text before it uses HTML. Without this opt-in,
-the first plain part remains selected, even when blank. Malformed or oversized
-plain parts stop retrieval with the existing omission warnings or typed errors.
-They do not trigger fallback. The opt-in fetches only the first inline HTML part.
+empty or whitespace-only decoded plain text as unavailable. Without this opt-in,
+the first meaningful plain text remains selected; when none is meaningful, the
+first decoded part is returned even if blank. Malformed or oversized
+plain parts are omitted with warnings and do not trigger fallback. The opt-in
+fetches only the first inline HTML part.
 A local converter excludes script, style, template,
 head, and comment content, decodes entities, and bounds nodes, depth, input
 bytes, and output. The result sets `bodySource: "html_fallback"` and reports
@@ -266,10 +276,17 @@ UIDVALIDITY before SMTP. The default mode replies to Reply-To, else From.
 `reply_all` adds To and Cc, but never Bcc. The client excludes its own address
 and deduplicates the final recipients.
 
+The reply reads curated headers and envelope metadata only. It never fetches a
+message body part, so a large or malformed source body cannot slow or fail a
+reply.
+
 The source must have a valid Message-ID. In-Reply-To is that identifier.
-References is the validated source chain plus the Message-ID, with at most 20
-entries. The client rejects malformed values before SMTP. It adds `Re: ` to the
-subject only when absent. It does not accept caller-supplied headers, mark the
+References starts from the source References header. When that header is absent,
+it starts from the source In-Reply-To header, as RFC 5322 section 3.6.4
+specifies. The source Message-ID is appended exactly once. A valid chain longer
+than 20 entries keeps the most recent 19 ancestors and the immediate parent;
+the client does not reject a long thread. The client rejects malformed values
+before SMTP. It adds `Re: ` to the subject only when absent. It does not accept caller-supplied headers, mark the
 message Answered, move it, or append a Sent copy. The same recipient policy,
 STARTTLS, no-retry, and idempotency rules apply.
 

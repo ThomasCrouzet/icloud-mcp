@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,7 @@ type fakeIMAP struct {
 	listFn               func() ([]imapadapter.Mailbox, error)
 	metadata             []imapadapter.Message
 	body                 imapadapter.BodyData
+	bodyByPath           map[string]imapadapter.BodyData
 	flags                imapadapter.Message
 	copyData             imapadapter.CopyData
 	appendData           imapadapter.AppendData
@@ -127,8 +129,15 @@ func (f *fakeIMAP) FetchMetadata(uids []uint32, _ bool) ([]imapadapter.Message, 
 	}
 	return out, f.operationError("metadata")
 }
-func (f *fakeIMAP) FetchBodyPart(_ uint32, _ []int) (imapadapter.BodyData, error) {
+func (f *fakeIMAP) FetchBodyPart(_ uint32, path []int) (imapadapter.BodyData, error) {
 	f.record("body-peek")
+	if f.bodyByPath != nil {
+		parts := make([]string, len(path))
+		for index, value := range path {
+			parts[index] = strconv.Itoa(value)
+		}
+		return f.bodyByPath[strings.Join(parts, ".")], f.operationError("body")
+	}
 	return f.body, f.operationError("body")
 }
 func (f *fakeIMAP) StoreDelta(_ uint32, _ bool, _ []string) error {

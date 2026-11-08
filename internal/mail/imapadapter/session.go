@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -424,8 +425,8 @@ func convertAddresses(in []imap.Address) ([]Address, error) {
 
 func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	parts := make([]BodyPart, 0, 8)
-	var walk func(imap.BodyStructure, []int, bool) error
-	walk = func(part imap.BodyStructure, path []int, excluded bool) error {
+	var walk func(imap.BodyStructure, []int, bool, string) error
+	walk = func(part imap.BodyStructure, path []int, excluded bool, alternativeGroup string) error {
 		if len(parts) >= maxParts || len(path) > maxDepth {
 			return &Error{Kind: ErrorTooLarge}
 		}
@@ -462,15 +463,19 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 				Path: pathCopy, ContentType: mediaType, Disposition: disposition,
 				Filename: filename, ContentID: typed.ID, Size: typed.Size,
 				InlinePlain: mediaType == "text/plain" && !attachment,
-				Attachment:  attachment,
+				Attachment:  attachment, AlternativeGroup: alternativeGroup,
 			})
 		case *imap.BodyStructureMultiPart:
 			parts = append(parts, BodyPart{Path: append([]int(nil), path...), ContentType: typed.MediaType(), Disposition: disposition, Attachment: excluded})
 			if excluded {
 				return nil
 			}
+			group := alternativeGroup
+			if group == "" && strings.EqualFold(typed.Subtype, "alternative") {
+				group = alternativeGroupKey(path)
+			}
 			for i, child := range typed.Children {
-				if err := walk(child, append(path, i+1), false); err != nil {
+				if err := walk(child, append(path, i+1), false, group); err != nil {
 					return err
 				}
 			}
@@ -483,10 +488,21 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	if _, multipart := root.(*imap.BodyStructureMultiPart); multipart {
 		startPath = nil
 	}
-	if err := walk(root, startPath, false); err != nil {
+	if err := walk(root, startPath, false, ""); err != nil {
 		return nil, err
 	}
 	return parts, nil
+}
+
+func alternativeGroupKey(path []int) string {
+	if len(path) == 0 {
+		return "root"
+	}
+	parts := make([]string, len(path))
+	for index, value := range path {
+		parts[index] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, ".")
 }
 
 func parseCuratedHeaders(data []byte) (CuratedHeaders, error) {
