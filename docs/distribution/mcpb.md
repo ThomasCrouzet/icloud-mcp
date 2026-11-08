@@ -155,20 +155,63 @@ linux/arm64 and darwin/arm64 bundles.
 
 ## Install from a downloaded bundle
 
-Download the `.mcpb` file for the host platform from the GitHub release. Open
-the file in an MCPB-capable host, or use that host's install command. The host
-reads the manifest, asks for the listed settings, and starts:
+**Host installation status: UNVERIFIED.** The bundle is built, hashed, signed,
+validated, and started natively. A real desktop host install, settings
+persistence, secret storage, upgrade, and uninstall have not been recorded. The
+exact open work is [#126](https://github.com/ThomasCrouzet/icloud-mcp/issues/126).
 
-```text
-${__dirname}/server/icloud-mcp
-```
+### Pinned inputs required from the user
+
+A verifiable install needs these values supplied by the maintainer or user.
+Without them, the steps below are a procedure, not a test result.
+
+| Input | Current value |
+|---|---|
+| MCPB-capable host name | Not recorded |
+| Host version and build | Not recorded |
+| OS and architecture | Candidate platforms are Linux amd64/arm64 and macOS arm64 |
+| Install mechanism | Host UI, host CLI, or file association; not recorded |
+| User profile state | Must be clean; not recorded |
+
+Do not report a host as supported until the issue records these values and the
+observed results for install, first start, restart, upgrade, disable, and
+uninstall.
+
+### Procedure
+
+1. Download the `.mcpb` file for the host platform from the GitHub release.
+   Verify its SHA-256 and Cosign signature with the matching checksum, `.sig`,
+   and `.pem` files.
+2. Open the file in an MCPB-capable host, or use that host's install command.
+   The host reads the manifest, asks for the listed settings, and starts:
+
+   ```text
+   ${__dirname}/server/icloud-mcp
+   ```
+
+3. Enter `icloud_email` and `icloud_password`. Keep `read_only=true`,
+   `permissions=calendar.read`, `enable_contacts=false`, and
+   `enable_mail=false`. Set `default_timezone`.
+4. Confirm the host starts one process, lists exactly seven read-only tools,
+   and reports `readOnly=true` from `icloud_capabilities`.
+5. Fully quit and restart the host. Confirm the settings survive.
+6. Disable and uninstall the connector. Confirm the process stops and the
+   settings are removed, or record which settings survive. Revoke the
+   app-specific password at Apple.
+7. Record host name, version, OS/arch, bundle SHA-256, observed results, and
+   cleanup in the privacy-safe evidence template. Never include credentials,
+   account identifiers, or transcript payloads.
+
+If the host cannot store secrets, use a documented `file://` value. If the host
+rejects manifest version `0.4` or the bundle platform, use the release archive
+and report the rejection, with no credential, in #126.
 
 The server needs `ICLOUD_EMAIL` and `ICLOUD_PASSWORD` for Calendar or Contacts,
 or the Mail address and password for a Mail profile. Keep read-only enabled for
 the first run. Check `icloud_capabilities` to see the effective tools.
 
-This document does not claim that a client installation was performed. See the
-status table.
+See the [synthetic first-run transcript](../demo/read-only-transcript.md) for
+the expected read-only shape without a host or account.
 
 ## Trust chain
 
@@ -209,4 +252,4 @@ Checked on 2026-11-08.
 | Windows bundle | Not produced. Compile only. |
 | Release asset build, smoke, and signing of MCPB files | Verified for `v0.5.2`: three signed bundles with hashes in the checksums file. |
 | Official Registry publication with packages | Published `0.5.2` with three packages on 2026-11-08; `make check-registry` passes. |
-| MCPB client installation | Not performed and not claimed. |
+| MCPB client installation | Not performed and not claimed. Host name, version, OS/arch, install mechanism, settings persistence, secret storage, upgrade, and uninstall are unverified (#126). |

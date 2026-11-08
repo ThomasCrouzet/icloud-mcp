@@ -136,16 +136,88 @@ the MCP error flag and include a JSON `code` in text content. Follow the
 <!-- readme:section get-started -->
 ## Get started
 
-This first run enables Calendar reads only. You need an MCP host, network
-access to iCloud, and an Apple Account with two-factor authentication to
+This first run gives an MCP host read-only Calendar access. You need an MCP
+host, network access to iCloud, and an Apple Account with two-factor
+authentication to
 [create an app-specific password](https://support.apple.com/en-us/102654).
 Never use the main Apple Account password.
 
 **Read-only by default.** With no `ICLOUD_MCP_PERMISSIONS`, the server exposes
-reads only. Calendar, Contacts, and Mail effects need their exact permission
-tokens. Keep `ICLOUD_MCP_READ_ONLY=true` for the first run.
+reads only. Keep `ICLOUD_MCP_READ_ONLY=true` for the first run. No switch or
+omission grants an effect.
 
-### Install the binary
+### Choose an install path
+
+| Path | Use when | Installation evidence |
+|---|---|---|
+| **MCPB bundle** (recommended) | Your host installs MCPB files and you do not want Go | Bundle build, manifest validation, native startup, and signatures are verified. **Real host installation is UNVERIFIED** ([#126](https://github.com/ThomasCrouzet/icloud-mcp/issues/126)). |
+| **Release archive** | Linux amd64/arm64 or macOS arm64, with a manual host command | Native archive smoke is verified on the matching platform. Host configuration is manual. |
+| **`go install`** | You develop with Go 1.26.0 or newer | Build, tests, and protocol checks are verified locally and in CI. |
+
+The MCPB path is first because it needs no compiler. The missing evidence is a
+recorded install in a named host version, not a bundle defect. Until that record
+exists, this page does not claim that an MCPB host install was performed.
+
+### Path A: MCPB bundle (host installation unverified)
+
+1. Download the bundle for your platform from the
+   [`v0.5.2` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v0.5.2):
+   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-amd64.mcpb),
+   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-linux-arm64.mcpb),
+   or
+   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-darwin-arm64.mcpb).
+2. Download
+   [`icloud-mcp-v0.5.2-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v0.5.2/icloud-mcp-v0.5.2-checksums.txt)
+   and the matching `.sig` and `.pem` files. Verify the bytes:
+
+   ```sh
+   shasum -a 256 -c icloud-mcp-v0.5.2-checksums.txt
+   cosign verify-blob \
+     --certificate icloud-mcp-v0.5.2-linux-amd64.mcpb.pem \
+     --signature icloud-mcp-v0.5.2-linux-amd64.mcpb.sig \
+     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v0.5.2" \
+     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+     icloud-mcp-v0.5.2-linux-amd64.mcpb
+   ```
+
+3. Open the `.mcpb` file in your MCPB-capable host, or use that host's install
+   command. The host reads `manifest.json`, asks for the declared user settings,
+   and starts `${__dirname}/server/icloud-mcp`.
+4. Set `email` and the app-specific password. Keep `read_only=true`,
+   `permissions=calendar.read`, `enable_contacts=false`, and `enable_mail=false`.
+   Set your IANA `default_timezone`.
+5. Start the connector and confirm exactly seven tools. Call
+   `icloud_capabilities` and confirm `readOnly` is true.
+6. Restart the host and confirm the settings survive. Uninstall by removing the
+   bundle from the host, then revoke the app-specific password at Apple.
+
+**Unverified host part.** The host name, host version, OS/arch, settings
+persistence, secret storage, upgrade behavior, and disable/uninstall behavior
+are not recorded yet. If the host rejects manifest version `0.4`, the command,
+or the bundle platform, use Path B and report the exact host name and version in
+[#126](https://github.com/ThomasCrouzet/icloud-mcp/issues/126). Do not send
+credentials or account data in that report.
+
+The [MCPB guide](docs/distribution/mcpb.md) lists the manifest settings, entry
+set, and trust chain. The [release verification procedure](docs/testing.md#release-metadata-and-registry)
+covers checksums and signatures in more detail.
+
+### Path B: release archive
+
+Download the archive for Linux amd64/arm64 or macOS arm64 from the
+[release page](https://github.com/ThomasCrouzet/icloud-mcp/releases), verify the
+checksum and signature, then extract it:
+
+```sh
+tar -xzf icloud-mcp-v0.5.2-linux-amd64.tar.gz
+./icloud-mcp -version
+```
+
+Use the extracted absolute path in the host configuration below. The archive
+contains the same native binary as the bundle. It does not include a host
+installer.
+
+### Path C: go install
 
 With **Go 1.26.0 or newer**:
 
@@ -157,25 +229,23 @@ go env GOPATH GOBIN
 The executable is installed in `GOBIN` when set, otherwise in `bin` under
 `GOPATH` (normally `$HOME/go/bin`). Use its absolute path in the host config.
 
-Without Go, choose an MCPB bundle for an MCPB-capable host, or a
-[release archive](https://github.com/ThomasCrouzet/icloud-mcp/releases) for
-Linux amd64/arm64 or macOS arm64. Bundles carry the same native binary and a
-read-only Calendar default. Archives include checksums, cosign signatures, and
-certificates. Follow the
-[release verification procedure](docs/testing.md#release-metadata-and-registry)
-and the [MCPB guide](docs/distribution/mcpb.md).
-
 ### Prepare credentials
 
-Store the Apple Account identity and app-specific password in separate files
-outside the repository. Each must be a regular file of at most 4 KiB, with mode
-`0600` or stricter. The host user must be able to read them. Use absolute
-`file://` paths; the server reads these files only at startup.
+Create one app-specific password for this server. Never use the main Apple
+Account password. Store the Apple Account identity and the app-specific password
+in separate files outside the repository. Each must be a regular file of at
+most 4 KiB, with mode `0600` or stricter. The host user must be able to read
+them. Use absolute `file://` paths; the server reads these files only at
+startup.
 
-### Connect Claude Desktop
+For an MCPB host, prefer the masked password settings. If the host cannot store
+secrets, enter the documented `file://` value in the string setting. See
+[MCPB user settings](docs/distribution/mcpb.md#user-settings-and-credentials).
 
-This example uses **Claude Desktop on macOS**. Open **Settings > Developer >
-Edit Config**. Its user configuration file is
+### Configure the host
+
+This manual example uses **Claude Desktop on macOS**. Open **Settings >
+Developer > Edit Config**. Its user configuration file is
 `~/Library/Application Support/Claude/claude_desktop_config.json`; see the
 [official local-server setup guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers)
 and [environment configuration](https://modelcontextprotocol.io/docs/tools/debugging#environment-variables).
@@ -202,9 +272,14 @@ Merge this entry into `mcpServers`, with your actual absolute paths:
 }
 ```
 
-Keep optional domains off for this run. Fully quit and reopen Claude Desktop.
-The host launches the binary. Calendar discovery starts on the first Calendar call, so a remote Calendar outage does not block Mail or Contacts startup.
-Open the host's connector tool list and confirm the `icloud` tools appear.
+Keep optional domains off for this run. Fully quit and reopen the host. The host
+launches the binary. Calendar discovery starts on the first Calendar call, so a
+remote Calendar outage does not block an optional domain. Open the host's
+connector tool list and confirm the `icloud` tools appear.
+
+For an MCPB host, use the host's settings form instead of this JSON. The
+manifest maps the same values to the same environment variables. Do not paste a
+password into a public configuration file.
 
 This entry is also available as
 [calendar-read-only.json](examples/profiles/calendar-read-only.json).
@@ -216,7 +291,8 @@ The local binary can return account data to the configured MCP host and model.
 Their policies govern onward transmission. Local stdio does not keep that data
 outside the host or model. Review those policies before the first account read.
 For synthetic-only startup checks, use the
-[offline validation commands](docs/agent-hosts.md#offline-profile-validation).
+[offline validation commands](docs/agent-hosts.md#offline-profile-validation)
+or the [synthetic first-run transcript](docs/demo/read-only-transcript.md).
 
 ### Run your first operation
 
@@ -249,6 +325,16 @@ paths, and count depend on your account. Next, ask the host to use
 For another host, configure a custom stdio process with the same command and
 environment; its configuration format can differ. See
 [host integration](docs/agent-hosts.md).
+
+### If the first start fails
+
+| Symptom | Check |
+|---|---|
+| The host rejects the bundle | Host name and version are not yet verified. Use Path B. Report the host version in #126. |
+| `configuration error` | The identity, password, gate, or timezone value is invalid. Fix it before retrying. |
+| `authentication` | Use a new app-specific password. Never use the main password. |
+| Calendar tools are absent | The host did not start the process or the tool list is stale. Restart the host. |
+| Write or send tools appear | Set `ICLOUD_MCP_READ_ONLY=true` and use only `calendar.read`. Report the host configuration. |
 
 <!-- readme:section configuration -->
 ## Configuration
@@ -333,6 +419,9 @@ for search, parser, recurrence, and concurrency bounds.
 | [Mail compatibility](docs/mail-compatibility.md) | IMAP identities, sessions, MIME bounds, mutations, SMTP |
 | [Mail network troubleshooting](docs/mail-network-troubleshooting.md) | Version-specific diagnostics, credential-free TLS checks, approved deployment networks |
 | [Security policy](SECURITY.md) and [implementation](docs/security.md) | Threat model, private reporting, technical controls |
+| [MCPB bundles](docs/distribution/mcpb.md) | Bundle contents, user settings, verification, unverified host path |
+| [Case study](docs/case-study.md) | Architecture, mutation boundaries, evidence, limitations |
+| [Synthetic first run](docs/demo/read-only-transcript.md) | Reproducible read-only transcript with no account |
 | [Testing](docs/testing.md) | Local checks, protocol evidence, CI, live integration, release verification |
 | [Releases](https://github.com/ThomasCrouzet/icloud-mcp/releases) and [Changelog](CHANGELOG.md) | Published archives and version history |
 
