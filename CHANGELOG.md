@@ -38,6 +38,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   safely when no permitted calendars remain.
 
 ### Added
+- Record the recurrence and invitation interoperability decision in
+  `docs/decisions/0001-recurrence-and-invitations.md`. Characterize RDATE,
+  `THISANDFUTURE`, DST, all-day, conflicting overrides, and partial-series
+  edits. Keep the fail-closed behavior and report the floating-time read and
+  group-scheduled notification gaps. Add synthetic fixtures in
+  `internal/icloud/recurrence_research_test.go`.
 - Add opt-in `search_events` continuation beyond the legacy first 400 rows.
   `cursor="start"` begins strict keyset paging; signed 5-minute tokens bind the
   query, explicit calendars, filters, and resource scope. Calls without `cursor`
