@@ -52,6 +52,10 @@ checks. It keeps the current tool defaults and limits.
   safely when no permitted calendars remain.
 
 ### Added
+- Add a real-iCloud compatibility evidence matrix that marks every live
+  capability `UNVERIFIED` until a recorded run, plus a privacy-safe live
+  evidence harness that checks gates without network access and writes
+  sanitized JSON and Markdown artifacts to a directory outside the repository.
 - Add deterministic MCPB v0.4 bundles for linux/amd64, linux/arm64, and
   darwin/arm64 with a Calendar read-only install default. The tag workflow
   builds, natively smokes, signs, and publishes the bundles, records their
