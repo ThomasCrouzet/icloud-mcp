@@ -100,13 +100,23 @@ func mustLifecycleAccepted(t *testing.T, result SendResult, err error) SendResul
 	return result
 }
 
-func mustLifecycleCode(t *testing.T, err error, code Code) *Error {
+type lifecycleErrorView struct {
+	Code           Code
+	Message        string
+	Reconciliation string
+}
+
+func mustLifecycleCode(t *testing.T, err error, code Code) lifecycleErrorView {
 	t.Helper()
 	public := AsError(err)
 	if public == nil || public.Code != code {
 		t.Fatalf("error = %v, want %s", err, code)
 	}
-	return public
+	return lifecycleErrorView{
+		Code:           public.Code,
+		Message:        public.Message,
+		Reconciliation: public.Reconciliation,
+	}
 }
 
 func TestSendIdempotencyDefinitiveSaturationRecoversAtRetention(t *testing.T) {
