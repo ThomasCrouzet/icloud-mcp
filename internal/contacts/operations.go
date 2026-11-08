@@ -90,7 +90,7 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 		if !urlWithin(resourceURL, book.url, false) {
 			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, 0, "Contacts REPORT returned a resource outside its address book")
 		}
-		card, version, decodeErr := decodeCard([]byte(prop.AddressData.Value))
+		card, version, raw, decodeErr := decodeRawCard([]byte(prop.AddressData.Value))
 		if decodeErr != nil {
 			return nil, false, int64(len(response.Body)), decodeErr
 		}
@@ -98,7 +98,7 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 		if etagErr != nil {
 			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, response.Status, "Contacts REPORT response has an invalid ETag")
 		}
-		objects = append(objects, addressObject{url: resourceURL, card: card, version: version, etag: etag})
+		objects = append(objects, addressObject{url: resourceURL, card: card, raw: raw, version: version, etag: etag})
 	}
 	return objects, overflow, int64(len(response.Body)), nil
 }
@@ -144,8 +144,11 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		}
 		for _, object := range objects[:complete] {
 			remainingCards--
-			if contactMatches(object.card, opts) {
-				matches = append(matches, cardSummary(object.card, book.public.Identifier, object.etag))
+			matched, omittedMatch := contactMatches(object.card, object.raw, opts)
+			if matched {
+				summary := cardSummary(newCardView(object.card, object.raw), book.public.Identifier, object.etag)
+				summary.MatchedFieldOmitted = omittedMatch
+				matches = append(matches, summary)
 			}
 		}
 		if overflow || len(objects) > complete || remainingCards == 0 && index < len(books)-1 {
@@ -181,15 +184,20 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 	return result, nil
 }
 
-func contactMatches(card vcard.Card, opts SearchOptions) bool {
+func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched, omittedFieldMatch bool) {
 	if !opts.IncludeGroups && cardIsGroup(card) {
-		return false
+		return false, false
 	}
+	view := newCardView(card, raw)
 	if opts.Query != "" {
 		needle := strings.ToLower(opts.Query)
-		fields := card.Values(vcard.FieldFormattedName)
-		fields = append(fields, card.Values(vcard.FieldName)...)
-		fields = append(fields, card.Value(vcard.FieldOrganization))
+		fields := view.card.Values(vcard.FieldFormattedName)
+		for _, rawName := range view.values(vcard.FieldName) {
+			fields = append(fields, searchableText(rawName))
+		}
+		for _, rawOrganization := range view.values(vcard.FieldOrganization) {
+			fields = append(fields, searchableText(rawOrganization))
+		}
 		fields = append(fields, card.Values(vcard.FieldEmail)...)
 		fields = append(fields, card.Values(vcard.FieldTelephone)...)
 		matched := false
@@ -200,36 +208,44 @@ func contactMatches(card vcard.Card, opts SearchOptions) bool {
 			}
 		}
 		if !matched {
-			return false
+			return false, false
 		}
 	}
 	if opts.Email != "" {
 		needle := strings.ToLower(opts.Email)
-		matched := false
-		for _, value := range card.Values(vcard.FieldEmail) {
+		values := card.Values(vcard.FieldEmail)
+		matchIndex := -1
+		for index, value := range values {
 			if strings.Contains(strings.ToLower(value), needle) {
-				matched = true
+				matchIndex = index
 				break
 			}
 		}
-		if !matched {
-			return false
+		if matchIndex < 0 {
+			return false, false
+		}
+		if matchIndex >= maxEmails {
+			omittedFieldMatch = true
 		}
 	}
 	if opts.Phone != "" {
 		needle := normalizePhone(opts.Phone)
-		matched := false
-		for _, value := range card.Values(vcard.FieldTelephone) {
+		values := card.Values(vcard.FieldTelephone)
+		matchIndex := -1
+		for index, value := range values {
 			if strings.Contains(normalizePhone(value), needle) {
-				matched = true
+				matchIndex = index
 				break
 			}
 		}
-		if !matched {
-			return false
+		if matchIndex < 0 {
+			return false, false
+		}
+		if matchIndex >= maxPhones {
+			omittedFieldMatch = true
 		}
 	}
-	return true
+	return true, omittedFieldMatch
 }
 
 func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*addressObject, error) {
@@ -237,16 +253,28 @@ func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*a
 	if err != nil {
 		return nil, err
 	}
-	if overflow || len(objects) > 1 {
-		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact")
+	// The mandatory i;unicode-casemap collation can match UIDs that differ only
+	// by case. Select the single byte-exact UID; never guess.
+	var exact []addressObject
+	for _, object := range objects {
+		if object.card.Value(vcard.FieldUID) == uid {
+			exact = append(exact, object)
+		}
 	}
-	if len(objects) == 0 {
+	switch {
+	case len(exact) == 1:
+		return c.getObject(ctx, book, exact[0].url, uid)
+	case len(exact) > 1:
+		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact with the same UID")
+	case overflow:
+		return nil, newError(CodeProtocolError, 0, "UID lookup was truncated before an exact UID match")
+	case len(objects) > 1:
+		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact and none matched exactly")
+	case len(objects) == 0:
 		return nil, newError(CodeNotFound, http.StatusNotFound, "contact UID was not found in the address book")
-	}
-	if objects[0].card.Value(vcard.FieldUID) != uid {
+	default:
 		return nil, newError(CodeProtocolError, 0, "UID lookup returned a different contact")
 	}
-	return c.getObject(ctx, book, objects[0].url, uid)
 }
 
 func (c *Client) getObject(ctx context.Context, book bookRecord, target *url.URL, expectedUID string) (*addressObject, error) {
@@ -308,7 +336,7 @@ func (c *Client) GetContact(ctx context.Context, addressBook, uid string) (*Cont
 	if err != nil {
 		return nil, err
 	}
-	detail := cardDetail(object.card, object.version, addressBook, object.etag)
+	detail := cardDetail(newCardView(object.card, object.raw), object.version, addressBook, object.etag)
 	if !resultFits(detail) {
 		return nil, newError(CodePayloadTooLarge, 0, "contact detail exceeds the result limit")
 	}
@@ -342,7 +370,7 @@ func (c *Client) CreateContact(ctx context.Context, input *CreateContactInput) (
 	if err := c.validateURL(target); err != nil {
 		return CreateResult{}, err
 	}
-	encoded, err := encodeCard(newV3Card(input, uid), book.public.MaxResourceSize)
+	encoded, err := encodeNewCard(input, uid, book.public.MaxResourceSize)
 	if err != nil {
 		return CreateResult{}, err
 	}

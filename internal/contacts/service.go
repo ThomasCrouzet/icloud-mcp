@@ -43,14 +43,18 @@ type AddressBook struct {
 
 // ContactSummary is the bounded result model used by SearchContacts.
 type ContactSummary struct {
-	AddressBook  string       `json:"addressBook"`
-	UID          string       `json:"uid"`
-	ETag         string       `json:"etag,omitempty"`
-	DisplayName  string       `json:"displayName"`
-	Organization string       `json:"organization,omitempty"`
-	Emails       []TypedValue `json:"emails,omitempty"`
-	Phones       []TypedValue `json:"phones,omitempty"`
-	IsGroup      bool         `json:"isGroup,omitempty"`
+	AddressBook     string            `json:"addressBook"`
+	UID             string            `json:"uid"`
+	ETag            string            `json:"etag,omitempty"`
+	DisplayName     string            `json:"displayName"`
+	Organization    string            `json:"organization,omitempty"`
+	Emails          []TypedValue      `json:"emails,omitempty"`
+	Phones          []TypedValue      `json:"phones,omitempty"`
+	IsGroup         bool              `json:"isGroup,omitempty"`
+	TruncatedFields []FieldTruncation `json:"truncatedFields,omitempty"`
+	// MatchedFieldOmitted is true when the search filter matched a raw value
+	// that the bounded output did not include.
+	MatchedFieldOmitted bool `json:"matchedFieldOmitted,omitempty"`
 }
 
 // Contact is a modeled full contact. Raw vCard data and PHOTO bytes are

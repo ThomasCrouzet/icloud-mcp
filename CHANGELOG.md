@@ -4,6 +4,21 @@ This file documents all notable project changes. It uses the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Decode escaped semicolons in structured vCard `N`, `ADR`, and `ORG` values
+  and escape them again on create and targeted patch, so a literal separator
+  no longer shifts name, address, or organization components.
+- Preserve Apple grouped property labels when a patched value keeps its
+  identity, and drop the group companion when the value is removed instead of
+  leaving an orphan `itemN.X-ABLabel`.
+- Report per-contact `truncatedFields` and `matchedFieldOmitted` in get and
+  search results, so bounded emails, phones, addresses, and URLs are no longer
+  silently incomplete.
+- Resolve case-distinct vCard UIDs by byte-exact match after the
+  case-insensitive CardDAV query, and fail closed on duplicate exact UIDs.
+
 ## [1.0.0] - 2026-11-08
 
 This major release makes read-only the default. Calendar, Contacts, and Mail

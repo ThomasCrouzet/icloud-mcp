@@ -142,6 +142,32 @@ continuation cursor.
 `scanLimitReached` means that the scan limit excluded selected cards or books.
 Narrow the book or filters when either field is true.
 
+`truncatedFields` reports per-contact field completeness without exposing the
+omitted values. Each entry names a field (`emails`, `phones`, `addresses`, or
+`urls`), counts omitted items, and sets `valueTruncated` when one value reached
+its byte budget. `matchedFieldOmitted` is true when the search matched a raw
+value that the bounded output did not include, for example the eleventh email.
+These markers describe one contact. They are independent of `truncated` and
+`scanLimitReached`, which describe result and scan bounds.
+
+Structured `N`, `ADR`, and `ORG` values decode escaped semicolons, commas,
+backslashes, and newlines before the client models them. An escaped semicolon
+stays inside its component instead of splitting the value. A patch preserves
+the original raw structured property byte for byte, and a targeted name or
+address edit escapes embedded separators before the conditional PUT.
+
+Apple grouped properties keep their `itemN` association during a partial
+update. When an edited repeated value is byte-identical to an original grouped
+value, the client keeps that group and its `itemN.X-ABLabel` companion. When the
+value is removed, the client removes the group companion as well instead of
+leaving an orphan label. An ambiguous group-to-value correspondence fails
+before any PUT.
+
+UID lookup uses the mandatory `i;unicode-casemap` equality filter, which is
+case-insensitive, then selects the single byte-exact UID locally. Distinct UIDs
+such as `ClientA` and `clienta` therefore resolve correctly. Duplicate exact
+UIDs, a truncated result, or a result with no exact match fail closed.
+
 ## Conditional writes
 
 Create:

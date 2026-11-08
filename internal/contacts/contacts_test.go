@@ -1024,7 +1024,7 @@ func TestCardDetailHasPhotoWithoutBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	detail := cardDetail(card, version, "book-test", `"etag"`)
+	detail := cardDetail(newCardView(card, nil), version, "book-test", `"etag"`)
 	if !detail.HasPhoto {
 		t.Fatal("expected hasPhoto true")
 	}
@@ -1037,7 +1037,7 @@ func TestCardDetailHasPhotoWithoutBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cardDetail(card2, version2, "book-test", `"etag"`).HasPhoto {
+	if cardDetail(newCardView(card2, nil), version2, "book-test", `"etag"`).HasPhoto {
 		t.Fatal("expected hasPhoto false")
 	}
 }
