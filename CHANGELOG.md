@@ -42,6 +42,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   safely when no permitted calendars remain.
 
 ### Added
+- Add deterministic MCPB v0.4 bundles for linux/amd64, linux/arm64, and
+  darwin/arm64 with a Calendar read-only install default. The tag workflow
+  builds, natively smokes, signs, and publishes the bundles, records their
+  hashes in `server.json`, and dispatches a least-privilege Registry
+  publication workflow that fails closed on a missing or mismatched asset.
 - Record the recurrence and invitation interoperability decision in
   `docs/decisions/0001-recurrence-and-invitations.md`. Characterize RDATE,
   `THISANDFUTURE`, DST, all-day, conflicting overrides, and partial-series
