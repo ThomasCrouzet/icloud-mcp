@@ -159,8 +159,13 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			opts.DaysOfWeek = days
 		}
 
-		allEvents, err := collectAvailabilityEvents(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+		busy, err := collectAvailabilityIntervals(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
 			return deps.Service.SearchEvents(ctx, path, queryStart, queryEnd, nil)
+		}, availabilityOptions{
+			IncludeAllDay: opts.IncludeAllDayBusy,
+			BufferBefore:  opts.BufferBefore,
+			BufferAfter:   opts.BufferAfter,
+			Location:      opts.Location,
 		})
 		if err != nil {
 			return errResult(deps.Redactor, "searching events", err), nil
@@ -168,7 +173,6 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if err := ctx.Err(); err != nil {
 			return errResult(deps.Redactor, "searching events", err), nil
 		}
-		busy := icloud.BusyFromEvents(allEvents, opts.IncludeAllDayBusy, opts.BufferBefore, opts.BufferAfter, opts.Location)
 		slots, err := icloud.FindFreeSlots(busy, opts)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
