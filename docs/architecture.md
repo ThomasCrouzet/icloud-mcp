@@ -24,7 +24,7 @@ protocol executable, plugin, or runtime-downloaded code.
 
 ## Boot and lifecycle
 
-1. `config.Load` reads and validates the 12 environment variables. It resolves
+1. `config.Load` reads and validates the 14 environment variables. It resolves
    boot-only `file://` identity and password values.
 2. Each secret file must be a regular file of 4 KiB or less. Its mode must be
    0600 or stricter.

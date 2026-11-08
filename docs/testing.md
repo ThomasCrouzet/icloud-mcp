@@ -443,7 +443,7 @@ Package coverage floors are:
 | `internal/mail/imapadapter` | 60% |
 | `cmd/icloud-mcp` | 55% |
 
-Tag releases publish only after CI, gitleaks, release metadata, and both native
+Tag releases publish only after CI, gitleaks, release metadata, and the native
 smoke matrix jobs succeed on the same ref. See the `release` job in
 `.github/workflows/ci.yml`. GitHub archives use `make release-all` with Go
 1.26.10 pinned. The setting is
@@ -454,11 +454,17 @@ CI also smoke-builds `windows/amd64`. GitHub Release archives do not contain
 that build.
 
 Tag and manual `native` CI runs extract the matching production archive on
-native GitHub-hosted runners. They verify checksums, version output, and an
-offline configuration failure. The matrix covers Linux amd64 and macOS arm64.
-The macOS arm64 job uses the standard `macos-15` runner.
-Linux arm64 remains cross-compiled and archive-tested only. Windows remains
-compile-only and has no published archive or runtime support claim.
+native GitHub-hosted runners. They verify checksums, version output, an offline
+configuration failure, a path with spaces, a synthetic MCP `initialize` and
+read-only `tools/list`, and a clean SIGTERM exit. The matrix covers Linux amd64 on
+`ubuntu-latest`, Linux arm64 on `ubuntu-24.04-arm`, and macOS arm64 on
+`macos-15`. The command is `python3 scripts/native_smoke.py`.
+
+Windows remains compile-only and has no published archive or runtime support
+claim. See [platform support](platform-support.md) for the compiled, published,
+archive-verified, and native-executed matrix and the Windows decision record.
+`make check-platforms` fails when that page, the README status table, the
+Makefile targets, and the CI matrix disagree.
 
 Live iCloud credentials and the `integration` build tag are never used in CI.
 

@@ -7,6 +7,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Retry pinned gitleaks and Cosign downloads in CI so a transient GitHub 504 does not fail a pull request or a release.
+- Reconcile the documented environment variable count to 14, add
+  `mail.archive` to the README permission inventory, and list `reply_message`
+  in the read-only Mail tool inventory and SMTP authorization notes.
 - Bound SMTP send idempotency. Completed definitive outcomes are retained for 15
   minutes after completion; pending and `outcome_unknown` claims stay until process
   exit. Keep the 128-key cap and reject a full cache before SMTP with
@@ -42,6 +46,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   capability `UNVERIFIED` until a recorded run, plus a privacy-safe live
   evidence harness that checks gates without network access and writes
   sanitized JSON and Markdown artifacts to a directory outside the repository.
+- Add `make check-docs` and `make check-platforms` consistency gates, a
+  documented source-of-truth table, and a native Linux arm64 release smoke. The
+  smoke runs the extracted archive through version, fail-closed configuration,
+  a spaced path, stdio initialize, read-only `tools/list`, and SIGTERM checks.
+  Record the Windows compile-only decision and the compiled, published,
+  archive-verified, and native-executed matrix in `docs/platform-support.md`.
 - Add opt-in `search_events` continuation beyond the legacy first 400 rows.
   `cursor="start"` begins strict keyset paging; signed 5-minute tokens bind the
   query, explicit calendars, filters, and resource scope. Calls without `cursor`

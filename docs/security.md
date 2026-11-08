@@ -119,8 +119,8 @@ error:
 
 - Calendar: `create_event`, `update_event`, `delete_event` are absent.
 - Contacts: `create_contact`, `update_contact`, `delete_contact` are absent.
-- Mail: `set_message_flags`, `move_message`, `trash_message`, and
-  `send_message` are absent.
+- Mail: `set_message_flags`, `move_message`, `trash_message`,
+  `send_message`, and `reply_message` are absent.
 
 Contacts read requires its enable flag. Mail read requires its enable flag. Mail
 mutation also requires the Mail write flag. Mail send independently requires
@@ -157,7 +157,9 @@ to stderr.
 
 `send_message` parses and removes duplicates from the complete To, Cc, and Bcc
 set. It applies the allowlist and validates subject and body limits. It builds
-the bounded message before it opens a socket.
+the bounded message before it opens a socket. `reply_message` resolves its
+recipients from the source message headers, applies the same allowlist before
+any SMTP access, and requires both Mail read and Mail send.
 
 `to`, `cc`, and `bcc` are each optional. Together, they must contain at least
 one recipient. From is always the configured Mail address. Headers exclude Bcc.

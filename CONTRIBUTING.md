@@ -58,6 +58,23 @@ Never publish a version without a verified release archive. Keep signing keys
 outside the repository and outside logs. Do not push a tag or publish to the
 registry before the maintainer approves the version.
 
+## Documentation sources of truth
+
+Change the source, not only the guide. `make check-docs` and the package tests
+fail when the public documents drift.
+
+| Fact | Source of truth | Enforced by |
+|------|-----------------|-------------|
+| Environment keys and count | `.env.example` and `internal/config` | `scripts/check_docs.py`, `internal/config` tests |
+| Capability and scope tokens | `internal/config` parsers | `scripts/check_docs.py` |
+| Tool manifest and counts | `internal/mcptools/register.go` | `TestDocumentedToolManifest` |
+| Version | `server.json` and `CHANGELOG.md` | `make check-release-metadata` |
+| Supported platforms | `Makefile` targets and the README status table | `scripts/check_platforms.py` |
+| Registry packages | `server.json` and the release assets | `make check-registry` |
+
+Keep historical observations dated. Do not rewrite a dated snapshot to look
+current. Add a new checked date and keep the old record.
+
 ## Rules
 
 - Use **English ASCII** in tracked files, commits, and tags.
