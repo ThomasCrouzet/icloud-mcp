@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.5.2] - 2026-11-08
+
+This minor release adds bounded Calendar search continuation, MCPB distribution
+and Registry package publication, a public compatibility evidence matrix,
+recurrence and invitation research, and documentation and platform consistency
+checks. It keeps the current tool defaults and limits.
+
 ### Fixed
 - Install pinned lint, gitleaks, and cosign tools through the Go module proxy so a transient GitHub CDN 504 does not block CI or release publication.
 - Retry pinned gitleaks and Cosign downloads in CI so a transient GitHub 504 does not fail a pull request or a release.
