@@ -720,14 +720,15 @@ func TestLoad_GeneratedFeatureGateCombinations(t *testing.T) {
 			if cfg.SMTPRecipientPolicy.Configured() != policyPresent {
 				t.Errorf("recipient policy configured = %v, want %v", cfg.SMTPRecipientPolicy.Configured(), policyPresent)
 			}
-			if got, want := cfg.EffectiveContactsWrite(), contacts && !readOnly; got != want {
-				t.Errorf("EffectiveContactsWrite() = %v, want %v", got, want)
+			// Domain switches and the global kill switch never grant an effect.
+			if got := cfg.EffectiveContactsWrite(); got {
+				t.Errorf("EffectiveContactsWrite() = %v, want false without explicit permissions", got)
 			}
-			if got, want := cfg.EffectiveMailWrite(), mailEnabled && mailWrite && !readOnly; got != want {
-				t.Errorf("EffectiveMailWrite() = %v, want %v", got, want)
+			if got := cfg.EffectiveMailWrite(); got {
+				t.Errorf("EffectiveMailWrite() = %v, want false without explicit permissions", got)
 			}
-			if got, want := cfg.EffectiveMailSend(), mailEnabled && mailSend && !readOnly && policyPresent; got != want {
-				t.Errorf("EffectiveMailSend() = %v, want %v", got, want)
+			if got := cfg.EffectiveMailSend(); got {
+				t.Errorf("EffectiveMailSend() = %v, want false without explicit permissions", got)
 			}
 		})
 	}
@@ -823,30 +824,83 @@ func TestRecipientPolicy_ExactCaseFoldedMatching(t *testing.T) {
 	}
 }
 
-func TestConfig_EffectiveCapabilitiesPreserveConfiguredFlags(t *testing.T) {
+// TestConfig_DefaultProfileIsReadOnly proves that domain switches and the
+// global kill switch never imply an effectful capability.
+func TestConfig_DefaultProfileIsReadOnly(t *testing.T) {
+	policy, err := ParseRecipientPolicy("recipient@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, readOnly := range []bool{false, true} {
+		cfg := &Config{
+			ReadOnly:              readOnly,
+			EnableContacts:        true,
+			EnableMail:            true,
+			EnableMailWrite:       true,
+			EnableMailSend:        true,
+			SMTPRecipientPolicy:   policy,
+			SMTPAllowedRecipients: policy.Recipients(),
+		}
+		set := cfg.Capabilities()
+		if !set.CalendarRead || !set.ContactsRead || !set.MailRead {
+			t.Errorf("readOnly=%v: reads missing: %+v", readOnly, set)
+		}
+		if set.CalendarWrite || set.CalendarDelete || set.ContactsWrite || set.ContactsDelete ||
+			set.MailMutate || set.MailTrash || set.MailSend || set.MailArchive {
+			t.Errorf("readOnly=%v: default profile granted an effect: %+v", readOnly, set)
+		}
+		if !cfg.EnableContacts || !cfg.EnableMailWrite || !cfg.EnableMailSend {
+			t.Error("configured switches were rewritten")
+		}
+	}
+}
+
+// TestConfig_ExplicitProfileStillWorks keeps an approved write and send
+// profile effective.
+func TestConfig_ExplicitProfileStillWorks(t *testing.T) {
+	permissions, err := ParsePermissions("calendar.read,calendar.write,calendar.delete,contacts.read,contacts.write,contacts.delete,mail.read,mail.mutate,mail.trash,mail.send")
+	if err != nil {
+		t.Fatal(err)
+	}
 	policy, err := ParseRecipientPolicy("recipient@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := &Config{
-		ReadOnly:              true,
+		Permissions:           permissions,
 		EnableContacts:        true,
 		EnableMail:            true,
-		EnableMailWrite:       true,
-		EnableMailSend:        true,
 		SMTPRecipientPolicy:   policy,
 		SMTPAllowedRecipients: policy.Recipients(),
 	}
-	if cfg.EffectiveContactsWrite() || cfg.EffectiveMailWrite() || cfg.EffectiveMailSend() {
-		t.Error("global read-only did not suppress effective writes")
+	set := cfg.Capabilities()
+	if !set.CalendarWrite || !set.CalendarDelete || !set.ContactsWrite || !set.ContactsDelete ||
+		!set.MailMutate || !set.MailTrash || !set.MailSend {
+		t.Fatalf("explicit profile lost an effect: %+v", set)
 	}
-	if !cfg.EnableContacts || !cfg.EnableMailWrite || !cfg.EnableMailSend {
-		t.Error("global read-only changed configured flags")
+	cfg.ReadOnly = true
+	set = cfg.Capabilities()
+	if set.CalendarWrite || set.CalendarDelete || set.ContactsWrite || set.ContactsDelete ||
+		set.MailMutate || set.MailTrash || set.MailSend {
+		t.Fatalf("global read-only did not suppress the explicit profile: %+v", set)
 	}
+}
 
-	cfg.ReadOnly = false
-	if !cfg.EffectiveContactsWrite() || !cfg.EffectiveMailWrite() || !cfg.EffectiveMailSend() {
-		t.Error("configured effective capabilities were not enabled")
+// TestLoad_FirstRunHasNoEffectTools covers the v1 acceptance rule directly.
+func TestLoad_FirstRunHasNoEffectTools(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "calendar@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "calendar-app-password")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := cfg.Capabilities()
+	if !set.CalendarRead {
+		t.Fatal("Calendar read is missing")
+	}
+	if set.CalendarWrite || set.CalendarDelete {
+		t.Fatalf("first run exposed a Calendar effect: %+v", set)
 	}
 }
 

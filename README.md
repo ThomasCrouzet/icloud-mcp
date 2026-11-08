@@ -60,11 +60,11 @@ See the [threat model and reporting policy](SECURITY.md) and
 
 | Capability | Operations | Enablement |
 |---|---|---|
-| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | Always on by default; `ICLOUD_MCP_PERMISSIONS` can reduce it |
-| Contacts | List books; search and get contacts; create, update, and delete vCard 3.0 contacts | `ICLOUD_MCP_ENABLE_CONTACTS=true` |
+| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | Reads always on; `calendar.write` and `calendar.delete` in `ICLOUD_MCP_PERMISSIONS` are required for effects |
+| Contacts | List books; search and get contacts; create, update, and delete vCard 3.0 contacts | Reads require `ICLOUD_MCP_ENABLE_CONTACTS=true`; writes require `contacts.write` or `contacts.delete` |
 | Mail read | List mailboxes; search messages; get plain text and attachment metadata | `ICLOUD_MCP_ENABLE_MAIL=true` |
-| Mail mutation | Change flags; move or trash a message | Mail plus `ICLOUD_MCP_ENABLE_MAIL_WRITE=true` |
-| Mail send | Submit a plain-text message, or reply to one with preserved conversation headers, through SMTP | Mail plus `ICLOUD_MCP_ENABLE_MAIL_SEND=true` and a recipient policy |
+| Mail mutation | Change flags; move or trash a message | Mail plus `mail.mutate` or `mail.trash` |
+| Mail send | Submit a plain-text message, or reply to one with preserved conversation headers, through SMTP | Mail plus `mail.send` and a recipient policy |
 
 `ICLOUD_MCP_READ_ONLY=true` removes every mutation and send tool from
 `tools/list`. It does not enable a disabled read domain. Contacts has no separate
@@ -85,15 +85,14 @@ checked before the domain operation. Ambiguous or stale Contacts names fail
 closed. The variable is invalid if an action is unknown, duplicated, empty, or a
 Calendar path is malformed.
 
-`ICLOUD_MCP_PERMISSIONS` optionally replaces the implicit write rules. It takes
-a comma-separated list: `calendar.read`, `calendar.write`, `calendar.delete`,
-`contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`,
-`mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`. Domain switches
-still enable a domain. Global read-only still removes every mutation and send.
-With no value,
-the legacy switches above keep their documented behavior. For example,
-`calendar.read,mail.read,mail.send` gives Calendar reads and Mail send without
-Calendar, Contacts, or Mail mutation tools.
+`ICLOUD_MCP_PERMISSIONS` names every capability. It takes a comma-separated
+list: `calendar.read`, `calendar.write`, `calendar.delete`, `contacts.read`,
+`contacts.write`, `contacts.delete`, `mail.read`, `mail.mutate`, `mail.trash`,
+`mail.send`, and `mail.archive`. Domain switches still enable a domain. Global
+read-only still removes every mutation and send. With no value, enabled
+domains are read-only. No switch, flag, or omission implies an effect. For
+example, `calendar.read,mail.read,mail.send` gives Calendar reads and Mail send
+without Calendar, Contacts, or Mail mutation tools.
 
 <!-- readme:section interface -->
 ## MCP tools
@@ -142,9 +141,9 @@ access to iCloud, and an Apple Account with two-factor authentication to
 [create an app-specific password](https://support.apple.com/en-us/102654).
 Never use the main Apple Account password.
 
-**Set read-only explicitly.** If `ICLOUD_MCP_READ_ONLY` and
-`ICLOUD_MCP_PERMISSIONS` are absent, legacy defaults expose Calendar writes and
-deletes. The current unset default is not a safe first-run profile.
+**Read-only by default.** With no `ICLOUD_MCP_PERMISSIONS`, the server exposes
+reads only. Calendar, Contacts, and Mail effects need their exact permission
+tokens. Keep `ICLOUD_MCP_READ_ONLY=true` for the first run.
 
 ### Install the binary
 
@@ -264,7 +263,7 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_EMAIL` | Calendar or Contacts requested | None | Calendar and Contacts identity; supports `file://` |
 | `ICLOUD_PASSWORD` | Calendar/Contacts, or Mail password fallback | None | App-specific password; supports `file://` |
 | `ICLOUD_MCP_READ_ONLY` | No | `false` | Remove every mutation and send tool |
-| `ICLOUD_MCP_PERMISSIONS` | No | Legacy switches | Explicit comma-separated capability list |
+| `ICLOUD_MCP_PERMISSIONS` | No | Reads only | Explicit comma-separated capability list |
 | `ICLOUD_MCP_RESOURCE_SCOPES` | No | All resources | Per-action Calendar, Contacts, and Mail resource allowlists |
 | `ICLOUD_MCP_LOG_LEVEL` | No | `info` | Operational stderr log level |
 | `ICLOUD_MCP_DEFAULT_TZ` | No | `UTC` | IANA zone for Calendar times without an offset and recurring-write fallback |

@@ -356,7 +356,7 @@ func TestSetupProfilesExactRecipientEffects(t *testing.T) {
 	t.Logf("setup_send_effects=%s audit=%s", contractReplayJSON(t, f.counts()), audit.String())
 }
 
-func TestSetupProfilesLegacyUnset(t *testing.T) {
+func TestSetupProfilesUnsetAreReadOnly(t *testing.T) {
 	_, _ = loadSetupProfile(t, "calendar-read-only")
 	t.Setenv("ICLOUD_MCP_READ_ONLY", "")
 	t.Setenv("ICLOUD_MCP_PERMISSIONS", "")
@@ -366,9 +366,26 @@ func TestSetupProfilesLegacyUnset(t *testing.T) {
 	}
 	f, _ := setupRuntime(t, cfg)
 	for _, name := range []string{"create_event", "update_event", "delete_event"} {
-		if _, ok := f.tools[name]; !ok {
-			t.Fatalf("legacy-unset compatibility changed: %s absent", name)
+		if _, ok := f.tools[name]; ok {
+			t.Fatalf("unset profile exposed effect tool %s", name)
 		}
 	}
-	t.Logf("legacy_unset_tools=%s", contractReplayJSON(t, NewCapabilityPlanFromConfig(cfg.ReadOnly, cfg.Capabilities()).RegisteredTools()))
+	for _, name := range []string{"search_events", "get_event", "find_free_slots"} {
+		if _, ok := f.tools[name]; !ok {
+			t.Fatalf("unset profile lost read tool %s", name)
+		}
+	}
+
+	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,calendar.write,calendar.delete")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ = setupRuntime(t, cfg)
+	for _, name := range []string{"create_event", "update_event", "delete_event"} {
+		if _, ok := f.tools[name]; !ok {
+			t.Fatalf("explicit profile lost effect tool %s", name)
+		}
+	}
+	t.Logf("unset_and_explicit_tools=%s", contractReplayJSON(t, NewCapabilityPlanFromConfig(cfg.ReadOnly, cfg.Capabilities()).RegisteredTools()))
 }
