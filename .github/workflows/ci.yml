@@ -312,13 +312,13 @@ jobs:
             --source "dist/$archive" --target "${ASSET_OS}/${ASSET_ARCH}" \
             --version "$VERSION" --output "$bundle"
           python3 scripts/mcpb.py verify "$bundle" --server server.json
-          bundle-smoke="$(mktemp -d)"
-          python3 -m zipfile -e "$bundle" "$bundle-smoke"
-          chmod 755 "$bundle-smoke/server/icloud-mcp"
+          bundle_smoke="$(mktemp -d)"
+          python3 -m zipfile -e "$bundle" "$bundle_smoke"
+          chmod 755 "$bundle_smoke/server/icloud-mcp"
           python3 scripts/native_smoke.py \
-            --binary "$bundle-smoke/server/icloud-mcp" --version "$VERSION" --tools 7
-          npx -y @anthropic-ai/mcpb@2.1.2 validate "$bundle-smoke/manifest.json"
-          rm -rf "$bundle-smoke"
+            --binary "$bundle_smoke/server/icloud-mcp" --version "$VERSION" --tools 7
+          npx -y @anthropic-ai/mcpb@2.1.2 validate "$bundle_smoke/manifest.json"
+          rm -rf "$bundle_smoke"
           echo "native_smoke bundle=$bundle os=$ASSET_OS arch=$ASSET_ARCH"
 
   # Tag releases only after CI and secret scan succeed on the same ref.
