@@ -248,8 +248,8 @@ Checked on 2026-11-08.
 | Deterministic bundle build | Verified locally with synthetic and native fixtures. |
 | Manifest v0.4 validation | Verified locally with `@anthropic-ai/mcpb` 2.1.2. |
 | Linux amd64 bundle binary `-version` | Verified locally. |
-| linux/arm64 and darwin/arm64 structure, hash, and native run | Verified on the matching CI runners for `v0.5.2`. |
+| linux/arm64 and darwin/arm64 structure, hash, and native run | Verified on the matching CI runners for `v1.0.0`. |
 | Windows bundle | Not produced. Compile only. |
-| Release asset build, smoke, and signing of MCPB files | Verified for `v0.5.2`: three signed bundles with hashes in the checksums file. |
-| Official Registry publication with packages | Published `0.5.2` with three packages on 2026-11-08; `make check-registry` passes. |
+| Release asset build, smoke, and signing of MCPB files | Verified for `v1.0.0`: three signed bundles with hashes in the checksums file. |
+| Official Registry publication with packages | Published `1.0.0` with three packages on 2026-11-08 at `19:08:03Z`; `make check-registry` passes. |
 | MCPB client installation | Not performed and not claimed. Host name, version, OS/arch, install mechanism, settings persistence, secret storage, upgrade, and uninstall are unverified (#126). |

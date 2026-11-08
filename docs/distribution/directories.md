@@ -8,7 +8,7 @@ Checked on 2026-10-31. The registry row was updated on 2026-11-04 and again on
 
 | Directory | Submission path | Required fields | Current status |
 |-----------|-----------------|-----------------|----------------|
-| Official MCP Registry | Release workflow, then `mcp-publisher publish` with `server.json` | `name`, `version`, `description` (100 characters or fewer), `repository.url`, `websiteUrl`, `packages` | Active at `0.5.2` with three MCPB packages, checked 2026-11-08. `make check-registry` passes. |
+| Official MCP Registry | Release workflow, then `mcp-publisher publish` with `server.json` | `name`, `version`, `description` (100 characters or fewer), `repository.url`, `websiteUrl`, `packages` | Active at `1.0.0` with three MCPB packages, checked 2026-11-08. `make check-registry` passes. |
 | Glama | Automatic GitHub index. Use "Claim" on the listing. | Public GitHub repository. Claim uses GitHub authentication. | Indexed. `https://glama.ai/mcp/servers/@ThomasCrouzet/icloud-mcp` returned HTTP 200 and shows the project. |
 | PulseMCP | Web form at `/submit` | Name, repository, description, remote flag (when the form reopens) | Not listed. Submissions and listing changes are paused. The page says "Last updated: September 3, 2026". |
 | mcp.so | Web form at `/submit` | Repository URL, name, listing type. Paid placement is optional. | Not listed. The site search returned 0 results for `icloud-mcp`. |
@@ -17,7 +17,7 @@ Checked on 2026-10-31. The registry row was updated on 2026-11-04 and again on
 | MCP Market | Web form at `/submit` | GitHub repository URL, optional remote flag | Not listed. The direct server URL returned HTTP 404. |
 | Awesome MCP Servers | Pull request to `punkpeye/awesome-mcp-servers` | Name linked to the repository, brief description, category, alphabetical order | Not listed. A README search on 2026-10-31 found no `ThomasCrouzet/icloud-mcp` entry. |
 | Docker MCP Registry | Pull request to `docker/mcp-registry` | `server.yaml`, category, Dockerfile or public remote endpoint, environment variables and secrets, icon | Not eligible. The project has no Dockerfile or public remote endpoint. Docker is only a build tool for one release target. |
-| Smithery | `smithery.ai/new` or the Smithery CLI | Public HTTPS MCP URL, or an MCPB bundle for a local stdio server | Not listed. Rechecked 2026-11-08: signed MCPB bundles are published in `v0.5.2`; no submission was made. The direct server URL returned HTTP 404. |
+| Smithery | `smithery.ai/new` or the Smithery CLI | Public HTTPS MCP URL, or an MCPB bundle for a local stdio server | Not listed. Rechecked 2026-11-08: signed MCPB bundles are published in `v1.0.0`; no submission was made. The direct server URL returned HTTP 404. |
 
 ## Notes
 
