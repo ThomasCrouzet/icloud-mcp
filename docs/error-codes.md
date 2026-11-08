@@ -165,14 +165,22 @@ An absent Sent copy does not prove failure, especially when archival was not req
 
 For keyed calls, keep the same `idempotency_key` and unchanged parameters in the same
 process during reconciliation. The send cache can share pending work or return a retained
-outcome without another SMTP submission. However, `reply_message` first re-reads and
-validates its source, then derives the send request before reaching that cache.
-Source deletion, changed UIDVALIDITY, or changed derived fields can prevent retrieval
-of the earlier outcome or cause a conflict. Such an error does not prove that the
-original SMTP submission failed. Repeated replies are not a guaranteed status-query API.
-Keep the key and parameters, and reconcile before deciding on another send.
-A changed key or process restart can submit again. Neither resolves the previous
-outcome. Unkeyed calls have no deduplication guarantee.
+outcome without another SMTP submission. Pending and `outcome_unknown` claims never
+expire; they stay until process exit. Accepted and definitive rejected outcomes are
+retained for 15 minutes after completion. A full cache returns `conflict` before SMTP
+and gives reconciliation guidance without advising a restart or a different key as proof
+of failure. However, `reply_message` first re-reads and validates its source, then derives
+the send request before reaching that cache. Source deletion, changed UIDVALIDITY, or
+changed derived fields can prevent retrieval of the earlier outcome or cause a conflict.
+Such an error does not prove that the original SMTP submission failed. Repeated replies
+are not a guaranteed status-query API. Keep the key and parameters, and reconcile before
+deciding on another send.
+
+After the 15-minute window or a process restart, an old key is a new operation. It can
+submit again with identical or different content, and no conflict is guaranteed. Neither
+expiry nor restart proves that the earlier operation failed. A send outside the window
+needs reconciliation and a fresh sending decision, not automatic retry. Unkeyed calls
+have no deduplication guarantee.
 
 The tool deadline stays at 25 seconds with a two-second cancellation grace period.
 A definitive handler result within that grace period takes precedence over a synthetic
@@ -189,9 +197,13 @@ The response keeps `status: accepted` and reports `archivalStatus: failed` or `u
 It also includes a bounded `archivalError`, not raw server text.
 Inspect Sent before recovery. Never resend or blindly repeat APPEND to repair archival.
 
-Identical keyed sends retain both submission and archival outcomes until process exit.
-Changing `archive_sent` with the same key returns `conflict` without another submission.
-Omission and false have the same preference. Restarting does not resolve an uncertain outcome.
+Accepted and definitive rejected submission and archival results share the same
+15-minute completion-based retention. Pending, ambiguous, and unclassified state
+stays pinned until process exit. Changing `archive_sent` with the same key returns
+`conflict` while the key is retained, without another submission. Omission and false
+have the same preference. After expiry or restart the key is a new operation; it has
+no conflict guarantee and does not prove the earlier outcome failed. Restarting does
+not resolve an uncertain outcome.
 
 ## Internal retries
 
