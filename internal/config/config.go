@@ -120,6 +120,13 @@ func ParsePermissions(value string) (Permissions, error) {
 // Configured reports whether an explicit permission list was set.
 func (p Permissions) Configured() bool { return p.configured }
 
+// ExplicitCalendarWrite reports an operator-granted Calendar write capability.
+// An unset permission list keeps the legacy switch and is not explicit.
+func (p Permissions) ExplicitCalendarWrite() bool { return p.configured && p.calendarWrite }
+
+// ExplicitCalendarDelete reports an operator-granted Calendar delete capability.
+func (p Permissions) ExplicitCalendarDelete() bool { return p.configured && p.calendarDelete }
+
 // Effective applies the global read-only kill switch.
 func (p Permissions) Effective(readOnly bool) Permissions {
 	if !p.configured {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -459,6 +460,10 @@ func setDatePropLike(prop, reference *ical.Prop, t time.Time) error {
 		if err != nil {
 			return NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
 		}
+		wall := WallClockOf(t.In(loc))
+		if !WallClockExists(wall, loc) {
+			return NewValidationError("event time does not exist in timezone " + tzid + " because of a daylight-saving gap")
+		}
 		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
 		prop.SetDateTime(t.In(loc))
 		return nil
@@ -905,8 +910,56 @@ func parseCalendarObject(obj *extcaldav.CalendarObject) (*Event, []Event, error)
 	if master == nil {
 		return nil, nil, NewError(CodeProtocolError, 0, "Calendar event data has no master event", nil)
 	}
+	for i := range overrides {
+		if overrides[i].AllDay != master.AllDay || overrides[i].IsFloating != master.IsFloating {
+			return nil, nil, NewError(CodeProtocolError, 0, "Calendar recurrence override time form does not match the master", nil)
+		}
+	}
+	groupScheduled, err := schedulingIndicators(obj.Data)
+	if err != nil {
+		return nil, nil, err
+	}
+	master.IsGroupScheduled = groupScheduled
+	for i := range overrides {
+		overrides[i].IsGroupScheduled = groupScheduled
+	}
 	master.exDates = exDates
 	return master, overrides, nil
+}
+
+// SchedulingNotificationRisk is the fixed warning returned for an object that
+// carries ORGANIZER or ATTENDEE. It deliberately names no address.
+const SchedulingNotificationRisk = "the event carries scheduling metadata; a scheduling-capable server can notify organizers or attendees about a series or occurrence change"
+
+// schedulingIndicators reports whether the complete calendar object has
+// ORGANIZER or ATTENDEE. It validates each cal-address value and fails closed
+// on an empty, oversized, control-bearing, or URI-less value. The result is a
+// boolean: identities never leave the parser.
+func schedulingIndicators(cal *ical.Calendar) (bool, error) {
+	if cal == nil {
+		return false, nil
+	}
+	group := false
+	for _, child := range cal.Children {
+		if child.Name != ical.CompEvent {
+			continue
+		}
+		for _, name := range []string{ical.PropOrganizer, ical.PropAttendee} {
+			for _, prop := range child.Props[name] {
+				value := strings.TrimSpace(prop.Value)
+				if value == "" || len(value) > maxRemotePropertyValueBytes ||
+					strings.ContainsAny(value, "\r\n\x00") {
+					return false, NewError(CodeProtocolError, 0, "Calendar scheduling metadata is malformed", nil)
+				}
+				parsed, err := url.Parse(value)
+				if err != nil || parsed.Scheme == "" {
+					return false, NewError(CodeProtocolError, 0, "Calendar scheduling metadata is malformed", nil)
+				}
+				group = true
+			}
+		}
+	}
+	return group, nil
 }
 
 func eventText(props ical.Props, name string) (string, error) {
@@ -940,22 +993,31 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	}
 
 	if p := vevent.Props.Get(ical.PropDateTimeStart); p != nil {
-		t, derr := p.DateTime(time.UTC)
+		parsed, derr := parseEventDateTimeProp(p)
 		if derr != nil {
 			return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event start time is invalid", nil)
 		}
-		e.StartTime = t
-		e.AllDay = len(p.Value) == 8
-		if tzid := p.Params.Get(ical.PropTimezoneID); tzid != "" {
-			e.Timezone = tzid
+		e.StartTime = parsed.instant
+		e.AllDay = parsed.form == formDate
+		e.IsFloating = parsed.form == formFloating
+		e.DSTAdjusted = parsed.adjusted
+		e.wallStart = parsed.wall
+		if parsed.tzid != "" {
+			e.Timezone = parsed.tzid
 		}
 	}
 	if p := vevent.Props.Get(ical.PropDateTimeEnd); p != nil {
-		t, derr := p.DateTime(time.UTC)
+		parsed, derr := parseEventDateTimeProp(p)
 		if derr != nil {
 			return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event end time is invalid", nil)
 		}
-		e.EndTime = t
+		if start := vevent.Props.Get(ical.PropDateTimeStart); start != nil {
+			if err := validateDateTimeFormPair(start, p); err != nil {
+				return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar event start and end time forms do not match", nil)
+			}
+		}
+		e.EndTime = parsed.instant
+		e.DSTAdjusted = e.DSTAdjusted || parsed.adjusted
 	} else if durProp := vevent.Props.Get(ical.PropDuration); durProp != nil {
 		// DTEND absent but DURATION present (RFC 5545 section 3.6.1: DTEND and
 		// DURATION are mutually exclusive; DURATION is the valid
@@ -1004,17 +1066,24 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	}
 
 	if p := vevent.Props.Get(ical.PropRecurrenceID); p != nil {
-		t, derr := p.DateTime(time.UTC)
+		parsed, derr := parseEventDateTimeProp(p)
 		if derr != nil {
 			return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar recurrence identifier is invalid", nil)
 		}
-		e.RecurrenceID = t
+		e.RecurrenceID = parsed.instant
 		e.IsOverride = true
 		isOverride = true
 	}
 
 	for _, p := range vevent.Props[ical.PropExceptionDates] {
 		prop := p
+		// RFC 5545 section 3.8.5.1 requires EXDATE to use the same value
+		// type as DTSTART. A DATE value against a DATE-TIME series (or the
+		// reverse) parses to an instant that never matches an occurrence, so
+		// the exclusion would silently do nothing. Fail closed instead.
+		if err := validateExDateForm(vevent.Props.Get(ical.PropDateTimeStart), &prop); err != nil {
+			return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar exception date value type does not match DTSTART", nil)
+		}
 		dates, derr := parseExDateProp(&prop)
 		if derr != nil {
 			return nil, false, nil, NewError(CodeProtocolError, 0, "Calendar exception date is invalid", nil)
@@ -1023,6 +1092,159 @@ func parseVEvent(vevent *ical.Event, path string) (ev *Event, isOverride bool, e
 	}
 
 	return e, isOverride, exDates, nil
+}
+
+// iCalDateTimeForm classifies an iCalendar DATE or DATE-TIME value. The four
+// forms need different comparison rules: DATE has no time, UTC and TZID values
+// denote real instants, and a floating value has no offset at all.
+type iCalDateTimeForm int
+
+const (
+	formMissing iCalDateTimeForm = iota
+	formDate
+	formUTC
+	formZoned
+	formFloating
+)
+
+// dateTimeForm classifies one raw value using the property TZID parameter.
+func dateTimeForm(value, tzid string) iCalDateTimeForm {
+	switch {
+	case value == "":
+		return formMissing
+	case len(value) == 8 && !strings.Contains(value, "T"):
+		return formDate
+	case strings.HasSuffix(value, "Z"):
+		return formUTC
+	case tzid != "":
+		return formZoned
+	default:
+		return formFloating
+	}
+}
+
+// propDateTimeForm classifies a DTSTART or EXDATE property including the
+// VALUE parameter. A VALUE=DATE property is always a date even when the raw
+// value is malformed.
+func propDateTimeForm(p *ical.Prop) iCalDateTimeForm {
+	if p == nil {
+		return formMissing
+	}
+	if isDateOnlyProp(p) {
+		return formDate
+	}
+	return dateTimeForm(p.Value, p.Params.Get(ical.PropTimezoneID))
+}
+
+// parsedEventDateTime is one DTSTART, DTEND, or RECURRENCE-ID value with its
+// original iCalendar form. wall holds the naive local components for a zoned
+// or floating value, so recurrence expansion never depends on a normalized
+// instant.
+type parsedEventDateTime struct {
+	instant  time.Time
+	wall     time.Time
+	form     iCalDateTimeForm
+	tzid     string
+	adjusted bool
+}
+
+// parseEventDateTimeProp parses an event date property without losing its
+// form. A floating value keeps its wall-clock components in UTC; no offset is
+// invented.
+func parseEventDateTimeProp(p *ical.Prop) (parsedEventDateTime, error) {
+	if p == nil {
+		return parsedEventDateTime{}, fmt.Errorf("missing property")
+	}
+	form := propDateTimeForm(p)
+	tzid := p.Params.Get(ical.PropTimezoneID)
+	switch form {
+	case formDate:
+		t, err := time.ParseInLocation("20060102", p.Value, time.UTC)
+		if err != nil {
+			return parsedEventDateTime{}, err
+		}
+		return parsedEventDateTime{instant: t, wall: t, form: form}, nil
+	case formUTC:
+		t, err := time.Parse("20060102T150405Z", p.Value)
+		if err != nil {
+			return parsedEventDateTime{}, err
+		}
+		return parsedEventDateTime{instant: t, wall: t, form: form}, nil
+	case formZoned:
+		loc, err := time.LoadLocation(tzid)
+		if err != nil {
+			return parsedEventDateTime{}, fmt.Errorf("unknown TZID %q", tzid)
+		}
+		wall, err := time.ParseInLocation("20060102T150405", p.Value, time.UTC)
+		if err != nil {
+			return parsedEventDateTime{}, err
+		}
+		t, adjusted := ResolveWallClock(wall, loc)
+		return parsedEventDateTime{instant: t, wall: wall, form: form, tzid: tzid, adjusted: adjusted}, nil
+	case formFloating:
+		wall, err := time.ParseInLocation("20060102T150405", p.Value, time.UTC)
+		if err != nil {
+			return parsedEventDateTime{}, err
+		}
+		return parsedEventDateTime{instant: wall, wall: wall, form: form}, nil
+	default:
+		return parsedEventDateTime{}, fmt.Errorf("invalid date-time value")
+	}
+}
+
+// validateDateTimeFormPair rejects DTSTART/DTEND forms that cannot describe
+// one interval. DATE and DATE-TIME never mix. A floating value has no instant,
+// so it cannot pair with an absolute value.
+func validateDateTimeFormPair(start, end *ical.Prop) error {
+	startForm := propDateTimeForm(start)
+	endForm := propDateTimeForm(end)
+	if startForm == formMissing || endForm == formMissing {
+		return fmt.Errorf("missing date-time form")
+	}
+	if (startForm == formDate) != (endForm == formDate) {
+		return fmt.Errorf("DATE and DATE-TIME differ")
+	}
+	if startForm != formDate && (startForm == formFloating) != (endForm == formFloating) {
+		return fmt.Errorf("floating and absolute date-times differ")
+	}
+	return nil
+}
+
+// validateExDateForm rejects an EXDATE whose value type cannot match the
+// recurring master DTSTART. DATE and DATE-TIME never match. A floating
+// DATE-TIME and an absolute (UTC or TZID) DATE-TIME also never match, because
+// the floating value has no instant. Between absolute forms the instant is
+// comparable, so a TZID EXDATE against a UTC DTSTART (or the reverse) stays
+// valid. Every comma-separated value must use the property form.
+func validateExDateForm(start *ical.Prop, ex *ical.Prop) error {
+	if ex == nil {
+		return nil
+	}
+	exForm := propDateTimeForm(ex)
+	startForm := propDateTimeForm(start)
+	if startForm == formMissing {
+		return fmt.Errorf("missing DTSTART")
+	}
+	if exForm == formMissing {
+		return fmt.Errorf("empty EXDATE")
+	}
+	if (startForm == formDate) != (exForm == formDate) {
+		return fmt.Errorf("EXDATE value type does not match DTSTART")
+	}
+	if startForm != formDate && (startForm == formFloating) != (exForm == formFloating) {
+		return fmt.Errorf("EXDATE time form does not match DTSTART")
+	}
+	tzid := ex.Params.Get(ical.PropTimezoneID)
+	for _, part := range strings.Split(ex.Value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return fmt.Errorf("empty EXDATE value")
+		}
+		if form := dateTimeForm(part, tzid); form != exForm {
+			return fmt.Errorf("EXDATE value list mixes forms")
+		}
+	}
+	return nil
 }
 
 // parseExDateProp parses an EXDATE property, which may carry several
@@ -1237,14 +1459,19 @@ func parseICalDateTimeValue(value, tzid string) (time.Time, error) {
 	case strings.HasSuffix(value, "Z"):
 		return time.Parse("20060102T150405Z", value)
 	default:
-		loc := time.UTC
-		if tzid != "" {
-			l, err := time.LoadLocation(tzid)
-			if err != nil {
-				return time.Time{}, fmt.Errorf("unknown TZID %q", tzid)
-			}
-			loc = l
+		if tzid == "" {
+			// Floating value: keep the wall-clock components in UTC.
+			return time.ParseInLocation("20060102T150405", value, time.UTC)
 		}
-		return time.ParseInLocation("20060102T150405", value, loc)
+		loc, err := time.LoadLocation(tzid)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("unknown TZID %q", tzid)
+		}
+		wall, err := time.ParseInLocation("20060102T150405", value, time.UTC)
+		if err != nil {
+			return time.Time{}, err
+		}
+		resolved, _ := ResolveWallClock(wall, loc)
+		return resolved, nil
 	}
 }

@@ -51,6 +51,8 @@ type searchEventDTO struct {
 	StartTime    string `json:"start"`
 	EndTime      string `json:"end"`
 	AllDay       bool   `json:"allDay,omitempty"`
+	IsFloating   bool   `json:"isFloating,omitempty"`
+	DSTAdjusted  bool   `json:"dstAdjusted,omitempty"`
 	Recurrence   string `json:"recurrence,omitempty"`
 	RecurrenceID string `json:"recurrenceId,omitempty"`
 	IsOverride   bool   `json:"isOverride,omitempty"`
@@ -307,6 +309,9 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				page[i-pageStart] = rows[i].event
 			}
 			truncated := pageEnd < total || truncatedByExpansion || partialFailure
+			if warning := floatingTimeWarning(all); warning != "" {
+				warnings = append(warnings, warning)
+			}
 			resp := searchEventsResponse{
 				Count:                len(page),
 				Total:                total,
@@ -411,6 +416,9 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 
 		if total > icloud.MaxResults {
 			multiCalendarCapped = multiCalendarCapped || multi
+		}
+		if warning := floatingTimeWarning(page); warning != "" {
+			warnings = append(warnings, warning)
 		}
 		resp := searchEventsResponse{
 			Count:                len(page),
@@ -565,6 +573,29 @@ func filterEventsAdvanced(events []icloud.Event, uid, status string, filterAllDa
 	return out
 }
 
+// floatingTimeWarning reports a non-sensitive hint when any returned event
+// uses RFC 5545 floating time or a daylight-saving gap resolution. The
+// per-event fields remain the authoritative markers.
+func floatingTimeWarning(events []icloud.Event) string {
+	floating, adjusted := 0, 0
+	for i := range events {
+		if events[i].IsFloating {
+			floating++
+		}
+		if events[i].DSTAdjusted {
+			adjusted++
+		}
+	}
+	var parts []string
+	if floating > 0 {
+		parts = append(parts, fmt.Sprintf("%d event(s) use floating local times with no UTC offset; isFloating is true", floating))
+	}
+	if adjusted > 0 {
+		parts = append(parts, fmt.Sprintf("%d occurrence(s) fell in a daylight-saving gap and use the pre-gap offset (RFC 5545); dstAdjusted is true", adjusted))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func eventsToDTO(events []icloud.Event, compact bool, loc *time.Location) []searchEventDTO {
 	out := make([]searchEventDTO, 0, len(events))
 	for _, e := range events {
@@ -573,9 +604,11 @@ func eventsToDTO(events []icloud.Event, compact bool, loc *time.Location) []sear
 			UID:          e.UID,
 			Title:        e.Title,
 			Location:     e.Location,
-			StartTime:    icloud.FormatEventTime(e.StartTime, e.AllDay, loc),
-			EndTime:      icloud.FormatEventTime(e.EndTime, e.AllDay, loc),
+			StartTime:    icloud.FormatEventTimeForm(e.StartTime, e.AllDay, e.IsFloating, loc),
+			EndTime:      icloud.FormatEventTimeForm(e.EndTime, e.AllDay, e.IsFloating, loc),
 			AllDay:       e.AllDay,
+			IsFloating:   e.IsFloating,
+			DSTAdjusted:  e.DSTAdjusted,
 			Recurrence:   e.Recurrence,
 			Timezone:     e.Timezone,
 			Status:       e.Status,
@@ -585,7 +618,7 @@ func eventsToDTO(events []icloud.Event, compact bool, loc *time.Location) []sear
 			IsOverride:   e.IsOverride,
 		}
 		if !e.RecurrenceID.IsZero() {
-			dto.RecurrenceID = icloud.FormatEventTime(e.RecurrenceID, e.AllDay, loc)
+			dto.RecurrenceID = icloud.FormatEventTimeForm(e.RecurrenceID, e.AllDay, e.IsFloating, loc)
 		}
 		if !compact {
 			dto.Notes = e.Notes

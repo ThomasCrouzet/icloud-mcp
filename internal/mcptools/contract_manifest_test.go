@@ -258,7 +258,7 @@ func TestContractManifestProfiles(t *testing.T) {
 					if err := json.Unmarshal([]byte(resultText(t, local)), &calendar); err != nil {
 						t.Fatal(err)
 					}
-					if calendar.ReadOnly != p.plan.ReadOnly() || calendar.DefaultTimezone != "UTC" || calendar.OutputFormat != "RFC3339_with_offset" {
+					if calendar.ReadOnly != p.plan.ReadOnly() || calendar.DefaultTimezone != "UTC" || calendar.OutputFormat != "RFC3339_with_offset_or_floating" {
 						t.Fatalf("local calendar capabilities changed: %+v", calendar)
 					}
 					contractValidateOutput(t, tool, local)

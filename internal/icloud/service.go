@@ -43,10 +43,23 @@ type Event struct {
 	AllDay     bool      `json:"allDay,omitempty"`
 	Recurrence string    `json:"recurrence,omitempty"` // raw RRULE, informational
 	Timezone   string    `json:"timezone,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	Transp     string    `json:"transparency,omitempty"`
-	URL        string    `json:"url,omitempty"`
-	ETag       string    `json:"etag,omitempty"` // concurrency token when known
+	// IsFloating is true when DTSTART and DTEND are floating local times:
+	// they carry no UTC offset and no TZID (RFC 5545 section 3.3.5). StartTime
+	// and EndTime hold the wall-clock components in UTC so they can be
+	// serialized without fabricating an offset.
+	IsFloating bool `json:"isFloating,omitempty"`
+	// DSTAdjusted is true when the value fell in a daylight-saving gap and was
+	// resolved with the pre-gap offset, as RFC 5545 section 3.3.5 describes.
+	// A fold is always resolved to the first occurrence without this flag.
+	DSTAdjusted bool `json:"dstAdjusted,omitempty"`
+	// IsGroupScheduled is true when the calendar object carries ORGANIZER or
+	// ATTENDEE. It never exposes an address. A mutation of such an object can
+	// make a scheduling-capable server notify attendees.
+	IsGroupScheduled bool   `json:"isGroupScheduled,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Transp           string `json:"transparency,omitempty"`
+	URL              string `json:"url,omitempty"`
+	ETag             string `json:"etag,omitempty"` // concurrency token when known
 
 	// RecurrenceID is the master occurrence this row replaces (RECURRENCE-ID).
 	// For an expanded (unmoved) occurrence it equals the original slot start.
@@ -60,6 +73,10 @@ type Event struct {
 	// exDates lists the excluded dates (EXDATE) of a recurring master.
 	// Internal field, never serialized.
 	exDates []time.Time
+	// wallStart is the original naive wall-clock DTSTART of a zoned event.
+	// Recurrence expansion uses it so a DST gap cannot silently normalize the
+	// series clock. Zero for DATE, UTC, and floating events.
+	wallStart time.Time
 	// A VEVENT DURATION with days or weeks is nominal calendar time under RFC
 	// 5545, not a fixed multiple of 24 elapsed hours across DST transitions.
 	hasNominalDuration       bool
@@ -170,6 +187,11 @@ type EventUpdate struct {
 	// IfMatchETag, when set, is sent as If-Match (overrides the ETag read
 	// from GET when non-empty).
 	IfMatchETag string
+	// AllowGroupScheduled is the operator-approved path for an object with
+	// ORGANIZER or ATTENDEE. It has no effect unless IfMatchETag names the
+	// current strong ETag; the service rechecks scheduling metadata on its
+	// final GET before dispatch.
+	AllowGroupScheduled bool
 }
 
 // DeleteOptions configures DeleteEvent.
@@ -179,15 +201,22 @@ type DeleteOptions struct {
 	IfMatchETag  string
 	// DryRun performs lookup and validation but emits no PUT/DELETE.
 	DryRun bool
+	// AllowGroupScheduled is the operator-approved path for an object with
+	// ORGANIZER or ATTENDEE. A dry run reports the risk without this flag.
+	AllowGroupScheduled bool
 }
 
 // DeleteResult contains the output from DeleteEvent.
 type DeleteResult struct {
-	Title       string `json:"deletedTitle,omitempty"`
-	DryRun      bool   `json:"dryRun,omitempty"`
-	UID         string `json:"uid"`
-	Scope       string `json:"scope,omitempty"`
-	WouldMutate bool   `json:"wouldMutate,omitempty"`
+	Title            string `json:"deletedTitle,omitempty"`
+	DryRun           bool   `json:"dryRun,omitempty"`
+	UID              string `json:"uid"`
+	Scope            string `json:"scope,omitempty"`
+	WouldMutate      bool   `json:"wouldMutate,omitempty"`
+	IsGroupScheduled bool   `json:"isGroupScheduled,omitempty"`
+	// NotificationRisk is a fixed non-sensitive warning. Empty when the object
+	// has no scheduling metadata.
+	NotificationRisk string `json:"notificationRisk,omitempty"`
 }
 
 // Service is the interface consumed by the MCP tools (mockable for tests).

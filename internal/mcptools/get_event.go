@@ -61,6 +61,9 @@ type getEventDTO struct {
 	Start              string             `json:"start"`
 	End                string             `json:"end"`
 	AllDay             bool               `json:"allDay,omitempty"`
+	IsFloating         bool               `json:"isFloating,omitempty"`
+	DSTAdjusted        bool               `json:"dstAdjusted,omitempty"`
+	IsGroupScheduled   bool               `json:"isGroupScheduled,omitempty"`
 	Recurrence         string             `json:"recurrence,omitempty"`
 	RecurrenceID       string             `json:"recurrenceId,omitempty"`
 	IsOverride         bool               `json:"isOverride,omitempty"`
@@ -87,27 +90,39 @@ type occurrenceDTO struct {
 
 func eventDetailToDTO(detail *icloud.EventDetail, loc *time.Location) getEventDTO {
 	dto := getEventDTO{
-		UID:           detail.UID,
-		Title:         detail.Title,
-		Location:      detail.Location,
-		Notes:         detail.Notes,
-		Start:         icloud.FormatEventTime(detail.StartTime, detail.AllDay, loc),
-		End:           icloud.FormatEventTime(detail.EndTime, detail.AllDay, loc),
-		AllDay:        detail.AllDay,
-		Recurrence:    detail.Recurrence,
-		IsOverride:    detail.IsOverride,
-		Timezone:      detail.Timezone,
-		Status:        detail.Status,
-		Transparency:  detail.Transp,
-		URL:           detail.URL,
-		ETag:          detail.ETag,
-		Alarms:        detail.Alarms,
-		IsRecurring:   detail.IsRecurring,
-		OverrideCount: detail.OverrideCount,
-		Warnings:      append([]string(nil), detail.Warnings...),
+		UID:              detail.UID,
+		Title:            detail.Title,
+		Location:         detail.Location,
+		Notes:            detail.Notes,
+		Start:            icloud.FormatEventTimeForm(detail.StartTime, detail.AllDay, detail.IsFloating, loc),
+		End:              icloud.FormatEventTimeForm(detail.EndTime, detail.AllDay, detail.IsFloating, loc),
+		AllDay:           detail.AllDay,
+		IsFloating:       detail.IsFloating,
+		DSTAdjusted:      detail.DSTAdjusted,
+		IsGroupScheduled: detail.IsGroupScheduled,
+		Recurrence:       detail.Recurrence,
+		IsOverride:       detail.IsOverride,
+		Timezone:         detail.Timezone,
+		Status:           detail.Status,
+		Transparency:     detail.Transp,
+		URL:              detail.URL,
+		ETag:             detail.ETag,
+		Alarms:           detail.Alarms,
+		IsRecurring:      detail.IsRecurring,
+		OverrideCount:    detail.OverrideCount,
+		Warnings:         append([]string(nil), detail.Warnings...),
 	}
 	if !detail.RecurrenceID.IsZero() {
-		dto.RecurrenceID = icloud.FormatEventTime(detail.RecurrenceID, detail.AllDay, loc)
+		dto.RecurrenceID = icloud.FormatEventTimeForm(detail.RecurrenceID, detail.AllDay, detail.IsFloating, loc)
+	}
+	if detail.IsFloating {
+		dto.Warnings = append(dto.Warnings, "start and end are floating local times with no UTC offset; isFloating is true")
+	}
+	if detail.DSTAdjusted {
+		dto.Warnings = append(dto.Warnings, "this value fell in a daylight-saving gap and uses the pre-gap offset (RFC 5545); dstAdjusted is true")
+	}
+	if detail.IsGroupScheduled {
+		dto.Warnings = append(dto.Warnings, icloud.SchedulingNotificationRisk)
 	}
 	return dto
 }
@@ -138,9 +153,9 @@ func writeGetEventJSON(red *security.Redactor, detail *icloud.EventDetail, loc *
 	}
 	for i := range allOverrides {
 		ov := occurrenceDTO{
-			RecurrenceID: icloud.FormatEventTime(allOverrides[i].RecurrenceID, detail.AllDay, loc),
-			Start:        icloud.FormatEventTime(allOverrides[i].StartTime, detail.AllDay, loc),
-			End:          icloud.FormatEventTime(allOverrides[i].EndTime, detail.AllDay, loc),
+			RecurrenceID: icloud.FormatEventTimeForm(allOverrides[i].RecurrenceID, detail.AllDay, detail.IsFloating, loc),
+			Start:        icloud.FormatEventTimeForm(allOverrides[i].StartTime, detail.AllDay, detail.IsFloating, loc),
+			End:          icloud.FormatEventTimeForm(allOverrides[i].EndTime, detail.AllDay, detail.IsFloating, loc),
 			Title:        allOverrides[i].Title,
 			IsOverride:   allOverrides[i].IsOverride,
 		}

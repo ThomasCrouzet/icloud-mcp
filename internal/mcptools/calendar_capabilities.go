@@ -47,7 +47,7 @@ func calendarCapabilitiesHandler(deps Deps) server.ToolHandlerFunc {
 			ReadOnly:          deps.ReadOnly,
 			HealthcheckActive: deps.HealthEnabled,
 			DefaultTimezone:   defaultLocationName(deps.DefaultLocation),
-			OutputFormat:      "RFC3339_with_offset",
+			OutputFormat:      "RFC3339_with_offset_or_floating",
 			Features: map[string]bool{
 				"recurrence_expansion":   true,
 				"etag_if_match":          true,
@@ -59,6 +59,8 @@ func calendarCapabilitiesHandler(deps Deps) server.ToolHandlerFunc {
 				"update_idempotency_key": true,
 				"this_and_future":        false, // not shipped unless proven correct
 				"attendees_invitations":  false,
+				"floating_time":          true,
+				"dst_gap_fold_policy":    true,
 			},
 			Limits: map[string]int{
 				"max_search_results":            icloud.MaxResults,

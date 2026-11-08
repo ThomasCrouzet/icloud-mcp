@@ -71,6 +71,14 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		return nil, false, nil
 	}
 
+	// A floating series has no instant. Compare it in the wall-clock
+	// coordinate carried by its own values, derived from the range location,
+	// so a floating 09:00 occurrence matches a 09:00 local query in any zone.
+	if master.IsFloating && !master.AllDay {
+		rangeStart = WallClockOf(rangeStart)
+		rangeEnd = WallClockOf(rangeEnd)
+	}
+
 	ropt, err := rrule.StrToROption(strings.ToUpper(master.Recurrence))
 	if err != nil {
 		return nil, false, NewError(CodeProtocolError, 0, "Calendar recurrence rule is invalid", nil)
@@ -78,12 +86,31 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	if !normalizeRecurrenceSelectorLists(ropt) {
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule has excessive selector cardinality", nil)
 	}
-	// Do not force .UTC() here. RFC 5545 requires recurrences to follow the
-	// local wall-clock time of Dtstart and its TZID. A UTC conversion would
-	// remove the Location and keep the original UTC offset. After a DST change,
-	// that fixed offset would shift the wall-clock time by one hour. An event in
-	// Z already has time.UTC as its StartTime.Location(), so it loses no data.
+	// RFC 5545 recurs on the wall clock of DTSTART and its TZID. Expand a zoned
+	// series in the naive wall-clock coordinate, then resolve each occurrence
+	// with the explicit gap/fold policy. Iterating on resolved instants would
+	// let Go normalize a spring-gap time backward without notice.
+	zoned := master.Timezone != "" && !master.IsFloating && !master.AllDay
+	var loc *time.Location
+	wallRangeStart, wallRangeEnd := rangeStart, rangeEnd
 	ropt.Dtstart = master.StartTime
+	if zoned {
+		var loadErr error
+		loc, loadErr = time.LoadLocation(master.Timezone)
+		if loadErr != nil {
+			return nil, false, NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
+		}
+		wallStart := master.wallStart
+		if wallStart.IsZero() {
+			wallStart = WallClockOf(master.StartTime.In(loc))
+		}
+		ropt.Dtstart = wallStart
+		if !ropt.Until.IsZero() {
+			ropt.Until = WallClockOf(ropt.Until.In(loc))
+		}
+		wallRangeStart = WallClockOf(rangeStart.In(loc))
+		wallRangeEnd = WallClockOf(rangeEnd.In(loc))
+	}
 	seriesRemaining := maxRecurrenceExpansionWork
 	safety, maxEmptyPeriods, maxPeriodCandidates := checkRecurrenceSelectorSafety(ctx, ropt, &seriesRemaining, remainingWork)
 	switch safety {
@@ -98,7 +125,7 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	}
 	// Preflight estimate only; actual iterator steps debit seriesRemaining and
 	// remainingWork below so underestimates cannot exceed the aggregate budget.
-	estimatedWork := recurrenceWorkEstimate(ropt, rangeEnd, maxEmptyPeriods, maxPeriodCandidates)
+	estimatedWork := recurrenceWorkEstimate(ropt, wallRangeEnd, maxEmptyPeriods, maxPeriodCandidates)
 	if estimatedWork > seriesRemaining || remainingWork == nil || estimatedWork > *remainingWork {
 		return nil, false, NewError(CodePayloadTooLarge, 0, "Calendar recurrence rule requires excessive expansion work", nil)
 	}
@@ -140,9 +167,16 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 			overlapDuration = nominalElapsed
 		}
 	}
-	lowerBound := rangeStart.Add(-overlapDuration)
+	type occurrenceSlot struct {
+		start    time.Time
+		adjusted bool
+	}
+	// One extra day of wall-clock margin covers the largest civil UTC offset
+	// change. The exact half-open overlap filter below restores the boundary.
+	wallLowerBound := wallRangeStart.Add(-overlapDuration - 24*time.Hour)
+	wallUpperBound := wallRangeEnd.Add(24 * time.Hour)
 	next := rule.Iterator()
-	occTimes := make([]time.Time, 0, min(maxOccurrences+1, 64))
+	slots := make([]occurrenceSlot, 0, min(maxOccurrences+1, 64))
 	var advances int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -155,21 +189,25 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		advances++
 		seriesRemaining--
 		*remainingWork--
-		if !ok || occ.After(rangeEnd) {
+		if !ok || occ.After(wallUpperBound) {
 			break
 		}
-		if occ.Before(lowerBound) {
+		if occ.Before(wallLowerBound) {
 			continue
 		}
-		if _, skip := excluded[occ.UTC().Unix()]; skip {
+		slot := occurrenceSlot{start: occ}
+		if zoned {
+			slot.start, slot.adjusted = ResolveWallClock(occ, loc)
+		}
+		if _, skip := excluded[slot.start.UTC().Unix()]; skip {
 			continue
 		}
-		if !eventOverlaps(Event{StartTime: occ, EndTime: recurrenceOccurrenceEnd(master, occ)}, rangeStart, rangeEnd) {
+		if !eventOverlaps(Event{StartTime: slot.start, EndTime: recurrenceOccurrenceEnd(master, slot.start)}, rangeStart, rangeEnd) {
 			continue
 		}
-		occTimes = append(occTimes, occ)
-		if len(occTimes) == maxOccurrences+1 {
-			occTimes = occTimes[:maxOccurrences]
+		slots = append(slots, slot)
+		if len(slots) == maxOccurrences+1 {
+			slots = slots[:maxOccurrences]
 			truncated = true
 			break
 		}
@@ -184,8 +222,9 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	}
 	used := make(map[int64]bool, len(overrideByRecID))
 
-	out := make([]Event, 0, len(occTimes))
-	for _, occ := range occTimes {
+	out := make([]Event, 0, len(slots))
+	for _, slot := range slots {
+		occ := slot.start
 		// Keep only occurrences that overlap [rangeStart, rangeEnd) after the
 		// code restores their full duration. The wider lower bound intentionally
 		// includes extra occurrences. This filter restores the exact
@@ -204,6 +243,7 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		clone := master
 		clone.StartTime = occ
 		clone.EndTime = recurrenceOccurrenceEnd(master, occ)
+		clone.DSTAdjusted = slot.adjusted
 		clone.exDates = nil
 		// Expanded row is not a master: clear RRULE and expose the original
 		// slot as recurrenceId so agents can target scope=occurrence.
@@ -868,7 +908,14 @@ func saturatingWorkMultiply(a, b int64) int64 {
 }
 
 // eventOverlaps tests the half-open [start,end) overlap of an event with
-// [rangeStart, rangeEnd].
+// [rangeStart, rangeEnd]. A floating event is interpreted with the wall-clock
+// coordinate of the range location: it has no instant of its own.
 func eventOverlaps(e Event, rangeStart, rangeEnd time.Time) bool {
-	return e.StartTime.Before(rangeEnd) && e.EndTime.After(rangeStart)
+	start, end := e.StartTime, e.EndTime
+	if e.IsFloating && !e.AllDay {
+		loc := rangeStart.Location()
+		start = WallClockInLocation(start, loc)
+		end = WallClockInLocation(end, loc)
+	}
+	return start.Before(rangeEnd) && end.After(rangeStart)
 }

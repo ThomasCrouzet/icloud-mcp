@@ -138,8 +138,21 @@ the complete object. Identical UIDs in different calendars stay isolated.
   deletes the series resource.
 - Occurrence EXDATE and RECURRENCE-ID values match the master DATE, TZID, or Z
   form.
+- An EXDATE whose value type cannot match DTSTART fails closed with
+  `protocol_error` before expansion. DATE against DATE-TIME, and floating
+  against absolute DATE-TIME, never match. Multiple EXDATE properties and
+  comma-separated values stay supported.
+- A floating DATE-TIME (no `Z`, no `TZID`) stays floating. The result sets
+  `isFloating` and uses an offset-free local value such as
+  `2026-07-01T09:00:00`; the server never invents a UTC offset.
+- A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
+  the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
+  `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
+- Availability interprets a floating event in the requested timezone, so it
+  cannot make the same wall-clock slot look free.
 - A timed recurring create writes TZID and a generated VTIMEZONE. It uses the
-  explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback.
+  explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback. A start that
+  does not exist in that zone fails before the request.
 - This method keeps wall-clock RRULEs correct across DST.
 - The client does not implement `this-and-future`. Its end-to-end safety is not
   proven.
@@ -154,6 +167,30 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - It rejects calendar selectors with hourly, minutely, or secondly frequency.
 - These cases fail closed because the dependency cannot stop an empty internal
   selector scan.
+
+## Group-scheduled events
+
+`get_event` reports `isGroupScheduled` when the object has `ORGANIZER` or
+`ATTENDEE`. It never returns an address or parameter from those properties.
+A malformed cal-address fails closed with `protocol_error`.
+
+A series or occurrence update or delete of such an object is denied with
+`authorization` by default, before any PUT or DELETE. The approved path needs
+all of these:
+
+1. The operator sets an explicit `ICLOUD_MCP_PERMISSIONS` value that grants
+   `calendar.write` (update) or `calendar.delete` (delete). A legacy switch is
+   not enough.
+2. The call sets `acknowledge_scheduling=true`.
+3. The call passes the current strong `etag` from `get_event`.
+
+The service rechecks `ORGANIZER` and `ATTENDEE` on its final GET and compares
+the supplied ETag with the current one. A changed object invalidates the
+approval. A deletion `dry_run` reports `isGroupScheduled` and a fixed
+`notificationRisk` without mutating or exposing identities.
+
+This guard does not assert live Apple notification behavior. It prevents an
+unreviewed mutation of an object that could produce one.
 
 ## Parser and result limits
 
