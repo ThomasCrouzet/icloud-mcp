@@ -33,6 +33,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   safely when no permitted calendars remain.
 
 ### Added
+- Add five executable least-privilege stdio profiles with offline startup, manifest,
+  scope-denial, and synthetic effect checks. Separate read-only first run from scoped
+  write/send opt-ins. Document a future breaking v1.0.0 default-read-only target;
+  preserve current legacy defaults and clarify host/model data and doctor boundaries.
 - Add manifest-driven offline MCP contract fixtures through real domain services.
   Check published arguments, defaults, boundaries, capability profiles, counted
   backend effects, declared structured outputs, and fixture-coverage controls.

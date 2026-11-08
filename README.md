@@ -112,15 +112,17 @@ from discovery. The MCP interface provides tools over **stdio**.
 | `reply_message` | source `mailbox`, `uid_validity`, `uid`; `body`; optional `mode` and `idempotency_key` | Submission status or a structured error | Replies to the resolved sender or reply-all recipients; never marks Answered or appends Sent |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
-Run `icloud-mcp -doctor` for concise read-only domain checks. Add
+Run `icloud-mcp -doctor` for authenticated read-only network checks. Add
 `-doctor-format=json` for machine-readable output. The command validates local
 configuration, then probes enabled domains with a 10-second timeout each. It
 never creates, updates, moves, trashes, or sends. Exit status is 0 when every
 enabled domain is ready and 1 when a probe fails. Disabled domains stay
 `disabled`; enabled domains are never reported ready before a successful probe.
 
-`-doctor` is not available in v0.4.3. It uses configured credentials and does
-not probe SMTP. For credential-free TLS checks and hosted-network limitations,
+`-doctor` is not an offline profile check. It discovers collections and mailboxes
+outside MCP resource filtering, and it does not probe SMTP. See the
+[diagnostic authorization limits](docs/agent-hosts.md#authenticated-diagnostics).
+It is not available in v0.4.3. For credential-free TLS checks and hosted-network limitations,
 see [Mail network troubleshooting](docs/mail-network-troubleshooting.md).
 
 Representative read tools also publish output schemas and `structuredContent`.
@@ -138,6 +140,10 @@ This first run enables Calendar reads only. You need an MCP host, network
 access to iCloud, and an Apple Account with two-factor authentication to
 [create an app-specific password](https://support.apple.com/en-us/102654).
 Never use the main Apple Account password.
+
+**Set read-only explicitly.** If `ICLOUD_MCP_READ_ONLY` and
+`ICLOUD_MCP_PERMISSIONS` are absent, legacy defaults expose Calendar writes and
+deletes. The current unset default is not a safe first-run profile.
 
 ### Install the binary
 
@@ -181,6 +187,11 @@ Merge this entry into `mcpServers`, with your actual absolute paths:
         "ICLOUD_EMAIL": "file:///Users/you/.config/icloud-mcp/email",
         "ICLOUD_PASSWORD": "file:///Users/you/.config/icloud-mcp/password",
         "ICLOUD_MCP_READ_ONLY": "true",
+        "ICLOUD_MCP_PERMISSIONS": "calendar.read",
+        "ICLOUD_MCP_ENABLE_CONTACTS": "false",
+        "ICLOUD_MCP_ENABLE_MAIL": "false",
+        "ICLOUD_MCP_ENABLE_MAIL_WRITE": "false",
+        "ICLOUD_MCP_ENABLE_MAIL_SEND": "false",
         "ICLOUD_MCP_DEFAULT_TZ": "Europe/Paris"
       }
     }
@@ -192,12 +203,26 @@ Keep optional domains off for this run. Fully quit and reopen Claude Desktop.
 The host launches the binary. Calendar discovery starts on the first Calendar call, so a remote Calendar outage does not block Mail or Contacts startup.
 Open the host's connector tool list and confirm the `icloud` tools appear.
 
+This entry is also available as
+[calendar-read-only.json](examples/profiles/calendar-read-only.json).
+Choose one of the [five tested profiles](docs/agent-hosts.md#supported-profiles)
+for Calendar, Contacts, Mail, scoped Calendar writes, or exact-recipient send.
+Only the three read-only profiles are recommended for first use.
+
+The local binary can return account data to the configured MCP host and model.
+Their policies govern onward transmission. Local stdio does not keep that data
+outside the host or model. Review those policies before the first account read.
+For synthetic-only startup checks, use the
+[offline validation commands](docs/agent-hosts.md#offline-profile-validation).
+
 ### Run your first operation
 
 Ask the host:
 
 ```text
-Call icloud_capabilities and confirm readOnly is true and toolCount is 7.
+Call icloud_capabilities and confirm readOnly is true.
+Compare its tools with the host's tools/list. No write, delete, mutate, or send tool may appear.
+For this Calendar profile, the current toolCount is 7.
 Then call list_calendars with no arguments and show the calendar names.
 ```
 
@@ -232,8 +257,8 @@ shell must supply them; restart the process after a change.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ICLOUD_EMAIL` | Yes | None | Calendar and Contacts identity; supports `file://` |
-| `ICLOUD_PASSWORD` | Yes | None | App-specific password; supports `file://` |
+| `ICLOUD_EMAIL` | Calendar or Contacts requested | None | Calendar and Contacts identity; supports `file://` |
+| `ICLOUD_PASSWORD` | Calendar/Contacts, or Mail password fallback | None | App-specific password; supports `file://` |
 | `ICLOUD_MCP_READ_ONLY` | No | `false` | Remove every mutation and send tool |
 | `ICLOUD_MCP_PERMISSIONS` | No | Legacy switches | Explicit comma-separated capability list |
 | `ICLOUD_MCP_RESOURCE_SCOPES` | No | All resources | Per-action Calendar, Contacts, and Mail resource allowlists |
@@ -258,6 +283,11 @@ offset in `ICLOUD_MCP_DEFAULT_TZ`. Do not label a local hour with `Z`. Timed
 results include an explicit numeric offset; all-day dates use `YYYY-MM-DD`.
 See the [full configuration and date rules](docs/agent-hosts.md#configuration-reference)
 for log-level forms and optional-domain examples.
+
+The future default-read-only migration targets **breaking v1.0.0**, not a
+v0.5.x patch. This change does not flip any current default or release a version.
+See the [migration plan](docs/agent-hosts.md#future-v100-default-migration) for
+advance notices and explicit configuration to retain writes.
 
 <!-- readme:section operations -->
 ## Operations
