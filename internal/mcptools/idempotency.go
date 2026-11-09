@@ -31,6 +31,8 @@ type idempotencyOutcome struct {
 func (o idempotencyOutcome) result(write func(string) *mcp.CallToolResult) *mcp.CallToolResult {
 	result := write(o.payload)
 	result.IsError = result.IsError || o.isError
+	// The store is scoped to this registration and its redactor, so the stored
+	// structured object cannot leak across accounts or registrations.
 	result.StructuredContent = o.structured
 	return result
 }

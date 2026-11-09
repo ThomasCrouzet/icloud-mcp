@@ -191,7 +191,10 @@ func updateContactHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		var paramsHash string
 		var nsKey string
 		var idemReady bool
-		store := defaultIdempotency
+		store := deps.Idempotency
+		if store == nil {
+			store = defaultIdempotency
+		}
 		if idemKey != "" {
 			paramsHash, err = hashIdempotencyParams(map[string]any{
 				"tool":  "update_contact",

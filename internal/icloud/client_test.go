@@ -1155,3 +1155,28 @@ func TestClient_DeleteEvent_UIDNotFound(t *testing.T) {
 		t.Fatal("expected: event not found error")
 	}
 }
+
+func TestClient_ListCalendarsUsesResourceTypeNotPathNames(t *testing.T) {
+	m := newMockCalDAV(t)
+	m.calendarsBody = `<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <response><href>/121234567/calendars/inbox/</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype><displayname>Inbox calendar</displayname><C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/121234567/calendars/notification/</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype><displayname>Notification calendar</displayname><C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/121234567/calendars/schedule-inbox/</href><propstat><prop><resourcetype><collection/><C:schedule-inbox/></resourcetype><displayname>Schedule inbox</displayname></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/121234567/calendars/outbox/</href><propstat><prop><resourcetype><collection/><C:schedule-outbox/></resourcetype><displayname>Outbox</displayname></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+</multistatus>`
+	cals, err := m.client().ListCalendars(context.Background())
+	if err != nil {
+		t.Fatalf("ListCalendars() error = %v", err)
+	}
+	paths := make(map[string]bool, len(cals))
+	for _, cal := range cals {
+		paths[cal.Path] = true
+	}
+	if !paths["/121234567/calendars/inbox/"] || !paths["/121234567/calendars/notification/"] {
+		t.Fatalf("valid calendars under path-like names were filtered: %+v", cals)
+	}
+	if paths["/121234567/calendars/schedule-inbox/"] || paths["/121234567/calendars/outbox/"] {
+		t.Fatalf("scheduling collections were included: %+v", cals)
+	}
+}

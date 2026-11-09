@@ -630,3 +630,43 @@ func TestReadRetryStillRewindsREPORTBody(t *testing.T) {
 		t.Fatalf("calls=%d bodies=%q", calls, bodies)
 	}
 }
+
+func TestFormatUTCOffsetPreservesSeconds(t *testing.T) {
+	for seconds, want := range map[int]string{
+		19270: "+052110", 561: "+000921", 20476: "+054116", -19270: "-052110", 7200: "+0200", 0: "+0000",
+	} {
+		if got := formatUTCOffset(seconds); got != want {
+			t.Errorf("formatUTCOffset(%d) = %q, want %q", seconds, got, want)
+		}
+	}
+}
+
+func TestParseAlarmsPreservesTriggerSemantics(t *testing.T) {
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\n" +
+		"UID:alarm-fixture\r\nSUMMARY:Alarms\r\nDTSTAMP:20260701T000000Z\r\nDTSTART:20261108T090000Z\r\nDTEND:20261108T100000Z\r\n" +
+		"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n" +
+		"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;RELATED=END:-PT15M\r\nEND:VALARM\r\n" +
+		"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;RELATED=START:-PT30M\r\nEND:VALARM\r\n" +
+		"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:20261108T080000Z\r\nEND:VALARM\r\n" +
+		"END:VEVENT\r\nEND:VCALENDAR\r\n"
+	calendar, err := decodeRemoteCalendar(strings.NewReader(ics))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alarms := parseAlarms(calendar)
+	if len(alarms) != 4 {
+		t.Fatalf("alarms = %#v", alarms)
+	}
+	if alarms[0].RelatedTo != "START" || alarms[0].MinutesBefore != 15 {
+		t.Fatalf("default trigger = %#v", alarms[0])
+	}
+	if alarms[1].RelatedTo != "END" || alarms[1].MinutesBefore != 0 {
+		t.Fatalf("END trigger = %#v", alarms[1])
+	}
+	if alarms[2].RelatedTo != "START" || alarms[2].MinutesBefore != 30 {
+		t.Fatalf("explicit START trigger = %#v", alarms[2])
+	}
+	if alarms[3].TriggerType != "date-time" || alarms[3].AbsoluteAt != "2026-11-08T08:00:00Z" || alarms[3].MinutesBefore != 0 {
+		t.Fatalf("absolute trigger = %#v", alarms[3])
+	}
+}

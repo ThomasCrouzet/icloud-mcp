@@ -40,8 +40,9 @@ func newFindFreeSlotsTool(defaultLoc *time.Location) mcp.Tool {
 }
 
 type freeSlotsResponse struct {
-	Count int              `json:"count"`
-	Slots []freeSlotOutput `json:"slots"`
+	Count     int              `json:"count"`
+	Slots     []freeSlotOutput `json:"slots"`
+	Truncated bool             `json:"truncated,omitempty"`
 }
 
 type freeSlotOutput struct {
@@ -139,7 +140,8 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			BufferBefore:      bufferBefore,
 			BufferAfter:       bufferAfter,
 			IncludeAllDayBusy: includeAllDayBusy,
-			Limit:             limit,
+			Limit:             limit + 1,
+			ProbeExtra:        true,
 		}
 		if whs := req.GetString("working_hours_start", ""); whs != "" {
 			m, e := icloud.ParseWorkingHours(whs)
@@ -181,7 +183,11 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
-		out := freeSlotsResponse{Count: len(slots), Slots: make([]freeSlotOutput, 0, len(slots))}
+		truncated := len(slots) > limit
+		if truncated {
+			slots = slots[:limit]
+		}
+		out := freeSlotsResponse{Count: len(slots), Slots: make([]freeSlotOutput, 0, len(slots)), Truncated: truncated}
 		for _, s := range slots {
 			out.Slots = append(out.Slots, freeSlotOutput{
 				Start: icloud.FormatEventTime(s.Start, false, opts.Location),

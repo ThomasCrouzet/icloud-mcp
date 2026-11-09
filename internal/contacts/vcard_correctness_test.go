@@ -454,3 +454,27 @@ func TestCreateContactUsesDeterministicResourceName(t *testing.T) {
 		t.Fatalf("create target = %#v, want %s", puts, want)
 	}
 }
+
+func TestContactSearchUsesUnicodeCollation(t *testing.T) {
+	card, _, raw, err := decodeRawCard([]byte(v3Card("unicode", "Émile Laurent", "EMAIL:émile@example.com")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := []string{"E\u0301mile", "\u00c9mile", "e\u0301mile"}
+	for _, query := range queries {
+		if matched, _ := contactMatches(card, raw, SearchOptions{Query: query}); !matched {
+			t.Fatalf("query %q did not match precomposed text", query)
+		}
+	}
+	ligature, _, ligatureRaw, err := decodeRawCard([]byte(v3Card("ligature", "O\ufb03ce")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched, _ := contactMatches(ligature, ligatureRaw, SearchOptions{Query: "office"}); !matched {
+		t.Fatal("compatibility decomposition (ﬃ) did not match office")
+	}
+	view := newCardView(card, raw)
+	if summary := cardSummary(view, "book", "\"e\""); summary.DisplayName != "Émile Laurent" {
+		t.Fatalf("display value was rewritten: %q", summary.DisplayName)
+	}
+}

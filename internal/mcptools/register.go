@@ -47,6 +47,10 @@ type Deps struct {
 	CalendarWriteExplicit    bool
 	CalendarDeleteExplicit   bool
 	CalendarScheduleExplicit bool
+
+	// Idempotency scopes update claims and results to one registration. It is
+	// initialized by RegisterUnified when nil.
+	Idempotency *idempotencyStore
 }
 
 // CapabilityPlan is the immutable, effective registration plan. Its private
@@ -267,6 +271,13 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if deps.Redactor == nil {
 		panic("mcptools: enabled tools require a non-nil redactor")
 	}
+	if deps.Idempotency == nil {
+		deps.Idempotency = newIdempotencyStore()
+		// Preserve the process clock hook used by deterministic tests.
+		if defaultIdempotency != nil {
+			deps.Idempotency.now = defaultIdempotency.now
+		}
+	}
 	if plan.ContactsEnabled() && isNilDependency(deps.ContactsService) {
 		panic("mcptools: Contacts tools are enabled but Contacts service is nil")
 	}
@@ -286,6 +297,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if plan.ContactsEnabled() {
 		registered = append(registered, RegisterContacts(s, ContactsDeps{
 			Service: deps.ContactsService, Audit: deps.Audit, Redactor: deps.Redactor, ResourceScopes: deps.ResourceScopes,
+			Idempotency: deps.Idempotency,
 		}, plan.ContactsReadEnabled(), plan.ContactsCreateUpdateEnabled(), plan.ContactsDeleteEnabled())...)
 	}
 	if plan.MailEnabled() {

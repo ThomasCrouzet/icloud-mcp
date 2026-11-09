@@ -140,6 +140,27 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A timed event with DTSTART and no DTEND or DURATION has zero duration. It is
   a point: it matches when `rangeStart <= DTSTART < rangeEnd`, and availability
   does not invent a busy interval for it.
+- An occurrence update or delete validates that `recurrence_id` names an
+  existing generated slot or a detached override. A nonexistent slot returns
+  `not_found` with no PUT or DELETE, and an already excluded slot returns
+  `alreadyExcluded` with `wouldMutate=false`.
+- A successful delete dry run compares a supplied caller ETag with the current
+  strong GET ETag and returns `concurrent_modification` when they differ.
+- A DELETE dry run is a point-in-time preflight, not a lock.
+- Discovery classifies a collection by `DAV:resourcetype`: a positive
+  `CALDAV:calendar` with VEVENT support is included even under `/inbox/` or
+  `/notification/`; `schedule-inbox` and `schedule-outbox` are excluded by
+  their own resourcetype.
+- Update accepts `YYYY-MM-DD` for `start`/`end` only when the existing property
+  already uses the DATE form. DATE-only input against a timed event fails before
+  PUT.
+- A recurring write enforces the RFC 5545 UNTIL value type and rejects
+  BYHOUR/BYMINUTE/BYSECOND on a DATE start. Invalid values are rejected, never
+  truncated into a different recurrence.
+- A recurring RFC3339 value with a numeric offset and no IANA timezone repeats
+  as a fixed UTC instant. It is never serialized with an unnamed TZID.
+- A recurring VTIMEZONE keeps historical non-minute UTC-offset seconds when
+  they exist.
 - An occurrence override copies the master duration form. A DURATION with days
   or weeks stays nominal across DST. An elapsed DURATION stays elapsed.
 - A title-only occurrence update does not change its start or end.
@@ -198,8 +219,9 @@ A series or occurrence update or delete of such an object is denied with
 all of these:
 
 1. The operator sets an explicit `ICLOUD_MCP_PERMISSIONS` value that grants
-   `calendar.write` (update) or `calendar.delete` (delete). A legacy switch is
-   not enough.
+   `calendar.write` (update) or `calendar.delete` (delete) and the separate
+   `calendar.schedule` capability. A legacy switch and ordinary write/delete
+   are not enough.
 2. The call sets `acknowledge_scheduling=true`.
 3. The call passes the current strong `etag` from `get_event`.
 
@@ -318,6 +340,17 @@ No provider-level snapshot isolation or exhaustive coverage is claimed.
 
 Working hours require exact ASCII `HH:MM` values from `00:00` through `24:00`.
 Invalid hours or weekdays return a validation error before free-slot calculation.
+
+A free-slot result with `truncated: true` means at least one more qualified slot
+exists beyond `limit`; the client checks one extra slot without materializing
+the rest. An exact-limit result sets `truncated: false`. The slot boundaries,
+greedy non-overlapping policy, and 200-slot cap do not change.
+
+Civil-day iteration is independent of whether local midnight exists. A
+midnight gap (for example America/Santiago on 2026-09-06) or a skipped date
+(for example Pacific/Apia on 2011-12-30) cannot stall the calculation, and a
+deterministic civil-day work bound fails closed if a pathological range would
+exceed it.
 
 ## Limits (Apple)
 

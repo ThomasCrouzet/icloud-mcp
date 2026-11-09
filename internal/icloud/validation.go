@@ -262,6 +262,50 @@ func validateRRULEForStart(rule string, start time.Time) error {
 	return validateRRULEForStartContext(context.Background(), rule, start)
 }
 
+func validateRRULEForEventContext(ctx context.Context, rule string, start time.Time, allDay bool) error {
+	if err := validateRRULEValueForms(rule, allDay); err != nil {
+		return err
+	}
+	return validateRRULEForStartContext(ctx, rule, start)
+}
+
+// validateRRULEValueForms enforces RFC 5545 section 3.3.10 value-type rules
+// that depend on DTSTART. Invalid forms fail before any write; they are never
+// truncated or silently converted.
+func validateRRULEValueForms(rule string, allDay bool) error {
+	for _, part := range strings.Split(rule, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(key) {
+		case "UNTIL":
+			if allDay {
+				if len(value) != len("20060102") {
+					return fmt.Errorf("all-day RRULE UNTIL must use the DATE form YYYYMMDD")
+				}
+				if _, err := time.Parse("20060102", value); err != nil {
+					return fmt.Errorf("all-day RRULE UNTIL must use the DATE form YYYYMMDD")
+				}
+				continue
+			}
+			if len(value) == len("20060102") {
+				return fmt.Errorf("DATE-TIME RRULE UNTIL must include a time and a valid value type")
+			}
+			if _, err := time.Parse("20060102T150405Z", value); err != nil {
+				if _, err := time.Parse("20060102T150405", value); err != nil {
+					return fmt.Errorf("RRULE UNTIL must use a valid DATE-TIME form")
+				}
+			}
+		case "BYSECOND", "BYMINUTE", "BYHOUR":
+			if allDay {
+				return fmt.Errorf("all-day RRULE cannot use %s", strings.ToUpper(key))
+			}
+		}
+	}
+	return nil
+}
+
 func validateRRULEForStartContext(ctx context.Context, rule string, start time.Time) error {
 	if err := ValidateRRULE(rule); err != nil {
 		return err

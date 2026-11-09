@@ -172,7 +172,7 @@ func TestFindFreeSlots_WorkingHoursNormal(t *testing.T) {
 func TestStructuredToRRULE_RejectsBothCountAndUntil(t *testing.T) {
 	_, _, err := structuredToRRULE(&StructuredRecurrence{
 		Frequency: "daily", Count: 3, Until: "2026-08-01",
-	}, time.UTC)
+	}, time.UTC, false)
 	if err == nil {
 		t.Fatal()
 	}

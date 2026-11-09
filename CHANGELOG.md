@@ -7,6 +7,31 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Prevent the free-slot calculator from stalling at a nonexistent local
+  midnight, including America/Santiago and skipped civil dates, and add a
+  deterministic civil-day work bound.
+- Reject a stale caller ETag during `delete_event` dry run, and validate that
+  an occurrence target exists or is already excluded before an update or
+  delete.
+- Classify discovered calendars by DAV resource type instead of path names, so
+  a valid calendar under `/inbox/` is not hidden.
+- Preserve historical UTC-offset seconds in generated VTIMEZONE properties.
+- Report `VALARM` trigger type and START/END relation, with an absolute
+  `DATE-TIME` value, instead of normalizing every trigger to minutes before
+  start.
+- Accept `YYYY-MM-DD` for `update_event` all-day round trips and reject it for a
+  timed event.
+- Enforce RFC 5545 UNTIL and BYHOUR/BYMINUTE/BYSECOND value forms before a
+  recurring write instead of truncating an invalid value.
+- Never serialize an unnamed RFC3339 fixed offset as a TZID or VTIMEZONE; a
+  recurrence without an IANA zone repeats as a fixed UTC instant with a warning.
+- Reuse the handler's RRULE and timezone validation in `create_event`, removing
+  a duplicate six-year scan, and add recurrence timezone benchmarks.
+- Scope update idempotency claims and structured result replays to each MCP
+  registration.
+- Match local Contacts filters with RFC 5051 compatibility decomposition, and
+  expose `truncated` on free-slot results.
+- Document the override-only CalDAV resource no-go decision.
 - Decode escaped semicolons in structured vCard `N`, `ADR`, and `ORG` values
   and escape them again on create and targeted patch, so a literal separator
   no longer shifts name, address, or organization components.

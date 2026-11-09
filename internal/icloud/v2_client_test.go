@@ -223,7 +223,7 @@ func TestClient_UpdateEvent_OccurrenceScope(t *testing.T) {
 	m.objects["uid-recur-1"] = mockObject{path: path, ics: icsRecurringWithExdate}
 	m.etags[path] = `"e1"`
 	c := m.client()
-	recID := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
+	recID := time.Date(2026, 7, 20, 18, 0, 0, 0, time.UTC)
 	newTitle := "Only this day"
 	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{
 		Title:        &newTitle,
@@ -493,5 +493,110 @@ func TestClient_UpdateEvent_SeriesStartMoveWithoutAnchorsSucceeds(t *testing.T) 
 	m.mu.Unlock()
 	if puts != 1 {
 		t.Fatalf("series move issued %d PUTs, want 1", puts)
+	}
+}
+
+func TestClient_OccurrenceTargetsAreValidated(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-recur-1.ics"
+	m.objects["uid-recur-1"] = mockObject{path: path, ics: icsRecurringWithExdate}
+	m.etags[path] = `"e1"`
+	client := m.client()
+
+	missing := time.Date(2026, 7, 7, 18, 0, 0, 0, time.UTC)
+	title := "Phantom"
+	err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{
+		Title: &title, Scope: ScopeOccurrence, RecurrenceID: &missing,
+	})
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeNotFound {
+		t.Fatalf("update nonexistent occurrence = %v", err)
+	}
+	_, err = client.DeleteEvent(context.Background(), testHomeCalendar, "uid-recur-1", &DeleteOptions{
+		Scope: ScopeOccurrence, RecurrenceID: &missing,
+	})
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeNotFound {
+		t.Fatalf("delete nonexistent occurrence = %v", err)
+	}
+
+	excluded := time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)
+	result, err := client.DeleteEvent(context.Background(), testHomeCalendar, "uid-recur-1", &DeleteOptions{
+		Scope: ScopeOccurrence, RecurrenceID: &excluded,
+	})
+	if err != nil {
+		t.Fatalf("delete excluded occurrence = %v", err)
+	}
+	if result.WouldMutate || !result.AlreadyExcluded {
+		t.Fatalf("excluded delete = %#v", result)
+	}
+	m.mu.Lock()
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("invalid occurrence targets issued %d PUTs", puts)
+	}
+}
+
+func TestClient_DeleteEvent_DryRunRejectsStaleCallerETag(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-recur-1.ics"
+	m.objects["uid-recur-1"] = mockObject{path: path, ics: icsRecurringWithExdate}
+	m.etags[path] = `"v2"`
+	client := m.client()
+
+	series := time.Date(2026, 7, 20, 18, 0, 0, 0, time.UTC)
+	for _, scope := range []MutationScope{ScopeSeries, ScopeOccurrence} {
+		opts := &DeleteOptions{Scope: scope, DryRun: true, IfMatchETag: `"v1"`}
+		if scope == ScopeOccurrence {
+			opts.RecurrenceID = &series
+		}
+		_, err := client.DeleteEvent(context.Background(), testHomeCalendar, "uid-recur-1", opts)
+		if ie := AsICloudError(err); ie == nil || ie.Code != CodeConcurrentModification {
+			t.Fatalf("%s dry run with stale ETag = %v", scope, err)
+		}
+	}
+
+	matching := &DeleteOptions{Scope: ScopeSeries, DryRun: true, IfMatchETag: `"v2"`}
+	result, err := client.DeleteEvent(context.Background(), testHomeCalendar, "uid-recur-1", matching)
+	if err != nil || !result.DryRun || !result.WouldMutate {
+		t.Fatalf("matching dry run = %#v, %v", result, err)
+	}
+	m.mu.Lock()
+	deletes := len(m.deletes)
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if deletes != 0 || puts != 0 {
+		t.Fatalf("dry run mutated: deletes=%d puts=%d", deletes, puts)
+	}
+}
+
+func TestClient_UpdateEvent_AllDayDateForm(t *testing.T) {
+	m := newMockCalDAV(t)
+	path := testHomeCalendar + "uid-allday-1.ics"
+	m.objects["uid-allday-1"] = mockObject{path: path, ics: icsAllDay}
+	client := m.client()
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	if err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-allday-1", &EventUpdate{
+		StartTime: &start, EndTime: &end, StartDateOnly: true, EndDateOnly: true,
+	}); err != nil {
+		t.Fatalf("DATE update = %v", err)
+	}
+	m.mu.Lock()
+	body := m.puts[0].body
+	m.mu.Unlock()
+	if !strings.Contains(body, "DTSTART;VALUE=DATE:20260713") || !strings.Contains(body, "DTEND;VALUE=DATE:20260714") {
+		t.Fatalf("DATE form was not preserved:\n%s", body)
+	}
+
+	timedStart := time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC)
+	before := len(m.puts)
+	if err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-allday-1", &EventUpdate{
+		StartTime: &timedStart, StartDateOnly: true,
+	}); err == nil {
+		t.Fatal("DATE-only start on a timed event was accepted")
+	}
+	if len(m.puts) != before {
+		t.Fatal("invalid DATE form issued a PUT")
 	}
 }

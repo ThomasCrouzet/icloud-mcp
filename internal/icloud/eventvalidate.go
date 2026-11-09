@@ -140,7 +140,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	}
 	rrule := strings.TrimSpace(in.Recurrence)
 	if in.Structured != nil {
-		built, exdates, err := structuredToRRULE(in.Structured, defaultLoc)
+		built, exdates, err := structuredToRRULE(in.Structured, defaultLoc, in.AllDay)
 		if err != nil {
 			errs = append(errs, err.Error())
 		} else {
@@ -154,7 +154,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		}
 	}
 	if rrule != "" {
-		if err := validateRRULEForStartContext(ctx, rrule, in.StartTime); err != nil {
+		if err := validateRRULEForEventContext(ctx, rrule, in.StartTime, in.AllDay); err != nil {
 			errs = append(errs, err.Error())
 		}
 		if !in.AllDay && writeLoc != nil && writeLoc != time.UTC && !recurringTimezoneStable(writeLoc, in.StartTime) {
@@ -302,10 +302,16 @@ func NormalizeEventUpdateFields(up *EventUpdate) {
 // StructuredRecurrenceToRRULE is the exported wrapper used by MCP handlers
 // after validation to obtain RRULE + EXDATE times.
 func StructuredRecurrenceToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (string, []time.Time, error) {
-	return structuredToRRULE(s, defaultLoc)
+	return structuredToRRULE(s, defaultLoc, false)
 }
 
-func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (string, []time.Time, error) {
+// StructuredRecurrenceToRRULEForStart uses the DTSTART form to choose the
+// UNTIL value type required by RFC 5545 section 3.3.10.
+func StructuredRecurrenceToRRULEForStart(s *StructuredRecurrence, defaultLoc *time.Location, allDay bool) (string, []time.Time, error) {
+	return structuredToRRULE(s, defaultLoc, allDay)
+}
+
+func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location, allDay bool) (string, []time.Time, error) {
 	if s == nil {
 		return "", nil, nil
 	}
@@ -361,7 +367,11 @@ func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location) (stri
 				return "", nil, fmt.Errorf("invalid recurrence until: %w", err)
 			}
 		}
-		parts = append(parts, "UNTIL="+t.UTC().Format("20060102T150405Z"))
+		if allDay {
+			parts = append(parts, "UNTIL="+t.UTC().Format("20060102"))
+		} else {
+			parts = append(parts, "UNTIL="+t.UTC().Format("20060102T150405Z"))
+		}
 	}
 	var ex []time.Time
 	for _, e := range s.Exceptions {
