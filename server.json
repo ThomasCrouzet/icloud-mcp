@@ -7,32 +7,32 @@
     "url": "https://github.com/ThomasCrouzet/icloud-mcp",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "1.1.0",
   "websiteUrl": "https://github.com/ThomasCrouzet/icloud-mcp#quick-start",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-linux-amd64.mcpb",
-      "version": "1.0.0",
-      "fileSha256": "c452d572ecd7591e7e8e8b079b468d335100176f29174734e7869835f2a431a6",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-linux-amd64.mcpb",
+      "version": "1.1.0",
+      "fileSha256": "1743f28fb3185dc1500117a04f15c6c841f949fe9d2ebeb2d9f785ef9a2a61fa",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-linux-arm64.mcpb",
-      "version": "1.0.0",
-      "fileSha256": "c90c7b897e8eab3dbc9d17dccea6ca1efce3993be5205a1fc8dd73263a5c885d",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-linux-arm64.mcpb",
+      "version": "1.1.0",
+      "fileSha256": "874ba208b7974c781565aa134053e45e328b7433da0c74fcfe2bdcbb422d9e9a",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.0.0/icloud-mcp-v1.0.0-darwin-arm64.mcpb",
-      "version": "1.0.0",
-      "fileSha256": "c60210b2f542063d408e22f268240a3b2c9fad052b5a4df41286fd07be2df578",
+      "identifier": "https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-darwin-arm64.mcpb",
+      "version": "1.1.0",
+      "fileSha256": "3f0d78c68eda8908238d2bb80a2a1e2baafbf4e92c8d349c76897b565a53abe3",
       "transport": {
         "type": "stdio"
       }
