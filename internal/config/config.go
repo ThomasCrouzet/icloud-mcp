@@ -53,9 +53,10 @@ const (
 type Permissions struct {
 	configured bool
 
-	calendarRead   bool
-	calendarWrite  bool
-	calendarDelete bool
+	calendarRead     bool
+	calendarWrite    bool
+	calendarDelete   bool
+	calendarSchedule bool
 
 	contactsRead   bool
 	contactsWrite  bool
@@ -94,6 +95,8 @@ func ParsePermissions(value string) (Permissions, error) {
 			permissions.calendarWrite = true
 		case "calendar.delete":
 			permissions.calendarDelete = true
+		case "calendar.schedule":
+			permissions.calendarSchedule = true
 		case "contacts.read":
 			permissions.contactsRead = true
 		case "contacts.write":
@@ -126,6 +129,11 @@ func (p Permissions) ExplicitCalendarWrite() bool { return p.configured && p.cal
 
 // ExplicitCalendarDelete reports an operator-granted Calendar delete capability.
 func (p Permissions) ExplicitCalendarDelete() bool { return p.configured && p.calendarDelete }
+
+// ExplicitCalendarSchedule reports the separate operator grant required for a
+// mutation of a group-scheduled event. Ordinary Calendar write or delete does
+// not imply it.
+func (p Permissions) ExplicitCalendarSchedule() bool { return p.configured && p.calendarSchedule }
 
 // Effective applies the global read-only kill switch.
 func (p Permissions) Effective(readOnly bool) Permissions {
@@ -280,10 +288,10 @@ func ParseRecipientPolicy(value string) (RecipientPolicy, error) {
 		if strings.Contains(part, "*") {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: wildcard is valid only as the complete value", smtpAllowedRecipientsEnvVar)
 		}
-		address, err := normalizePlainAddress(part)
-		if err != nil {
+		if _, err := normalizePlainAddress(part); err != nil {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: expected exact email addresses or literal *", smtpAllowedRecipientsEnvVar)
 		}
+		address := canonicalAddrSpec(strings.TrimSpace(part))
 		if _, duplicate := exact[address]; duplicate {
 			return RecipientPolicy{}, fmt.Errorf("invalid %s: duplicate email address", smtpAllowedRecipientsEnvVar)
 		}
@@ -295,15 +303,25 @@ func ParseRecipientPolicy(value string) (RecipientPolicy, error) {
 // Allows reports whether address is permitted by this exact-address policy.
 // Invalid addresses are always denied.
 func (p RecipientPolicy) Allows(address string) bool {
-	normalized, err := normalizePlainAddress(address)
-	if err != nil {
+	if _, err := normalizePlainAddress(address); err != nil {
 		return false
 	}
 	if p.allowAll {
 		return true
 	}
-	_, ok := p.exact[normalized]
+	_, ok := p.exact[canonicalAddrSpec(strings.TrimSpace(address))]
 	return ok
+}
+
+// canonicalAddrSpec preserves the local-part bytes and folds only the ASCII
+// domain, as RFC 5321 section 2.4 requires. The address must already be a
+// validated plain addr-spec.
+func canonicalAddrSpec(value string) string {
+	at := strings.LastIndexByte(value, '@')
+	if at < 0 {
+		return value
+	}
+	return value[:at] + "@" + asciiLower(value[at+1:])
 }
 
 // AllowAll reports whether the complete configured policy was literal "*".
@@ -509,6 +527,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%s requires %s=true", enableMailSendEnvVar, enableMailEnvVar)
 	}
 	if c.Permissions.Configured() {
+		if c.Permissions.ExplicitCalendarSchedule() && !c.Permissions.ExplicitCalendarWrite() && !c.Permissions.ExplicitCalendarDelete() {
+			return fmt.Errorf("%s: calendar.schedule requires calendar.write or calendar.delete", permissionsEnvVar)
+		}
 		if c.Permissions.RequestedContactsRead() || c.Permissions.RequestedContactsMutation() {
 			if !c.EnableContacts {
 				return fmt.Errorf("%s requires %s=true for Contacts capabilities", permissionsEnvVar, enableContactsEnvVar)
@@ -614,7 +635,7 @@ func normalizePlainAddress(value string) (string, error) {
 	if err != nil || parsed.Name != "" || parsed.Address != value {
 		return "", fmt.Errorf("invalid address")
 	}
-	return asciiLower(value), nil
+	return value, nil
 }
 
 func isASCII(value string) bool {

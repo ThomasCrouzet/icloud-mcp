@@ -4,6 +4,71 @@ This file documents all notable project changes. It uses the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Decode escaped semicolons in structured vCard `N`, `ADR`, and `ORG` values
+  and escape them again on create and targeted patch, so a literal separator
+  no longer shifts name, address, or organization components.
+- Preserve Apple grouped property labels when a patched value keeps its
+  identity, and drop the group companion when the value is removed instead of
+  leaving an orphan `itemN.X-ABLabel`.
+- Report per-contact `truncatedFields` and `matchedFieldOmitted` in get and
+  search results, so bounded emails, phones, addresses, and URLs are no longer
+  silently incomplete.
+- Resolve case-distinct vCard UIDs by byte-exact match after the
+  case-insensitive CardDAV query, and fail closed on duplicate exact UIDs.
+- Match SMTP recipients by exact local-part bytes and fold only the ASCII
+  domain in the allowlist, duplicate detection, reply self-exclusion, and send
+  idempotency fingerprint.
+- Report `update_event` and `update_contact` as destructive, and
+  `update_contact` as non-idempotent, so host confirmation prompts reflect the
+  fields those tools can clear or replace.
+- Document the reviewed annotation contract for every mutation tool.
+- Keep the search continuation above the lowest selected UID when every chosen
+  candidate is expunged before metadata FETCH, so a live match is not skipped.
+- Join independent `multipart/mixed` plain parts in order and keep one
+  representation per `multipart/alternative` group in `get_message`, with
+  explicit omission warnings.
+- Read reply threading metadata without fetching message bodies, fall back to
+  `In-Reply-To` when `References` is absent, and bound long reference chains
+  instead of rejecting them.
+- Validate the exact requested flag delta after a conditional IMAP STORE even
+  when MODSEQ increased, so an unsolicited FETCH cannot report a false success.
+- Reject a VEVENT without exactly one DTSTART, or with duplicate time
+  properties, before search, expansion, availability, or mutation.
+- Include a zero-duration timed event at the inclusive search start and exclude
+  it at the exclusive end.
+- Compare VALUE=DATE events as civil days in the effective query timezone, and
+  interpret floating events and naive free-slot input in the requested zone
+  before filtering.
+- Fail a CalDAV or CardDAV REPORT with a failed resource or missing requested
+  data as `partial_failure`, so availability cannot advertise free time from an
+  incomplete result.
+- Reject a recurring-series start move when EXDATE or occurrence overrides
+  exist, while keeping title-only and anchor-free series edits.
+- Bind cursor tokens to an immutable scan generation and the effective
+  timezone; an expired or evicted generation returns `stale_cursor` instead of
+  continuing inside a newer snapshot.
+- Make `create_event` and `create_contact` reject conflicting `client_uid` and
+  `idempotency_key`, reconcile an identical retry, and conflict on different
+  content before a second resource is created.
+- Require the separate `calendar.schedule` operator grant, in addition to
+  `calendar.write` or `calendar.delete`, `acknowledge_scheduling`, and a fresh
+  ETag, for group-scheduled mutations.
+- Bind the scheduling acknowledgement and effective approval into the
+  `update_event` idempotency fingerprint.
+- List a mailbox only when an effective capability reaches it and report
+  `accessModes` so a mutation target is not mistaken for readable mail.
+- Make blocked HTML element removal exact-name and near-linear in the input
+  size, so a `</scripture>` prefix cannot expose discarded content.
+- Carry one aggregate 2,000-card and 32 MiB scan budget across every authorized
+  address book in a scoped `search_contacts` call.
+- Process multi-calendar searches in waves of four and stop after a definitive
+  overflow, and bound retained cursor snapshots by 32 MiB of row text.
+- Add a signed, filter-bound `cursor` continuation to `search_contacts` for
+  large result sets within the existing aggregate scan budget.
+
 ## [1.0.0] - 2026-11-08
 
 This major release makes read-only the default. Calendar, Contacts, and Mail

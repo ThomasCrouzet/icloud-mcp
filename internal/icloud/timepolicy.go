@@ -114,8 +114,8 @@ func WallClockExists(wall time.Time, loc *time.Location) bool {
 // It is used only when a floating value must be compared with an instant in a
 // caller-selected timezone; it never changes the stored floating form.
 func WallClockInLocation(t time.Time, loc *time.Location) time.Time {
-	wall := t.In(time.UTC)
-	return time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), ResolveLocation(loc))
+	resolved, _ := ResolveWallClock(WallClockOf(t), loc)
+	return resolved
 }
 
 // FormatEventTimeForm formats an event value using its iCalendar form. A

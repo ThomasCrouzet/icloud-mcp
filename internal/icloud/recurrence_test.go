@@ -18,6 +18,38 @@ func mustParse(t *testing.T, s string) time.Time {
 	return tm
 }
 
+func TestEventOverlapsZeroDurationPoint(t *testing.T) {
+	point := Event{StartTime: mustParse(t, "2026-07-01T09:00:00Z"), EndTime: mustParse(t, "2026-07-01T09:00:00Z")}
+	if !eventOverlaps(point, mustParse(t, "2026-07-01T09:00:00Z"), mustParse(t, "2026-07-01T10:00:00Z")) {
+		t.Fatal("point event at the inclusive range start was excluded")
+	}
+	if eventOverlaps(point, mustParse(t, "2026-07-01T10:00:00Z"), mustParse(t, "2026-07-01T11:00:00Z")) {
+		t.Fatal("point event at the exclusive range end was included")
+	}
+	if eventOverlaps(point, mustParse(t, "2026-07-01T08:59:59Z"), mustParse(t, "2026-07-01T09:00:00Z")) {
+		t.Fatal("point event outside a half-open range was included")
+	}
+	positive := Event{StartTime: point.StartTime, EndTime: mustParse(t, "2026-07-01T10:00:00Z")}
+	if !eventOverlaps(positive, mustParse(t, "2026-07-01T09:30:00Z"), mustParse(t, "2026-07-01T09:45:00Z")) {
+		t.Fatal("positive-duration event lost its interval overlap")
+	}
+	if eventOverlaps(positive, mustParse(t, "2026-07-01T10:00:00Z"), mustParse(t, "2026-07-01T11:00:00Z")) {
+		t.Fatal("positive-duration event touched the half-open end")
+	}
+
+	master := Event{
+		UID: "point-series", StartTime: point.StartTime, EndTime: point.EndTime,
+		Timezone: "UTC", Recurrence: "FREQ=DAILY;COUNT=3",
+	}
+	occurrences, _, err := ExpandOccurrences(master, nil, mustParse(t, "2026-07-01T09:00:00Z"), mustParse(t, "2026-07-01T10:00:00Z"), 0)
+	if err != nil {
+		t.Fatalf("ExpandOccurrences() error = %v", err)
+	}
+	if len(occurrences) != 1 || !occurrences[0].StartTime.Equal(point.StartTime) {
+		t.Fatalf("zero-duration recurring occurrence = %#v", occurrences)
+	}
+}
+
 func TestExpandOccurrences_NonRecurring(t *testing.T) {
 	master := Event{
 		UID:       "uid-1",

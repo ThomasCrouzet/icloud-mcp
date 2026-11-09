@@ -287,14 +287,20 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 		}
 	}
 	path := strings.TrimSuffix(calendarPath, "/") + "/" + uid + ".ics"
-	// Fast path: if client-supplied UID already exists, refuse before encode.
-	// The PUT below still sends If-None-Match: * so a concurrent create of
-	// the same UID cannot silently overwrite (go-webdav PutCalendarObject
-	// does not expose conditional headers).
+	cal := buildEventCalendar(uid, ne)
+	// Reconcile a supplied client UID across the canonical and imported-href
+	// lookups. An identical payload is a completed retry; a different payload
+	// is a conflict. Both cases stay before PUT, and an inconclusive lookup
+	// fails closed instead of creating a possible duplicate.
 	if ne.ClientUID != "" {
-		existing, gerr := c.getCalendarObject(ctx, calendarPath, path)
+		existing, gerr := c.findEventByUID(ctx, calendarPath, ne.ClientUID)
 		if gerr == nil && existing != nil {
-			return "", NewError(CodeConflict, http.StatusConflict, "event already exists for client UID; not overwriting", nil)
+			existingFingerprint, _ := objectContentFingerprint(existing.Data)
+			requestFingerprint, _ := objectContentFingerprint(cal)
+			if existingFingerprint == requestFingerprint {
+				return uid, nil
+			}
+			return "", NewError(CodeConflict, http.StatusConflict, "event already exists for client UID with different content", nil)
 		}
 		if gerr != nil {
 			if ie := AsICloudError(gerr); ie == nil || ie.Code != CodeNotFound {
@@ -302,7 +308,6 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 			}
 		}
 	}
-	cal := buildEventCalendar(uid, ne)
 	if err := c.putCalendarObjectIfMatch(ctx, calendarPath, path, "", cal, "*"); err != nil {
 		err = withOutcomeReconciliation(err, uid,
 			"Call get_event with this UID. If it exists, do not create it again; if it is not found, retry with the same client UID.")
@@ -375,6 +380,20 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	if err != nil {
 		return err
 	}
+	if scope == ScopeSeries && up.StartTime != nil && hasRecurrenceAnchors(found.Data) {
+		current, startErr := vevent.Props.DateTime(ical.PropDateTimeStart, time.UTC)
+		if startErr != nil {
+			return NewError(CodeProtocolError, 0, "Calendar event start time is invalid", nil)
+		}
+		if !current.Equal(*up.StartTime) {
+			conflict := NewError(CodeConflict, http.StatusConflict,
+				"moving a recurring series start is not supported when EXDATE or occurrence overrides exist", nil)
+			conflict.Details = map[string]string{
+				"reconciliation": "Keep the series start and edit individual occurrences, or remove the overrides first.",
+			}
+			return conflict
+		}
+	}
 	if err := authorizeSchedulingMutation(found.Data, up.AllowGroupScheduled, up.IfMatchETag, found.ETag); err != nil {
 		return err
 	}
@@ -427,6 +446,27 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		return fmt.Errorf("updating event: %w", err)
 	}
 	return nil
+}
+
+// hasRecurrenceAnchors reports whether moving the master DTSTART would change
+// the identity of existing exceptions: at least one EXDATE or one detached
+// RECURRENCE-ID override.
+func hasRecurrenceAnchors(cal *ical.Calendar) bool {
+	if cal == nil {
+		return false
+	}
+	for _, child := range cal.Children {
+		if child == nil || child.Name != ical.CompEvent {
+			continue
+		}
+		if len(child.Props[ical.PropRecurrenceID]) > 0 {
+			return true
+		}
+		if len(child.Props[ical.PropExceptionDates]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func applyFieldUpdate(vevent *ical.Event, up *EventUpdate) error {
@@ -1068,9 +1108,18 @@ func (c *Client) reportCalendarQuery(ctx context.Context, calendarPath, filterXM
 
 	var objs []extcaldav.CalendarObject
 	for _, r := range responses {
+		if strings.TrimSpace(r.Href) == "" {
+			return nil, NewError(CodeProtocolError, resp.StatusCode, "Calendar REPORT response has an invalid resource href", nil)
+		}
+		// A top-level 207 does not prove that each matched resource
+		// succeeded. Silently skipping a failed resource would make a search
+		// or an availability result look complete when it is not.
+		if status := strings.TrimSpace(r.Status); status != "" && !isOKStatus(status) {
+			return nil, NewError(CodePartialFailure, 0, "Calendar REPORT returned an incomplete resource result", nil)
+		}
 		prop := mergedOKProp(r)
 		if prop == nil || prop.CalendarData == "" {
-			continue
+			return nil, NewError(CodePartialFailure, 0, "Calendar REPORT returned an incomplete resource result", nil)
 		}
 		cal, derr := decodeRemoteCalendar(strings.NewReader(prop.CalendarData))
 		if derr != nil {

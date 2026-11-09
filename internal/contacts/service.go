@@ -3,6 +3,13 @@ package contacts
 
 import "context"
 
+// Aggregate Contacts search work bounds. A scoped multi-book search carries one
+// budget across every authorized address book.
+const (
+	MaxCardsScanned = 2000
+	MaxReportBytes  = 32 << 20
+)
+
 // TypedValue is a labeled contact value such as an email address or phone.
 type TypedValue struct {
 	Type  string `json:"type,omitempty"`
@@ -43,14 +50,18 @@ type AddressBook struct {
 
 // ContactSummary is the bounded result model used by SearchContacts.
 type ContactSummary struct {
-	AddressBook  string       `json:"addressBook"`
-	UID          string       `json:"uid"`
-	ETag         string       `json:"etag,omitempty"`
-	DisplayName  string       `json:"displayName"`
-	Organization string       `json:"organization,omitempty"`
-	Emails       []TypedValue `json:"emails,omitempty"`
-	Phones       []TypedValue `json:"phones,omitempty"`
-	IsGroup      bool         `json:"isGroup,omitempty"`
+	AddressBook     string            `json:"addressBook"`
+	UID             string            `json:"uid"`
+	ETag            string            `json:"etag,omitempty"`
+	DisplayName     string            `json:"displayName"`
+	Organization    string            `json:"organization,omitempty"`
+	Emails          []TypedValue      `json:"emails,omitempty"`
+	Phones          []TypedValue      `json:"phones,omitempty"`
+	IsGroup         bool              `json:"isGroup,omitempty"`
+	TruncatedFields []FieldTruncation `json:"truncatedFields,omitempty"`
+	// MatchedFieldOmitted is true when the search filter matched a raw value
+	// that the bounded output did not include.
+	MatchedFieldOmitted bool `json:"matchedFieldOmitted,omitempty"`
 }
 
 // Contact is a modeled full contact. Raw vCard data and PHOTO bytes are
@@ -79,6 +90,13 @@ type SearchOptions struct {
 	Phone         string `json:"phone,omitempty"`
 	IncludeGroups bool   `json:"include_groups,omitempty"`
 	Limit         int    `json:"limit,omitempty"`
+	// RemainingCards and RemainingBytes carry a caller-owned aggregate scan
+	// budget across several address books. Zero means the full default.
+	RemainingCards int   `json:"-"`
+	RemainingBytes int64 `json:"-"`
+	// PageAll keeps the complete bounded match set for a cursor page instead
+	// of truncating to Limit. The caller applies the page size.
+	PageAll bool `json:"-"`
 }
 
 // SearchResult reports summaries and whether either result or scan bounds
@@ -87,6 +105,11 @@ type SearchResult struct {
 	Contacts         []ContactSummary `json:"contacts"`
 	Truncated        bool             `json:"truncated,omitempty"`
 	ScanLimitReached bool             `json:"scanLimitReached,omitempty"`
+	// ScannedCards and UsedBytes report the work this call consumed, so a
+	// caller can carry one aggregate budget across books.
+	ScannedCards int    `json:"-"`
+	UsedBytes    int64  `json:"-"`
+	NextCursor   string `json:"nextCursor,omitempty"`
 }
 
 // CreateContactInput contains the editable vCard 3.0 fields accepted on create.
@@ -146,6 +169,9 @@ type CreateResult struct {
 	ETag             string `json:"etag,omitempty"`
 	ResultIncomplete bool   `json:"resultIncomplete,omitempty"`
 	Warning          string `json:"warning,omitempty"`
+	// Reconciled is true when a supplied client_uid already identified a
+	// contact with identical modeled content. No second resource was created.
+	Reconciled bool `json:"reconciled,omitempty"`
 }
 
 // UpdateResult describes a definitively applied update.

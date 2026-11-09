@@ -3,6 +3,7 @@ package contacts
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -366,6 +367,116 @@ func encodeCard(card vcard.Card, serverMax int64) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// encodeNewCard encodes a created contact and rewrites N, ADR and ORG with
+// escape-aware structured values, because go-vcard does not escape embedded
+// semicolons in compound properties.
+func encodeNewCard(input *CreateContactInput, uid string, serverMax int64) ([]byte, error) {
+	encoded, err := encodeCard(newV3Card(input, uid), 0)
+	if err != nil {
+		return nil, err
+	}
+	nameValue := escapeStructuredComponents([]string{
+		input.Name.FamilyName, input.Name.GivenName, input.Name.AdditionalName,
+		input.Name.HonorificPrefix, input.Name.HonorificSuffix,
+	})
+	addressValues := make([]string, 0, len(input.Addresses))
+	for _, address := range input.Addresses {
+		addressValues = append(addressValues, escapeStructuredComponents([]string{
+			address.PostOfficeBox, address.ExtendedAddress, address.StreetAddress,
+			address.Locality, address.Region, address.PostalCode, address.Country,
+		}))
+	}
+	rewritten := rewriteStructuredLines(encoded, nameValue, escapeTextValue(input.Organization), addressValues)
+	limit := int64(maxCardBytes)
+	if serverMax > 0 && serverMax < limit {
+		limit = serverMax
+	}
+	if int64(len(rewritten)) > limit {
+		return nil, newError(CodePayloadTooLarge, 0, "the encoded contact exceeds its resource limit")
+	}
+	return rewritten, nil
+}
+
+// rewriteStructuredLines replaces the value of N, ORG and ADR lines while
+// preserving their property parameters and document order.
+func rewriteStructuredLines(encoded []byte, nameValue, organization string, addresses []string) []byte {
+	lines := strings.SplitAfter(string(encoded), "\r\n")
+	addressIndex := 0
+	for index, line := range lines {
+		body := strings.TrimSuffix(line, "\r\n")
+		colon, err := delimiterOutsideQuotes([]byte(body), ':')
+		if err != nil || colon < 0 {
+			continue
+		}
+		header := body[:colon+1]
+		propertyName := body[:colon]
+		if dot := strings.IndexByte(propertyName, '.'); dot >= 0 {
+			propertyName = propertyName[dot+1:]
+		}
+		if semicolon := strings.IndexByte(propertyName, ';'); semicolon >= 0 {
+			propertyName = propertyName[:semicolon]
+		}
+		switch strings.ToUpper(propertyName) {
+		case "N":
+			lines[index] = header + nameValue + "\r\n"
+		case "ORG":
+			lines[index] = header + organization + "\r\n"
+		case "ADR":
+			if addressIndex < len(addresses) {
+				lines[index] = header + addresses[addressIndex] + "\r\n"
+				addressIndex++
+			}
+		}
+	}
+	return []byte(strings.Join(lines, ""))
+}
+
+func escapeTextValue(value string) string {
+	return strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\r", "", ";", "\\;", ",", "\\,").Replace(value)
+}
+
+func escapeStructuredComponents(components []string) string {
+	escaped := make([]string, len(components))
+	for index, component := range components {
+		escaped[index] = escapeTextValue(component)
+	}
+	return strings.Join(escaped, ";")
+}
+
+// structuredPatchProperties builds escape-aware raw properties for a patch
+// that changes a compound property. go-vcard joins components with unescaped
+// semicolons, so these replacements are constructed directly.
+func structuredPatchProperties(patch ContactPatch) map[string][]rawProperty {
+	properties := make(map[string][]rawProperty)
+	if patch.Name != nil {
+		value := escapeStructuredComponents([]string{
+			patch.Name.FamilyName, patch.Name.GivenName, patch.Name.AdditionalName,
+			patch.Name.HonorificPrefix, patch.Name.HonorificSuffix,
+		})
+		properties[vcard.FieldName] = []rawProperty{{name: vcard.FieldName, value: value, raw: []byte("N:" + value + "\r\n")}}
+	}
+	if patch.Organization != nil {
+		value := escapeTextValue(*patch.Organization)
+		properties[vcard.FieldOrganization] = []rawProperty{{name: vcard.FieldOrganization, value: value, raw: []byte("ORG:" + value + "\r\n")}}
+	}
+	if patch.Addresses != nil {
+		var addresses []rawProperty
+		for _, address := range *patch.Addresses {
+			value := escapeStructuredComponents([]string{
+				address.PostOfficeBox, address.ExtendedAddress, address.StreetAddress,
+				address.Locality, address.Region, address.PostalCode, address.Country,
+			})
+			header := "ADR:"
+			if address.Type != "" {
+				header = "ADR;TYPE=" + address.Type + ":"
+			}
+			addresses = append(addresses, rawProperty{name: vcard.FieldAddress, value: value, raw: []byte(header + value + "\r\n")})
+		}
+		properties[vcard.FieldAddress] = addresses
+	}
+	return properties
+}
+
 func encodePatchedCard(raw *rawCard, card vcard.Card, patch ContactPatch, serverMax int64) ([]byte, error) {
 	if raw == nil {
 		return nil, newError(CodeInternalError, 0, "the contact raw representation is unavailable")
@@ -375,7 +486,21 @@ func encodePatchedCard(raw *rawCard, card vcard.Card, patch ContactPatch, server
 		return nil, err
 	}
 	names := patchedPropertyNames(patch)
-	replacements, err := canonicalProperties(patched, names)
+	structured := structuredPatchProperties(patch)
+	canonicalNames := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, handled := structured[name]; !handled {
+			canonicalNames = append(canonicalNames, name)
+		}
+	}
+	replacements, err := canonicalProperties(patched, canonicalNames)
+	if err != nil {
+		return nil, err
+	}
+	for name, properties := range structured {
+		replacements[name] = properties
+	}
+	assignedGroups, orphanGroups, err := planGroupBindings(raw, replacements, names)
 	if err != nil {
 		return nil, err
 	}
@@ -385,26 +510,30 @@ func encodePatchedCard(raw *rawCard, card vcard.Card, patch ContactPatch, server
 	}
 	emitted := make(map[string]bool, len(names))
 	var output bytes.Buffer
+	emitReplacements := func(name string) {
+		for index, replacement := range replacements[name] {
+			group := assignedGroups[name][index]
+			_, _ = output.Write(renderGroupedProperty(replacement, group))
+		}
+		emitted[name] = true
+	}
 	for index, property := range raw.properties {
 		if index == len(raw.properties)-1 {
 			for _, name := range names {
 				if !emitted[name] {
-					for _, replacement := range replacements[name] {
-						_, _ = output.Write(replacement)
-					}
-					emitted[name] = true
+					emitReplacements(name)
 				}
 			}
 		}
 		if !selected[property.name] {
+			if property.group != "" && orphanGroups[property.group] {
+				continue
+			}
 			_, _ = output.Write(property.raw)
 			continue
 		}
 		if !emitted[property.name] {
-			for _, replacement := range replacements[property.name] {
-				_, _ = output.Write(replacement)
-			}
-			emitted[property.name] = true
+			emitReplacements(property.name)
 		}
 	}
 	limit := int64(maxCardBytes)
@@ -421,6 +550,76 @@ func encodePatchedCard(raw *rawCard, card vcard.Card, patch ContactPatch, server
 		return nil, validationError("only vCard 3.0 contacts can be updated")
 	}
 	return append([]byte(nil), encoded...), nil
+}
+
+// planGroupBindings preserves Apple grouped property metadata (for example
+// item1.EMAIL plus item1.X-ABLabel) when an edited value keeps its identity.
+// A group whose original value is no longer present is dropped together with
+// its companion metadata instead of leaving an orphan label. An ambiguous
+// correspondence fails before any conditional PUT.
+func planGroupBindings(raw *rawCard, replacements map[string][]rawProperty, names []string) (map[string]map[int]string, map[string]bool, error) {
+	assigned := make(map[string]map[int]string, len(names))
+	orphans := make(map[string]bool)
+	for _, name := range names {
+		type groupedValue struct {
+			group string
+			value string
+		}
+		var originals []groupedValue
+		for _, property := range raw.properties {
+			if property.group != "" && property.name == name {
+				originals = append(originals, groupedValue{group: property.group, value: decodeTextValue(property.value)})
+			}
+		}
+		if len(originals) == 0 {
+			continue
+		}
+		byValue := make(map[string][]string)
+		var values []string
+		for _, original := range originals {
+			if _, seen := byValue[original.value]; !seen {
+				values = append(values, original.value)
+			}
+			byValue[original.value] = append(byValue[original.value], original.group)
+		}
+		used := make(map[int]bool)
+		for _, value := range values {
+			groups := byValue[value]
+			var matches []int
+			for index, replacement := range replacements[name] {
+				if !used[index] && decodeTextValue(replacement.value) == value {
+					matches = append(matches, index)
+				}
+			}
+			if len(matches) > 0 && len(matches) < len(groups) {
+				return nil, nil, validationError("the edited contact has ambiguous grouped values; keep or remove them explicitly")
+			}
+			if len(matches) == 0 {
+				for _, group := range groups {
+					orphans[group] = true
+				}
+				continue
+			}
+			for index, group := range groups {
+				used[matches[index]] = true
+				if assigned[name] == nil {
+					assigned[name] = make(map[int]string)
+				}
+				assigned[name][matches[index]] = group
+			}
+		}
+	}
+	return assigned, orphans, nil
+}
+
+func renderGroupedProperty(property rawProperty, group string) []byte {
+	if group == "" {
+		return property.raw
+	}
+	rendered := make([]byte, 0, len(property.raw)+len(group)+1)
+	rendered = append(rendered, group...)
+	rendered = append(rendered, '.')
+	return append(rendered, property.raw...)
 }
 
 func cloneCard(card vcard.Card) vcard.Card {
@@ -457,7 +656,7 @@ func patchedPropertyNames(patch ContactPatch) []string {
 	return names
 }
 
-func canonicalProperties(card vcard.Card, names []string) (map[string][][]byte, error) {
+func canonicalProperties(card vcard.Card, names []string) (map[string][]rawProperty, error) {
 	canonical := make(vcard.Card)
 	canonical.SetValue(vcard.FieldVersion, "3.0")
 	canonical.SetValue(vcard.FieldUID, "canonical-placeholder")
@@ -482,10 +681,10 @@ func canonicalProperties(card vcard.Card, names []string) (map[string][][]byte, 
 	for _, name := range names {
 		wanted[name] = true
 	}
-	properties := make(map[string][][]byte, len(names))
+	properties := make(map[string][]rawProperty, len(names))
 	for _, property := range parsed.properties {
 		if wanted[property.name] {
-			properties[property.name] = append(properties[property.name], property.raw)
+			properties[property.name] = append(properties[property.name], property)
 		}
 	}
 	return properties, nil
@@ -517,43 +716,149 @@ func preferredFormattedName(card vcard.Card) string {
 	return selected
 }
 
-func cardSummary(card vcard.Card, addressBook, etag string) ContactSummary {
-	uid := truncateUTF8(card.Value(vcard.FieldUID), maxUIDBytes)
-	display := truncateUTF8(preferredFormattedName(card), maxDisplayNameBytes)
-	organization := truncateUTF8(firstComponent(card.Value(vcard.FieldOrganization)), maxTextBytes)
-	return ContactSummary{
-		AddressBook:  addressBook,
-		UID:          uid,
-		ETag:         readableETag(etag),
-		DisplayName:  display,
-		Organization: organization,
-		Emails:       modeledTypedValues(card[vcard.FieldEmail], maxEmails, maxEmailBytes),
-		Phones:       modeledTypedValues(card[vcard.FieldTelephone], maxPhones, maxPhoneBytes),
-		IsGroup:      cardIsGroup(card),
+// cardView pairs a decoded card with its folded-line raw properties. The raw
+// values are needed for structured fields because go-vcard does not decode
+// escaped semicolons, and its partial decoding makes a post-decode split
+// ambiguous for a literal backslash that precedes a separator.
+type cardView struct {
+	card vcard.Card
+	raw  *rawCard
+}
+
+func newCardView(card vcard.Card, raw *rawCard) cardView {
+	return cardView{card: card, raw: raw}
+}
+
+// values returns the unfolded wire values for every property with the given
+// name, in document order. It falls back to the decoder output when no raw
+// representation was retained.
+func (v cardView) values(name string) []string {
+	if v.raw != nil {
+		var values []string
+		for _, property := range v.raw.properties {
+			if property.name == name {
+				values = append(values, property.value)
+			}
+		}
+		return values
+	}
+	return v.card.Values(name)
+}
+
+func (v cardView) firstValue(name string) string {
+	if values := v.values(name); len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+// structuredComponents splits a compound value on unescaped semicolons and
+// unescapes each component. It returns a typed error for malformed escapes.
+func structuredComponents(value string) ([]string, error) {
+	var components []string
+	var current strings.Builder
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		switch character {
+		case '\\':
+			if index+1 >= len(value) {
+				return nil, invalidCardError()
+			}
+			index++
+			current.WriteByte(unescapedVCardByte(value[index]))
+		case ';':
+			components = append(components, current.String())
+			current.Reset()
+		default:
+			current.WriteByte(character)
+		}
+	}
+	components = append(components, current.String())
+	return components, nil
+}
+
+func unescapedVCardByte(value byte) byte {
+	switch value {
+	case 'n', 'N':
+		return '\n'
+	default:
+		return value
 	}
 }
 
-func cardDetail(card vcard.Card, version, addressBook, etag string) *Contact {
-	detail := &Contact{
-		ContactSummary: cardSummary(card, addressBook, etag),
-		Version:        version,
-		Title:          truncateUTF8(card.Value(vcard.FieldTitle), maxTextBytes),
-		Nickname:       truncateUTF8(card.Value(vcard.FieldNickname), maxTextBytes),
-		Addresses:      modeledAddresses(card[vcard.FieldAddress]),
-		URLs:           modeledTypedValues(card[vcard.FieldURL], maxURLs, maxURLBytes),
-		Notes:          truncateUTF8(card.Value(vcard.FieldNote), maxNotesBytes),
-		HasPhoto:       len(card[vcard.FieldPhoto]) > 0,
+// decodeTextValue unescapes a single vCard text value. Escaped semicolons and
+// commas stay literal instead of acting as separators.
+func decodeTextValue(value string) string {
+	var decoded strings.Builder
+	for index := 0; index < len(value); index++ {
+		if value[index] == '\\' && index+1 < len(value) {
+			index++
+			decoded.WriteByte(unescapedVCardByte(value[index]))
+			continue
+		}
+		decoded.WriteByte(value[index])
 	}
-	if name := card.Name(); name != nil {
-		detail.Name = &StructuredName{
-			FamilyName:      truncateUTF8(name.FamilyName, maxTextBytes),
-			GivenName:       truncateUTF8(name.GivenName, maxTextBytes),
-			AdditionalName:  truncateUTF8(name.AdditionalName, maxTextBytes),
-			HonorificPrefix: truncateUTF8(name.HonorificPrefix, maxTextBytes),
-			HonorificSuffix: truncateUTF8(name.HonorificSuffix, maxTextBytes),
+	return decoded.String()
+}
+
+// searchableText returns the decoded components joined with semicolons so a
+// query such as "Doe;Smith" matches the decoded structured value.
+func searchableText(value string) string {
+	components, err := structuredComponents(value)
+	if err != nil {
+		return decodeTextValue(value)
+	}
+	return strings.Join(components, ";")
+}
+
+func cardSummary(view cardView, addressBook, etag string) ContactSummary {
+	uid := truncateUTF8(view.card.Value(vcard.FieldUID), maxUIDBytes)
+	display := truncateUTF8(preferredFormattedName(view.card), maxDisplayNameBytes)
+	organization := ""
+	if components, err := structuredComponents(view.firstValue(vcard.FieldOrganization)); err == nil && len(components) > 0 {
+		organization = truncateUTF8(components[0], maxTextBytes)
+	}
+	emails, emailTruncation := modeledTypedValues(view.card[vcard.FieldEmail], maxEmails, maxEmailBytes, "emails")
+	phones, phoneTruncation := modeledTypedValues(view.card[vcard.FieldTelephone], maxPhones, maxPhoneBytes, "phones")
+	return ContactSummary{
+		AddressBook:     addressBook,
+		UID:             uid,
+		ETag:            readableETag(etag),
+		DisplayName:     display,
+		Organization:    organization,
+		Emails:          emails,
+		Phones:          phones,
+		IsGroup:         cardIsGroup(view.card),
+		TruncatedFields: appendFieldTruncation(nil, emailTruncation, phoneTruncation),
+	}
+}
+
+func cardDetail(view cardView, version, addressBook, etag string) *Contact {
+	detail := &Contact{
+		ContactSummary: cardSummary(view, addressBook, etag),
+		Version:        version,
+		Title:          truncateUTF8(decodeTextValue(view.firstValue(vcard.FieldTitle)), maxTextBytes),
+		Nickname:       truncateUTF8(decodeTextValue(view.firstValue(vcard.FieldNickname)), maxTextBytes),
+		HasPhoto:       len(view.card[vcard.FieldPhoto]) > 0,
+	}
+	addresses, addressTruncation := modeledAddresses(view.card[vcard.FieldAddress])
+	urls, urlTruncation := modeledTypedValues(view.card[vcard.FieldURL], maxURLs, maxURLBytes, "urls")
+	detail.Addresses = addresses
+	detail.URLs = urls
+	detail.TruncatedFields = appendFieldTruncation(detail.TruncatedFields, addressTruncation, urlTruncation)
+	detail.Notes = truncateUTF8(decodeTextValue(view.firstValue(vcard.FieldNote)), maxNotesBytes)
+	if rawName := view.firstValue(vcard.FieldName); rawName != "" {
+		if components, err := structuredComponents(rawName); err == nil && len(components) == 5 {
+			detail.Name = &StructuredName{
+				FamilyName:      truncateUTF8(components[0], maxTextBytes),
+				GivenName:       truncateUTF8(components[1], maxTextBytes),
+				AdditionalName:  truncateUTF8(components[2], maxTextBytes),
+				HonorificPrefix: truncateUTF8(components[3], maxTextBytes),
+				HonorificSuffix: truncateUTF8(components[4], maxTextBytes),
+			}
 		}
 	}
-	birthday := card.Value(vcard.FieldBirthday)
+	birthday := view.card.Value(vcard.FieldBirthday)
 	if birthday != "" {
 		if validateBirthday(birthday) == nil {
 			detail.Birthday = birthday
@@ -564,8 +869,27 @@ func cardDetail(card vcard.Card, version, addressBook, etag string) *Contact {
 	return detail
 }
 
-func modeledTypedValues(fields []*vcard.Field, maxCount, maxBytes int) []TypedValue {
+// FieldTruncation reports bounded, field-level completeness metadata. It never
+// carries omitted private values.
+type FieldTruncation struct {
+	Field          string `json:"field"`
+	Omitted        int    `json:"omitted,omitempty"`
+	ValueTruncated bool   `json:"valueTruncated,omitempty"`
+}
+
+func appendFieldTruncation(target []FieldTruncation, items ...FieldTruncation) []FieldTruncation {
+	for _, item := range items {
+		if item.Omitted > 0 || item.ValueTruncated {
+			target = append(target, item)
+		}
+	}
+	return target
+}
+
+func modeledTypedValues(fields []*vcard.Field, maxCount, maxBytes int, fieldName string) ([]TypedValue, FieldTruncation) {
+	truncation := FieldTruncation{Field: fieldName}
 	if len(fields) > maxCount {
+		truncation.Omitted = len(fields) - maxCount
 		fields = fields[:maxCount]
 	}
 	values := make([]TypedValue, 0, len(fields))
@@ -577,13 +901,18 @@ func modeledTypedValues(fields []*vcard.Field, maxCount, maxBytes int) []TypedVa
 		if types := field.Params.Types(); len(types) > 0 {
 			valueType = truncateUTF8(types[0], maxTypeBytes)
 		}
+		if len(field.Value) > maxBytes {
+			truncation.ValueTruncated = true
+		}
 		values = append(values, TypedValue{Type: valueType, Value: truncateUTF8(field.Value, maxBytes)})
 	}
-	return values
+	return values, truncation
 }
 
-func modeledAddresses(fields []*vcard.Field) []PostalAddress {
+func modeledAddresses(fields []*vcard.Field) ([]PostalAddress, FieldTruncation) {
+	truncation := FieldTruncation{Field: "addresses"}
 	if len(fields) > maxAddresses {
+		truncation.Omitted = len(fields) - maxAddresses
 		fields = fields[:maxAddresses]
 	}
 	addresses := make([]PostalAddress, 0, len(fields))
@@ -591,31 +920,50 @@ func modeledAddresses(fields []*vcard.Field) []PostalAddress {
 		if field == nil {
 			continue
 		}
-		card := vcard.Card{vcard.FieldAddress: []*vcard.Field{field}}
-		address := card.Address()
-		if address == nil {
+		components, err := structuredComponents(field.Value)
+		if err != nil || len(components) < 7 {
 			continue
 		}
 		valueType := ""
 		if types := field.Params.Types(); len(types) > 0 {
 			valueType = truncateUTF8(types[0], maxTypeBytes)
 		}
-		addresses = append(addresses, PostalAddress{
-			Type:            valueType,
-			PostOfficeBox:   truncateUTF8(address.PostOfficeBox, maxTextBytes),
-			ExtendedAddress: truncateUTF8(address.ExtendedAddress, maxTextBytes),
-			StreetAddress:   truncateUTF8(address.StreetAddress, maxTextBytes),
-			Locality:        truncateUTF8(address.Locality, maxTextBytes),
-			Region:          truncateUTF8(address.Region, maxTextBytes),
-			PostalCode:      truncateUTF8(address.PostalCode, maxTextBytes),
-			Country:         truncateUTF8(address.Country, maxTextBytes),
-		})
+		address := PostalAddress{Type: valueType}
+		parts := []*string{
+			&address.PostOfficeBox, &address.ExtendedAddress, &address.StreetAddress,
+			&address.Locality, &address.Region, &address.PostalCode, &address.Country,
+		}
+		for index, part := range parts {
+			if len(components[index]) > maxTextBytes {
+				truncation.ValueTruncated = true
+			}
+			*part = truncateUTF8(components[index], maxTextBytes)
+		}
+		addresses = append(addresses, address)
 	}
-	return addresses
+	return addresses, truncation
 }
 
 func cardIsGroup(card vcard.Card) bool {
 	return card.Kind() == vcard.KindGroup || strings.EqualFold(strings.TrimSpace(card.Value(appleGroupField)), "group")
+}
+
+// contactContentFingerprint compares the modeled content of an existing
+// contact. Resource identity, ETag, and truncation metadata are excluded.
+func contactContentFingerprint(object *addressObject) string {
+	return contactFingerprint(newCardView(object.card, object.raw), object.version)
+}
+
+func contactFingerprint(view cardView, version string) string {
+	detail := cardDetail(view, version, "", "")
+	detail.ETag = ""
+	detail.TruncatedFields = nil
+	detail.MatchedFieldOmitted = false
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func readableETag(etag string) string {
@@ -623,13 +971,6 @@ func readableETag(etag string) string {
 		return strings.TrimSpace(etag)
 	}
 	return ""
-}
-
-func firstComponent(value string) string {
-	if index := strings.IndexByte(value, ';'); index >= 0 {
-		return value[:index]
-	}
-	return value
 }
 
 func newV3Card(input *CreateContactInput, uid string) vcard.Card {

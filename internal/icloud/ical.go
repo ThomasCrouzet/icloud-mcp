@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -801,6 +802,22 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 		if len(uidProps) != 1 || uidProps[0].Value == "" {
 			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 		}
+		// RFC 5545 section 3.6.1 requires exactly one DTSTART, and DTEND and
+		// DURATION are each optional at most once and mutually exclusive.
+		// Without this check a missing start becomes Go's zero time and a
+		// duplicate is silently selected by Props.Get.
+		if len(child.Props[ical.PropDateTimeStart]) != 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has an invalid or missing start time", nil)
+		}
+		if len(child.Props[ical.PropDateTimeEnd]) > 1 || len(child.Props[ical.PropDuration]) > 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has duplicate time properties", nil)
+		}
+		if len(child.Props[ical.PropDateTimeEnd]) == 1 && len(child.Props[ical.PropDuration]) == 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has both an end time and a duration", nil)
+		}
+		if len(child.Props[ical.PropDateTimeStamp]) > 1 {
+			return NewError(CodeProtocolError, 0, "Calendar event data has duplicate time properties", nil)
+		}
 		uidProp := &uidProps[0]
 		if uid == "" {
 			uid = uidProp.Value
@@ -835,6 +852,51 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 		return NewError(CodeProtocolError, 0, "Calendar event data has an invalid VEVENT identity", nil)
 	}
 	return nil
+}
+
+// objectContentFingerprint compares the modeled master VEVENT properties that
+// a create request controls. Server-managed fields (DTSTAMP, SEQUENCE,
+// CREATED, LAST-MODIFIED) and property order do not participate.
+func objectContentFingerprint(cal *ical.Calendar) (string, bool) {
+	if cal == nil {
+		return "", false
+	}
+	names := map[string]bool{
+		ical.PropUID: true, ical.PropSummary: true, ical.PropLocation: true,
+		ical.PropDescription: true, ical.PropDateTimeStart: true, ical.PropDateTimeEnd: true,
+		ical.PropDuration: true, ical.PropRecurrenceRule: true, ical.PropExceptionDates: true,
+		ical.PropStatus: true, ical.PropTransparency: true, ical.PropURL: true,
+	}
+	var lines []string
+	for _, child := range cal.Children {
+		if child == nil || child.Name != ical.CompEvent {
+			continue
+		}
+		if len(child.Props[ical.PropRecurrenceID]) > 0 {
+			continue
+		}
+		for name := range names {
+			for _, property := range child.Props[name] {
+				entry := name
+				for param, values := range property.Params {
+					for _, value := range values {
+						entry += ";" + param + "=" + value
+					}
+				}
+				lines = append(lines, entry+":"+property.Value)
+			}
+		}
+		for _, alarm := range child.Children {
+			if alarm == nil || alarm.Name != ical.CompAlarm {
+				continue
+			}
+			for _, property := range alarm.Props[ical.PropTrigger] {
+				lines = append(lines, ical.PropTrigger+":"+property.Value)
+			}
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n"), true
 }
 
 func remoteEventFieldLimit(name string) int {

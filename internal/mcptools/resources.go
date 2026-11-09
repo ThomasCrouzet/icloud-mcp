@@ -187,19 +187,31 @@ func searchScopedContacts(ctx context.Context, scopes config.ResourceScopes, ser
 	}
 	sort.Strings(ids)
 	var combined contacts.SearchResult
+	remainingCards := contacts.MaxCardsScanned
+	remainingBytes := int64(contacts.MaxReportBytes)
 	for _, id := range ids {
+		if remainingCards <= 0 || remainingBytes <= 0 {
+			combined.ScanLimitReached = true
+			break
+		}
 		bookOpts := opts
 		bookOpts.AddressBook = id
+		bookOpts.RemainingCards = remainingCards
+		bookOpts.RemainingBytes = remainingBytes
 		part, err := service.SearchContacts(ctx, bookOpts)
 		if err != nil {
 			return contacts.SearchResult{}, err
 		}
+		remainingCards -= part.ScannedCards
+		remainingBytes -= part.UsedBytes
 		combined.Contacts = append(combined.Contacts, filterContactsByBook(part.Contacts, id)...)
 		combined.Truncated = combined.Truncated || part.Truncated
 		combined.ScanLimitReached = combined.ScanLimitReached || part.ScanLimitReached
 	}
+	combined.ScannedCards = contacts.MaxCardsScanned - remainingCards
+	combined.UsedBytes = contacts.MaxReportBytes - remainingBytes
 	sortContactSummaries(&combined)
-	if opts.Limit > 0 && len(combined.Contacts) > opts.Limit {
+	if !opts.PageAll && opts.Limit > 0 && len(combined.Contacts) > opts.Limit {
 		combined.Contacts = combined.Contacts[:opts.Limit]
 		combined.Truncated = true
 	}
@@ -214,29 +226,45 @@ func authorizeMailbox(scopes config.ResourceScopes, action, mailbox string) erro
 	return &maildomain.Error{Code: maildomain.CodeAuthorization, Message: "mailbox is outside the configured resource scope"}
 }
 
+// filterMailboxes implements the documented listing policy: a mailbox is
+// listed only when at least one effective Mail capability reaches it, and
+// AccessModes states which capabilities do. A mutation or archive scope never
+// makes a mailbox appear readable.
 func filterMailboxes(mailboxes []maildomain.Mailbox, scopes config.ResourceScopes) []maildomain.Mailbox {
-	readValues, readRestricted := scopes.Mail(config.ResourceMailRead)
-	if !readRestricted {
-		return mailboxes
+	type mailScope struct {
+		action string
+		label  string
 	}
-	allowed := make(map[string]bool)
-	for _, value := range readValues {
-		allowed[value] = true
+	capabilities := []mailScope{
+		{config.ResourceMailRead, "read"},
+		{config.ResourceMailMutate, "mutate"},
+		{config.ResourceMailArchive, "archive"},
 	}
-	for _, action := range []string{config.ResourceMailMutate, config.ResourceMailArchive} {
+	allows := func(action, mailbox string) bool {
 		values, restricted := scopes.Mail(action)
 		if !restricted {
-			return mailboxes
+			return true
 		}
 		for _, value := range values {
-			allowed[value] = true
+			if value == mailbox {
+				return true
+			}
 		}
+		return false
 	}
 	out := make([]maildomain.Mailbox, 0, len(mailboxes))
 	for _, mailbox := range mailboxes {
-		if allowed[mailbox.Name] {
-			out = append(out, mailbox)
+		modes := make([]string, 0, len(capabilities))
+		for _, capability := range capabilities {
+			if allows(capability.action, mailbox.Name) {
+				modes = append(modes, capability.label)
+			}
 		}
+		if len(modes) == 0 {
+			continue
+		}
+		mailbox.AccessModes = modes
+		out = append(out, mailbox)
 	}
 	return out
 }

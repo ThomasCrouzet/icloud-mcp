@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,7 @@ type fakeIMAP struct {
 	listFn               func() ([]imapadapter.Mailbox, error)
 	metadata             []imapadapter.Message
 	body                 imapadapter.BodyData
+	bodyByPath           map[string]imapadapter.BodyData
 	flags                imapadapter.Message
 	copyData             imapadapter.CopyData
 	appendData           imapadapter.AppendData
@@ -127,8 +129,15 @@ func (f *fakeIMAP) FetchMetadata(uids []uint32, _ bool) ([]imapadapter.Message, 
 	}
 	return out, f.operationError("metadata")
 }
-func (f *fakeIMAP) FetchBodyPart(_ uint32, _ []int) (imapadapter.BodyData, error) {
+func (f *fakeIMAP) FetchBodyPart(_ uint32, path []int) (imapadapter.BodyData, error) {
 	f.record("body-peek")
+	if f.bodyByPath != nil {
+		parts := make([]string, len(path))
+		for index, value := range path {
+			parts[index] = strconv.Itoa(value)
+		}
+		return f.bodyByPath[strings.Join(parts, ".")], f.operationError("body")
+	}
 	return f.body, f.operationError("body")
 }
 func (f *fakeIMAP) StoreDelta(_ uint32, _ bool, _ []string) error {
@@ -268,15 +277,15 @@ func TestParseRecipientPolicy(t *testing.T) {
 			t.Errorf("ParseRecipientPolicy(%q): %v", value, err)
 		}
 	}
-	invalid := []string{"", "*,a@example.com", "a@example.com,A@example.com", "Name <a@example.com>", "@example.com", "a@example.com,", "a@example.com\nb@example.com"}
+	invalid := []string{"", "*,a@example.com", "a@example.com,a@EXAMPLE.COM", "Name <a@example.com>", "@example.com", "a@example.com,", "a@example.com\nb@example.com"}
 	for _, value := range invalid {
 		if _, err := ParseRecipientPolicy(value); err == nil {
 			t.Errorf("ParseRecipientPolicy(%q) unexpectedly succeeded", value)
 		}
 	}
 	policy, _ := ParseRecipientPolicy("Allowed@Example.com")
-	if !policy.allows("allowed@example.COM") || policy.allows("other@example.com") {
-		t.Fatal("exact ASCII-folded recipient matching failed")
+	if !policy.allows("Allowed@example.COM") || policy.allows("allowed@example.com") || policy.allows("other@example.com") {
+		t.Fatal("exact local-part case with ASCII domain folding failed")
 	}
 }
 
@@ -1283,7 +1292,7 @@ func TestSendLimits(t *testing.T) {
 		"subject":   {To: []string{"to@example.com"}, Subject: strings.Repeat("s", MaxSubjectBytes+1)},
 		"body":      {To: []string{"to@example.com"}, Body: strings.Repeat("b", MaxSendBodyBytes+1)},
 		"header":    {To: []string{"to@example.com"}, Subject: "bad\rsubject"},
-		"duplicate": {To: []string{"to@example.com"}, Cc: []string{"TO@example.com"}},
+		"duplicate": {To: []string{"to@example.com"}, Cc: []string{"to@EXAMPLE.COM"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := service.SendMessage(context.Background(), input); errorCode(t, err) != CodeValidation {

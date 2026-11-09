@@ -48,7 +48,10 @@ the active connection.
 LIST supplies mailbox names, hierarchy delimiters, and attributes. The server
 does not infer a mailbox purpose from an English display name. This rule applies
 to Inbox, Sent, Trash, and other purposes. `list_mailboxes` sends no STATUS
-fan-out and returns at most 200 items.
+fan-out and returns at most 200 items. It lists a mailbox only when an effective
+Mail capability reaches it and sets `accessModes` to `read`, `mutate`, and
+`archive` as applicable. A mutation-only or archive-only target is not shown as
+readable.
 
 A message identity is:
 
@@ -97,10 +100,20 @@ section.
 Read tools select mailboxes read-only and use PEEK. They must not set Seen.
 
 `get_message` first gets metadata, BODYSTRUCTURE, and four additional headers:
-Message-ID, In-Reply-To, References, and Reply-To. It selects the first inline
-`text/plain` leaf without attachment or filename semantics. Then, bounded
+Message-ID, In-Reply-To, References, and Reply-To. It selects inline
+`text/plain` leaves without attachment or filename semantics. Then, bounded
 partial PEEK requests get the MIME header and body. It never gets an unbounded
 `BODY.PEEK[]`.
+
+Parts of `multipart/mixed` are independent. The client joins each selected
+plain part in document order with a blank line, within `max_body_bytes`. When a
+later part does not fit, the result keeps the earlier bounded text, sets
+`bodyOmitted`, and adds a `body_truncated` warning. Parts of one
+`multipart/alternative` are equivalent: the client skips whitespace-only
+representatives within the group, keeps the first meaningful plain
+representation, and never concatenates the alternatives. A part that is
+malformed or too large adds `body_decode_failed` or `body_too_large`; the client
+continues with the other independent parts.
 
 The result contains selected envelope and header metadata. It also contains
 decoded plain text and attachment metadata. It never contains raw MIME, raw
@@ -111,11 +124,11 @@ attachments. It does not inspect them for body text.
 
 If no plain text exists, the result has metadata with `html_only` or
 `no_plain_text`, unless `allow_html_fallback` is true. This opt-in also treats
-empty or whitespace-only decoded plain text as unavailable. It checks later
-inline plain parts for meaningful text before it uses HTML. Without this opt-in,
-the first plain part remains selected, even when blank. Malformed or oversized
-plain parts stop retrieval with the existing omission warnings or typed errors.
-They do not trigger fallback. The opt-in fetches only the first inline HTML part.
+empty or whitespace-only decoded plain text as unavailable. Without this opt-in,
+the first meaningful plain text remains selected; when none is meaningful, the
+first decoded part is returned even if blank. Malformed or oversized
+plain parts are omitted with warnings and do not trigger fallback. The opt-in
+fetches only the first inline HTML part.
 A local converter excludes script, style, template,
 head, and comment content, decodes entities, and bounds nodes, depth, input
 bytes, and output. The result sets `bodySource: "html_fallback"` and reports
@@ -168,11 +181,15 @@ When the IMAP server advertises CONDSTORE, flag updates require `expected_modseq
 The adapter sends one UID STORE with `UNCHANGEDSINCE`. It does not replace all
 flags. Because beta.8 discards tagged MODIFIED, the adapter validates the
 single-UID result from the returned FETCH metadata instead. A missing FETCH, an
-unrelated UID, a malformed response, or an unchanged MODSEQ without the requested
-delta maps to `concurrent_modification` or `protocol_error`. It never treats a
-tagged OK as success by itself.
+unrelated UID, or a malformed response maps to `protocol_error`. The adapter
+checks the exact requested add or remove state on every returned FETCH,
+including one whose MODSEQ increased. A missing requested flag, a flag that
+should be absent but remains, or a partial multi-flag delta maps to
+`concurrent_modification`. It never treats a tagged OK or a MODSEQ increase as
+success by itself.
 
-A matching MODSEQ reports `conditionalUpdate: true` and the new flags and MODSEQ.
+A FETCH that proves the requested delta reports `conditionalUpdate: true` and
+the new flags and MODSEQ.
 A stale MODSEQ changes no flags and returns `concurrent_modification`. The
 adapter never retries the conditional STORE. An ambiguous dispatched write still
 returns `outcome_unknown`.
@@ -226,7 +243,7 @@ recipients. It also rejects groups, caller-selected From, header newlines, and
 NUL.
 
 The local policy validates all To, Cc, and Bcc addresses before connection. It
-permits only exact configured addresses with ASCII case-insensitive matching.
+permits only exact configured addresses, preserving local-part case and folding only the ASCII domain.
 The literal complete policy `*` permits all addresses. Recipients must be unique,
 with a limit of 50.
 
@@ -266,10 +283,17 @@ UIDVALIDITY before SMTP. The default mode replies to Reply-To, else From.
 `reply_all` adds To and Cc, but never Bcc. The client excludes its own address
 and deduplicates the final recipients.
 
+The reply reads curated headers and envelope metadata only. It never fetches a
+message body part, so a large or malformed source body cannot slow or fail a
+reply.
+
 The source must have a valid Message-ID. In-Reply-To is that identifier.
-References is the validated source chain plus the Message-ID, with at most 20
-entries. The client rejects malformed values before SMTP. It adds `Re: ` to the
-subject only when absent. It does not accept caller-supplied headers, mark the
+References starts from the source References header. When that header is absent,
+it starts from the source In-Reply-To header, as RFC 5322 section 3.6.4
+specifies. The source Message-ID is appended exactly once. A valid chain longer
+than 20 entries keeps the most recent 19 ancestors and the immediate parent;
+the client does not reject a long thread. The client rejects malformed values
+before SMTP. It adds `Re: ` to the subject only when absent. It does not accept caller-supplied headers, mark the
 message Answered, move it, or append a Sent copy. The same recipient policy,
 STARTTLS, no-retry, and idempotency rules apply.
 

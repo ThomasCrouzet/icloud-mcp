@@ -57,6 +57,11 @@ empty selections. Availability rejects explicitly empty selections.
   REPORT path.
 - Imported-UID lookup always sends another GET before a mutation. This step
   preserves VERSION, PRODID, and VTIMEZONE.
+- A 207 Multi-Status is not proof that each matched resource succeeded. A
+  failed response or propstat status, a missing resource href, or a missing
+  `calendar-data` value returns `partial_failure`. Availability fails closed
+  and never derives free slots from an incomplete REPORT. A 207 with zero
+  `DAV:response` elements is a valid empty result.
 - REPORT payloads are incomplete for encoding with go-ical.
 
 ## Event text
@@ -121,9 +126,20 @@ the complete object. Identical UIDs in different calendars stay isolated.
   that overlap the range start.
 - Each override must have a unique recurrence identifier and a recurring master.
   Ambiguous objects return `protocol_error` before use or mutation.
+- Each VEVENT must contain exactly one DTSTART. A missing or duplicate start,
+  a duplicate DTEND or DURATION, both DTEND and DURATION, or a duplicate
+  DTSTAMP fails closed with `protocol_error` before search, get, expansion,
+  availability, or mutation. A missing start never becomes a year-1 busy
+  interval.
 - When DTEND is missing, DURATION sets the duration. Calendar days and weeks
   follow local time across DST.
 - Without DURATION, an all-day event ends on the next civil day.
+- A VALUE=DATE event is a civil day in the effective query timezone, not a UTC
+  instant. Search and availability project both bounds onto local midnight, so
+  a Paris all-day event overlaps a UTC query that covers Paris midnight.
+- A timed event with DTSTART and no DTEND or DURATION has zero duration. It is
+  a point: it matches when `rangeStart <= DTSTART < rangeEnd`, and availability
+  does not invent a busy interval for it.
 - An occurrence override copies the master duration form. A DURATION with days
   or weeks stays nominal across DST. An elapsed DURATION stays elapsed.
 - A title-only occurrence update does not change its start or end.
@@ -148,8 +164,11 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
   the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
   `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
-- Availability interprets a floating event in the requested timezone, so it
-  cannot make the same wall-clock slot look free.
+- Availability interprets a floating event in the requested timezone before
+  querying and filtering, so it cannot make the same wall-clock slot look free.
+  A naive `start` or `end` with an explicit `timezone` is parsed in that
+  timezone, not in the default location. Gap and fold wall times use the same
+  RFC 5545 resolver as recurrence expansion.
 - A timed recurring create writes TZID and a generated VTIMEZONE. It uses the
   explicit `timezone` or the `ICLOUD_MCP_DEFAULT_TZ` fallback. A start that
   does not exist in that zone fails before the request.
@@ -239,17 +258,18 @@ Each continuation is a stateless `v1` token with a base64url payload and an
 HMAC-SHA256 signature. The payload holds only a positive expiry, a query digest,
 and a last-row identity digest. It never holds a raw query, UID, title, calendar
 path, ETag, or internal href. The 32-byte key lives for one registered handler.
+The payload also carries an unpredictable generation ID for the completed scan.
 A restart or new registration invalidates all tokens. A token expires 300
 seconds after issuance and can be reused as a read until then. It is not
 encrypted, a lease, or a single-use credential.
 
-The token binds the normalized range, explicit selected calendars, result
-filters, default presence, compact and recurrence modes, and the current
-`calendar.read` scope. `limit` is not bound. The explicit selection and scope,
-token structure, signature, expiry, and query binding are checked before any
-Calendar backend access. A missing resume anchor is checked against the
-process-local scan snapshot. If the snapshot is absent or expired, one normal
-bounded fetch checks the anchor; a stale token never causes an unbounded scan.
+The token binds the normalized range, its effective timezone, explicit selected
+calendars, result filters, default presence, compact and recurrence modes, and
+the current `calendar.read` scope. `limit` is not bound. The explicit selection
+and scope, token structure, signature, expiry, and query binding are checked
+before any Calendar backend access. A continuation loads only its own
+generation. If that generation is absent, expired, or evicted, the call returns
+`stale_cursor` without a backend fetch; it never rebases onto a newer scan.
 
 Cursor mode keeps the primary order start, UID, calendar, then title. It adds
 recurrence ID, end time, override flag, internal path, ETag, and a full-row
@@ -257,20 +277,26 @@ digest as strict tie-breaks. Exact duplicate backend rows in one calendar are
 collapsed only in this opt-in mode. Distinct calendars and recurring overrides
 stay distinct. Legacy duplicate handling does not change.
 
-The first cursor page scans every selected calendar with at most four
-concurrent reads. It keeps the 2,500 expanded-event per-calendar limit, the
-10,000 filtered materialized limit, the 366-day range, ten explicit calendars,
-the 32 MiB REPORT limit, and all recurrence work caps. More than 2,500 expanded
-events in one calendar fails closed before paging. Pagination does not permit
-loading a whole history.
+The first cursor page scans every selected calendar in waves of at most four
+concurrent reads. It keeps only one wave of backend results alive, applies the
+2,500 expanded-event per-calendar limit and the 10,000 filtered materialized
+limit during the merge, and stops scheduling waves after a definitive overflow.
+It retains the 366-day range, ten explicit calendars, the 32 MiB REPORT limit,
+and all recurrence work caps. More than 2,500 expanded events in one calendar
+fails closed before paging. Pagination does not permit loading a whole history.
 
 The completed scan is kept in process memory for at most 300 seconds, the
-cursor lifetime, in at most four snapshots. Later pages of the same bound query
-reuse it without another backend REPORT. A partial failure is not cached. The
-snapshot is never written to disk or logs and disappears on process exit. This
-turns a multi-page continuation into a bounded snapshot: a source edit after
-the first page is not visible until the snapshot expires, and `total` is the
-snapshot count.
+cursor lifetime, in at most four generation-scoped snapshots and at most 32 MiB
+of retained event text in total. The oldest snapshot is evicted first. A single
+snapshot larger than the byte budget is refused: no continuation token is
+issued and the response states the cache bound. Later pages of the
+same generation reuse it without another backend REPORT. A repeated
+`cursor=start` with the same query creates an independent generation instead of
+overwriting an unexpired one; budget pressure evicts the oldest generation, and
+its outstanding tokens then return `stale_cursor`. A partial failure is not
+cached. The snapshot is never written to disk or logs and disappears on process
+exit. A source edit after the first page is not visible to that generation, and
+`total` is that generation's snapshot count.
 
 `nextCursor` is emitted only when an explicit selection has a complete page with
 at least one later row. It is omitted on `partialFailure`, recurrence truncation,
@@ -281,9 +307,9 @@ budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
 
-`total` is the bounded snapshot count while the snapshot is live. If the last
-row identity disappears or changes after a refresh, the cursor is stale and the
-caller restarts. Within a live snapshot, inserted or moved rows do not appear.
+`total` is the bounded snapshot count while the generation is live. A token
+whose generation expired or was evicted is stale and the caller restarts. Within
+a live generation, inserted or moved rows do not appear.
 No provider-level snapshot isolation or exhaustive coverage is claimed.
 - Recurrence work has a limit of 100,000 iterator advances for each series. One
   search has a total limit of 250,000 advances.

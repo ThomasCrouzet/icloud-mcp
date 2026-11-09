@@ -206,7 +206,7 @@ func TestContactsRegisterCountsSchemasAndAnnotations(t *testing.T) {
 		"search_contacts":    true,
 		"get_contact":        true,
 		"create_contact":     false,
-		"update_contact":     true,
+		"update_contact":     false,
 		"delete_contact":     true,
 	}
 	for name, tool := range tools {
@@ -223,7 +223,7 @@ func TestContactsRegisterCountsSchemasAndAnnotations(t *testing.T) {
 		if tool.Annotations.ReadOnlyHint == nil || *tool.Annotations.ReadOnlyHint != readOnly {
 			t.Errorf("%s readOnlyHint is incorrect", name)
 		}
-		wantDestructive := name == "delete_contact"
+		wantDestructive := name == "delete_contact" || name == "update_contact"
 		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != wantDestructive {
 			t.Errorf("%s destructiveHint is incorrect", name)
 		}
@@ -605,5 +605,22 @@ func TestContactsReadHandlersAreConcurrentSafe(t *testing.T) {
 	snapshot := fake.snapshot()
 	if snapshot.searchCalls != 32 || snapshot.getCalls != 32 {
 		t.Fatalf("concurrent calls = search %d, get %d", snapshot.searchCalls, snapshot.getCalls)
+	}
+}
+
+func TestCreateContactRejectsConflictingAliases(t *testing.T) {
+	args := contactsRawArgs{
+		"address_book":    json.RawMessage(`"book-AAAAAAAAAAAAAAAAAAAAAA"`),
+		"display_name":    json.RawMessage(`"Synthetic"`),
+		"client_uid":      json.RawMessage(`"uid-a"`),
+		"idempotency_key": json.RawMessage(`"uid-b"`),
+	}
+	if _, err := parseCreateContactInput(args); err == nil {
+		t.Fatal("conflicting client_uid and idempotency_key were accepted")
+	}
+	args["idempotency_key"] = json.RawMessage(`"uid-a"`)
+	input, err := parseCreateContactInput(args)
+	if err != nil || input.ClientUID != "uid-a" {
+		t.Fatalf("identical aliases = %#v, %v", input, err)
 	}
 }

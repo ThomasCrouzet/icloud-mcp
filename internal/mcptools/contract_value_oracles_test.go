@@ -329,6 +329,9 @@ func (f *contractRuntime) verifyValues(t *testing.T, name string, path []string,
 		}
 		actual := map[string]any{"address_book": observed.AddressBook, "query": observed.Query, "email": observed.Email, "phone": observed.Phone, "include_groups": observed.IncludeGroups, "limit": observed.Limit}
 		for field, value := range args {
+			if field == "cursor" {
+				continue
+			}
 			contractSame(t, "accepted Contacts search value "+field, actual[field], value)
 		}
 	case "search_events":

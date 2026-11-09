@@ -99,6 +99,11 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
+		effective := icloud.ResolveLocation(deps.DefaultLocation)
+		// Keep the instant but adopt the configured zone so floating and
+		// VALUE=DATE filtering uses one effective civil-time policy.
+		start = start.In(effective)
+		end = end.In(effective)
 		if err := icloud.ValidateRange(start, end); err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
@@ -188,6 +193,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 
 		var cursorQuery searchCursorDigest
 		var cursorPosition searchCursorDigest
+		cursorGeneration := ""
 		haveCursorPosition := false
 		if cursorMode {
 			scopeValues, scopeRestricted := calendarReadScope(deps.ResourceScopes)
@@ -195,7 +201,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly,
 				compact, expandRecurrence, scopeValues, scopeRestricted)
 			if cursorToken != "" {
-				position, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
+				position, generation, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
 				if verifyErr != nil {
 					return errResult(deps.Redactor, "cursor parameter", verifyErr), nil
 				}
@@ -204,6 +210,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 						reason, searchCursorMessage(reason))), nil
 				}
 				cursorPosition = position
+				cursorGeneration = generation
 				haveCursorPosition = true
 			}
 		}
@@ -218,59 +225,73 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		var snapshot searchScanSnapshot
 		useSnapshot := false
 		if cursorMode && haveCursorPosition {
-			if cached, ok := cursorCodec.loadScan(cursorQuery); ok {
-				snapshot, useSnapshot = cached, true
+			cached, ok := cursorCodec.loadScan(cursorQuery, cursorGeneration)
+			if !ok {
+				// The original generation expired or was evicted. Never rebase
+				// this token onto a newer snapshot with the same query.
+				return errResult(deps.Redactor, "validation", searchCursorValidationError(
+					searchCursorReasonStale, searchCursorMessage(searchCursorReasonStale))), nil
 			}
+			snapshot, useSnapshot = cached, true
 		}
-		var readResults []calendarReadResult[icloud.SearchResult]
+		var fatal *mcp.CallToolResult
 		if !useSnapshot {
-			readResults = parallelCalendarReads(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
+			parallelCalendarReadsWaves(ctx, calendarPaths, func(ctx context.Context, path string) (icloud.SearchResult, error) {
 				return deps.Service.SearchEvents(ctx, path, start, end, searchOpts)
-			})
-		}
-		for i := 0; i < len(readResults); i++ {
-			result, err := readResults[i].value, readResults[i].err
-			if err != nil {
-				// Do not mask an authentication or security error as a warning.
-				if ie := icloud.AsICloudError(err); ie != nil {
-					switch ie.Code {
-					case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
-						icloud.CodeAuthentication, icloud.CodeAuthorization,
-						icloud.CodePayloadTooLarge, icloud.CodeProtocolError:
-						return errResult(deps.Redactor, "searching events", err), nil
+			}, func(i int, result icloud.SearchResult, err error) bool {
+
+				if err != nil {
+					// Do not mask an authentication or security error as a warning.
+					if ie := icloud.AsICloudError(err); ie != nil {
+						switch ie.Code {
+						case icloud.CodeAuthenticationRefused, icloud.CodeForbidden,
+							icloud.CodeAuthentication, icloud.CodeAuthorization,
+							icloud.CodePayloadTooLarge, icloud.CodeProtocolError:
+							fatal = errResult(deps.Redactor, "searching events", err)
+							return false
+						}
+					}
+					if !multi {
+						fatal = errResult(deps.Redactor, "searching events", err)
+						return false
+					}
+					partialFailure = true
+					// Do not echo full calendar paths in warnings (audit policy).
+					// Agents already know selected calendars from args or
+					// list_calendars; index correlates multi-calendar failures.
+					warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf(
+						"calendar[%d] query failed: %v", i, err)))
+					return true
+				}
+				if result.TruncatedByExpansion {
+					truncatedByExpansion = true
+				}
+				batch := result.Events
+				for j := range batch {
+					batch[j].Calendar = calendarPaths[i]
+				}
+				if query != "" {
+					batch = filterByQuery(batch, query)
+				}
+				batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
+				// Always query every selected calendar (fairness). Cap in-memory
+				// accumulation after filters; overflow fails closed below.
+				if !materializationOverflow {
+					if len(all)+len(batch) > icloud.MaxMultiSearchMaterialized {
+						materializationOverflow = true
+					} else {
+						all = append(all, batch...)
 					}
 				}
-				if !multi {
-					return errResult(deps.Redactor, "searching events", err), nil
+				if materializationOverflow {
+					// Definitive overflow: do not schedule another wave.
+					return false
 				}
-				partialFailure = true
-				// Do not echo full calendar paths in warnings (audit policy).
-				// Agents already know selected calendars from args or
-				// list_calendars; index correlates multi-calendar failures.
-				warnings = append(warnings, deps.Redactor.Redact(fmt.Sprintf(
-					"calendar[%d] query failed: %v", i, err)))
-				continue
-			}
-			if result.TruncatedByExpansion {
-				truncatedByExpansion = true
-			}
-			batch := result.Events
-			for j := range batch {
-				batch[j].Calendar = calendarPaths[i]
-			}
-			if query != "" {
-				batch = filterByQuery(batch, query)
-			}
-			batch = filterEventsAdvanced(batch, uidFilter, statusFilter, filterAllDay, allDayWanted, includeCancelled, busyOnly)
-			// Always query every selected calendar (fairness). Cap in-memory
-			// accumulation after filters; overflow fails closed below.
-			if !materializationOverflow {
-				if len(all)+len(batch) > icloud.MaxMultiSearchMaterialized {
-					materializationOverflow = true
-				} else {
-					all = append(all, batch...)
-				}
-			}
+				return true
+			})
+		}
+		if fatal != nil {
+			return fatal, nil
 		}
 		if err := ctx.Err(); err != nil {
 			return errResult(deps.Redactor, "searching events", err), nil
@@ -308,7 +329,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				// is retried on the next page instead of freezing an incomplete
 				// snapshot.
 				if !partialFailure {
-					cursorCodec.storeScan(cursorQuery, searchScanSnapshot{
+					cursorGeneration = cursorCodec.storeScan(cursorQuery, searchScanSnapshot{
 						rows:                 rows,
 						warnings:             append([]string(nil), warnings...),
 						truncatedByExpansion: truncatedByExpansion,
@@ -386,12 +407,21 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				return writeCalendarEncoded(deps.Redactor, encoded), nil
 			}
 			lastIndex := pageStart + len(resp.Events) - 1
-			if lastIndex+1 < total {
-				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest)
+			if lastIndex+1 < total && cursorGeneration != "" {
+				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest, cursorGeneration)
 				if mintErr != nil {
 					return errResult(deps.Redactor, "cursor parameter", mintErr), nil
 				}
 				resp.NextCursor = token
+				resp.Truncated = true
+				encoded, err = json.Marshal(&resp)
+				if err != nil {
+					return errResult(deps.Redactor, "formatting response", err), nil
+				}
+			}
+			if lastIndex+1 < total && cursorGeneration == "" {
+				resp.Warnings = append(resp.Warnings,
+					"the result snapshot exceeded the 32 MiB cursor cache budget; narrow the range or use compact mode")
 				resp.Truncated = true
 				encoded, err = json.Marshal(&resp)
 				if err != nil {

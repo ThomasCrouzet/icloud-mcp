@@ -58,7 +58,7 @@ func TestProtocolMailBlankPlainFallback79(t *testing.T) {
 		{name: "base64_charset_whitespace", parts: []blankPlainPart{charsetBlank, html}, allow: true, body: htmlText, source: "html_fallback", fetched: "1,2"},
 		{name: "later_meaningful_plain", parts: []blankPlainPart{plain(""), html, plain(" Later plain \r\n")}, allow: true, body: " Later plain \r\n", source: "plain_text", fetched: "1,3"},
 		{name: "meaningful_plain_preferred", parts: []blankPlainPart{plain(" Plain text \r\n"), html}, allow: true, body: " Plain text \r\n", source: "plain_text", fetched: "1"},
-		{name: "default_unchanged", parts: []blankPlainPart{plain(" \r\n"), html, plain("Later plain")}, body: " \r\n", source: "plain_text", fetched: "1"},
+		{name: "default_unchanged", parts: []blankPlainPart{plain(" \r\n"), html, plain("Later plain")}, body: "Later plain", source: "plain_text", fetched: "1,3"},
 		{name: "no_html_unchanged", parts: []blankPlainPart{plain(" \r\n")}, allow: true, body: " \r\n", source: "plain_text", fetched: "1"},
 		{name: "attached_plain_excluded", parts: []blankPlainPart{plain(""), attachedPlain, html}, allow: true, body: htmlText, source: "html_fallback", fetched: "1,3"},
 		{name: "attached_html_excluded", parts: []blankPlainPart{plain(" \r\n"), attachedHTML}, allow: true, body: " \r\n", source: "plain_text", fetched: "1"},

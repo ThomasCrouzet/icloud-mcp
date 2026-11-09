@@ -11,6 +11,66 @@ import (
 	_ "github.com/emersion/go-message/charset"
 )
 
+type replySource struct {
+	MessageID  string
+	Subject    string
+	References []string
+	InReplyTo  []string
+	ReplyTo    []Address
+	From       []Address
+	To         []Address
+	Cc         []Address
+}
+
+// getReplyMetadata reads only curated headers and envelope metadata. It never
+// fetches a body part, so a reply does not process message text it cannot use.
+func (s *Client) getReplyMetadata(ctx context.Context, input GetMessageInput) (replySource, error) {
+	if err := validateIdentity(input.Mailbox, input.UIDValidity, input.UID); err != nil {
+		return replySource{}, err
+	}
+	value, err := s.read(ctx, func(session imapSession) (any, error) {
+		selected, err := session.Select(input.Mailbox, true)
+		if err != nil {
+			return nil, err
+		}
+		if selected.UIDValidity != input.UIDValidity {
+			return nil, newError(CodeConcurrentModification, "mailbox UIDVALIDITY changed; search for the message again")
+		}
+		metadata, err := session.FetchMetadata([]uint32{input.UID}, true)
+		if err != nil {
+			return nil, err
+		}
+		if len(metadata) != 1 || metadata[0].UID != input.UID {
+			return nil, &imapadapter.Error{Kind: imapadapter.ErrorNotFound}
+		}
+		item := metadata[0]
+		source := replySource{
+			MessageID:  item.Envelope.MessageID,
+			Subject:    item.Envelope.Subject,
+			References: append([]string(nil), item.Headers.References...),
+			InReplyTo:  append([]string(nil), item.Headers.InReplyTo...),
+			ReplyTo:    publicAddresses(item.Headers.ReplyTo),
+			From:       publicAddresses(item.Envelope.From),
+			To:         publicAddresses(item.Envelope.To),
+			Cc:         publicAddresses(item.Envelope.Cc),
+		}
+		if len(source.ReplyTo) == 0 {
+			source.ReplyTo = publicAddresses(item.Envelope.ReplyTo)
+		}
+		if len(source.InReplyTo) == 0 {
+			source.InReplyTo = append([]string(nil), item.Envelope.InReplyTo...)
+		}
+		if item.Headers.MessageID != "" {
+			source.MessageID = item.Headers.MessageID
+		}
+		return source, nil
+	})
+	if err != nil {
+		return replySource{}, err
+	}
+	return value.(replySource), nil
+}
+
 func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message, error) {
 	if err := validateIdentity(input.Mailbox, input.UIDValidity, input.UID); err != nil {
 		return Message{}, err
@@ -71,10 +131,22 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 				})
 			}
 		}
-		var firstPlainBody string
-		hasPlain := false
-		for _, part := range item.Parts {
-			if !part.InlinePlain {
+		selectedPlain := make([]*imapadapter.BodyPart, 0, len(item.Parts))
+		for index := range item.Parts {
+			if item.Parts[index].InlinePlain {
+				selectedPlain = append(selectedPlain, &item.Parts[index])
+			}
+		}
+
+		var segments []string
+		firstRawBody := ""
+		plainFailed := false
+		chosenAlternative := make(map[string]bool)
+		for index, part := range selectedPlain {
+			// Parts in one multipart/alternative group are equivalent
+			// representations. Search the group until one meaningful plain
+			// alternative is found, then never concatenate another.
+			if part.AlternativeGroup != "" && chosenAlternative[part.AlternativeGroup] {
 				continue
 			}
 			bodyData, err := session.FetchBodyPart(input.UID, part.Path)
@@ -83,72 +155,116 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 			}
 			if bodyData.TooLarge {
 				result.BodyOmitted = true
-				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "plain-text body exceeded the wire-byte limit and was omitted"})
-				return fitMessageResult(result)
+				plainFailed = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "one plain-text part exceeded the wire-byte limit and was omitted"})
+				continue
 			}
 			body, oversized, decodeErr := decodePlainBody(bodyData.MIMEHeader, bodyData.Body, maxBody)
 			if decodeErr != nil {
 				result.BodyOmitted = true
-				result.Warnings = append(result.Warnings, Warning{Code: "body_decode_failed", Message: "plain-text body could not be safely decoded and was omitted"})
-				return fitMessageResult(result)
+				plainFailed = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_decode_failed", Message: "one plain-text part could not be safely decoded and was omitted"})
+				continue
 			}
 			if oversized {
 				result.BodyOmitted = true
-				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "decoded plain-text body exceeded max_body_bytes and was omitted"})
-				return fitMessageResult(result)
+				plainFailed = true
+				result.Warnings = append(result.Warnings, Warning{Code: "body_too_large", Message: "one decoded plain-text part exceeded max_body_bytes and was omitted"})
+				continue
 			}
-			if !hasPlain {
-				firstPlainBody = body
-				hasPlain = true
+			if index == 0 {
+				firstRawBody = body
 			}
-			if !input.AllowHTMLFallback || strings.TrimSpace(body) != "" {
-				result.Body = body
-				result.BodySource = "plain_text"
-				return fitMessageResult(result)
+			if strings.TrimSpace(body) == "" {
+				continue
+			}
+			segments = append(segments, body)
+			if part.AlternativeGroup != "" {
+				chosenAlternative[part.AlternativeGroup] = true
 			}
 		}
-		if !hasPlain || hasHTML && input.AllowHTMLFallback {
-			if hasHTML && input.AllowHTMLFallback && htmlPart != nil {
-				htmlData, htmlErr := session.FetchBodyPart(input.UID, htmlPart.Path)
-				if htmlErr != nil {
-					return nil, htmlErr
-				}
-				if htmlData.TooLarge {
-					result.BodyOmitted = true
-					result.BodyUnavailableReason = "html_only"
-					result.Warnings = append(result.Warnings, Warning{Code: "html_too_large", Message: "HTML body exceeded the wire-byte limit and was omitted"})
-					return fitMessageResult(result)
-				}
-				htmlBody, decodeErr := decodeHTMLBody(htmlData.MIMEHeader, htmlData.Body)
-				if decodeErr != nil {
-					result.BodyOmitted = true
-					result.BodyUnavailableReason = "html_only"
-					result.Warnings = append(result.Warnings, Warning{Code: "html_decode_failed", Message: "HTML body could not be safely decoded and was omitted"})
-					return fitMessageResult(result)
-				}
-				text, truncated, convertErr := htmlToText(htmlBody, maxBody)
-				if convertErr != nil {
-					result.BodyOmitted = true
-					result.BodyUnavailableReason = "html_only"
-					result.Warnings = append(result.Warnings, Warning{Code: "html_malformed", Message: "HTML body was malformed and was omitted"})
-					return fitMessageResult(result)
-				}
-				result.Body = text
-				result.BodySource = "html_fallback"
-				if truncated {
-					result.Warnings = append(result.Warnings, Warning{Code: "html_truncated", Message: "HTML text was truncated to max_body_bytes"})
-				}
-				return fitMessageResult(result)
+
+		var combined strings.Builder
+		joinTruncated := false
+		for _, segment := range segments {
+			separator := ""
+			if combined.Len() > 0 {
+				separator = "\n\n"
 			}
-			if hasHTML {
-				result.BodyUnavailableReason = "html_only"
-			} else {
-				result.BodyUnavailableReason = "no_plain_text"
+			if combined.Len()+len(separator)+len(segment) > maxBody {
+				remaining := maxBody - combined.Len() - len(separator)
+				if remaining > 0 {
+					combined.WriteString(separator)
+					combined.WriteString(truncateUTF8(segment, remaining))
+				}
+				joinTruncated = true
+				break
+			}
+			combined.WriteString(separator)
+			combined.WriteString(segment)
+		}
+		plainBody := combined.String()
+		if len(segments) == 0 && len(selectedPlain) > 0 && !plainFailed {
+			plainBody = firstRawBody
+		}
+		if plainFailed && len(segments) == 0 {
+			return fitMessageResult(result)
+		}
+		if joinTruncated {
+			result.BodyOmitted = true
+			result.Warnings = append(result.Warnings, Warning{Code: "body_truncated", Message: "later plain-text parts did not fit in max_body_bytes"})
+		}
+
+		usePlain := plainFailed || strings.TrimSpace(plainBody) != "" || !input.AllowHTMLFallback || len(selectedPlain) > 0 && !hasHTML
+		if usePlain {
+			result.Body = plainBody
+			result.BodySource = "plain_text"
+			if strings.TrimSpace(plainBody) == "" && len(selectedPlain) == 0 {
+				if hasHTML {
+					result.BodyUnavailableReason = "html_only"
+				} else {
+					result.BodyUnavailableReason = "no_plain_text"
+				}
 			}
 			return fitMessageResult(result)
 		}
-		result.Body = firstPlainBody
-		result.BodySource = "plain_text"
+		if hasHTML && htmlPart != nil {
+			htmlData, htmlErr := session.FetchBodyPart(input.UID, htmlPart.Path)
+			if htmlErr != nil {
+				return nil, htmlErr
+			}
+			if htmlData.TooLarge {
+				result.BodyOmitted = true
+				result.BodyUnavailableReason = "html_only"
+				result.Warnings = append(result.Warnings, Warning{Code: "html_too_large", Message: "HTML body exceeded the wire-byte limit and was omitted"})
+				return fitMessageResult(result)
+			}
+			htmlBody, decodeErr := decodeHTMLBody(htmlData.MIMEHeader, htmlData.Body)
+			if decodeErr != nil {
+				result.BodyOmitted = true
+				result.BodyUnavailableReason = "html_only"
+				result.Warnings = append(result.Warnings, Warning{Code: "html_decode_failed", Message: "HTML body could not be safely decoded and was omitted"})
+				return fitMessageResult(result)
+			}
+			text, truncated, convertErr := htmlToText(htmlBody, maxBody)
+			if convertErr != nil {
+				result.BodyOmitted = true
+				result.BodyUnavailableReason = "html_only"
+				result.Warnings = append(result.Warnings, Warning{Code: "html_malformed", Message: "HTML body was malformed and was omitted"})
+				return fitMessageResult(result)
+			}
+			result.Body = text
+			result.BodySource = "html_fallback"
+			if truncated {
+				result.Warnings = append(result.Warnings, Warning{Code: "html_truncated", Message: "HTML text was truncated to max_body_bytes"})
+			}
+			return fitMessageResult(result)
+		}
+		if hasHTML {
+			result.BodyUnavailableReason = "html_only"
+		} else {
+			result.BodyUnavailableReason = "no_plain_text"
+		}
 		return fitMessageResult(result)
 	})
 	if err != nil {

@@ -523,3 +523,23 @@ func TestProtocolIdempotencyCapacityRetainsUnknown(t *testing.T) {
 		t.Fatalf("full cache dispatched another update: calls/writes = %d/%d", calls, writes)
 	}
 }
+
+func TestUpdateEventIdempotencyBindsSchedulingApproval(t *testing.T) {
+	f := newIdempotencyProtocolFixture(t, "calendar", "")
+	firstRequest := f.update("approval-key", "Same")
+	firstRequest.Params.Arguments.(map[string]any)["acknowledge_scheduling"] = true
+	first := f.call(t, t.Context(), "approved", firstRequest)
+	if first.IsError {
+		t.Fatalf("approved update failed: %s", resultText(t, first))
+	}
+	secondRequest := f.update("approval-key", "Same")
+	secondRequest.Params.Arguments.(map[string]any)["acknowledge_scheduling"] = false
+	second := f.call(t, t.Context(), "unapproved-reuse", secondRequest)
+	if !second.IsError {
+		t.Fatal("changed scheduling acknowledgement reused the cached result")
+	}
+	_, _, _, writes := f.state.snapshot()
+	if writes != 1 {
+		t.Fatalf("approval change issued %d writes, want 1", writes)
+	}
+}

@@ -57,7 +57,7 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	if err := validateSendIdempotencyKey(input.IdempotencyKey); err != nil {
 		return SendResult{}, err
 	}
-	source, err := s.GetMessage(ctx, GetMessageInput{
+	source, err := s.getReplyMetadata(ctx, GetMessageInput{
 		Mailbox: input.Mailbox, UIDValidity: input.UIDValidity, UID: input.UID,
 	})
 	if err != nil {
@@ -79,14 +79,14 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {
 		address := strings.TrimSpace(candidate.Address)
-		if address == "" || strings.EqualFold(address, s.config.Address) {
+		if address == "" || canonicalAddrSpec(address) == canonicalAddrSpec(s.config.Address) {
 			continue
 		}
 		normalized, err := validateAddrSpec(address)
 		if err != nil {
 			return SendResult{}, validationError("source reply recipient is not a plain addr-spec")
 		}
-		key := strings.ToLower(normalized)
+		key := canonicalAddrSpec(normalized)
 		if seen[key] {
 			continue
 		}
@@ -106,7 +106,7 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	}
 	subject = truncateUTF8(subject, MaxSubjectBytes)
 
-	references, err := replyReferences(source.References, source.MessageID)
+	references, err := replyReferences(source.References, source.InReplyTo, source.MessageID)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -116,21 +116,33 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	})
 }
 
-func replyReferences(existing []string, messageID string) ([]string, error) {
+// replyReferences builds the bounded References chain from RFC 5322 section
+// 3.6.4. When the parent has no References header, its In-Reply-To IDs are the
+// only ancestry. The parent Message-ID is appended exactly once. A chain above
+// the 20-entry cap keeps the most recent ancestry and the immediate parent, so
+// a long but valid thread stays replyable.
+func replyReferences(existing, inReplyTo []string, messageID string) ([]string, error) {
+	ancestry := existing
+	if len(ancestry) == 0 {
+		ancestry = inReplyTo
+	}
 	var references []string
 	seen := make(map[string]bool)
-	for _, reference := range append(append([]string(nil), existing...), messageID) {
+	for _, reference := range append(append([]string(nil), ancestry...), messageID) {
 		reference = strings.TrimSpace(reference)
 		if reference == "" || seen[reference] {
 			continue
 		}
 		if !validMessageID(reference) {
-			return nil, validationError("source message has an invalid References header")
+			return nil, validationError("source message has an invalid References or In-Reply-To header")
 		}
 		seen[reference] = true
 		references = append(references, reference)
-		if len(references) > maxReplyReferences {
-			return nil, validationError("source message References exceeds the 20-entry limit")
+	}
+	if len(references) > maxReplyReferences {
+		references = append([]string(nil), references[len(references)-maxReplyReferences:]...)
+		if references[len(references)-1] != messageID {
+			references = append(references[:maxReplyReferences-1], messageID)
 		}
 	}
 	return references, nil

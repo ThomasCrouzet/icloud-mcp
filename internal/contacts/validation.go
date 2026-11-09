@@ -258,9 +258,6 @@ func validateName(name StructuredName) error {
 		if err := validateSingleLine(value.name, value.value, maxTextBytes, false); err != nil {
 			return err
 		}
-		if strings.Contains(value.value, ";") {
-			return validationError(value.name + " cannot contain a semicolon")
-		}
 	}
 	return nil
 }
@@ -350,8 +347,6 @@ func validateAddresses(values []PostalAddress) error {
 				if part.value != "" && !validTypeToken(part.value) {
 					return validationError("address type contains an invalid character")
 				}
-			} else if strings.Contains(part.value, ";") {
-				return validationError(part.name + " cannot contain a semicolon")
 			}
 		}
 	}

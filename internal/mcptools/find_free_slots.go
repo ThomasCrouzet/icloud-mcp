@@ -59,14 +59,26 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if err != nil {
 			return errResult(deps.Redactor, "end parameter", err), nil
 		}
-		start, err := icloud.ParseDateTime("start", startStr, deps.DefaultLocation)
+		loc := deps.DefaultLocation
+		if tz := req.GetString("timezone", ""); tz != "" {
+			l, lerr := time.LoadLocation(tz)
+			if lerr != nil {
+				return errResult(deps.Redactor, "validation", fmt.Errorf("invalid timezone")), nil
+			}
+			loc = l
+		}
+		start, err := icloud.ParseDateTime("start", startStr, loc)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
-		end, err := icloud.ParseDateTime("end", endStr, deps.DefaultLocation)
+		end, err := icloud.ParseDateTime("end", endStr, loc)
 		if err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
+		// Keep the instant but adopt the effective zone. Floating and
+		// VALUE=DATE comparisons inside SearchEvents use this location.
+		start = start.In(icloud.ResolveLocation(loc))
+		end = end.In(icloud.ResolveLocation(loc))
 		if err := icloud.ValidateRange(start, end); err != nil {
 			return errResult(deps.Redactor, "validation", err), nil
 		}
@@ -107,14 +119,6 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		paths, err := resolveCalendarPaths(ctx, deps, req)
 		if err != nil {
 			return errResult(deps.Redactor, "calendars", err), nil
-		}
-		loc := deps.DefaultLocation
-		if tz := req.GetString("timezone", ""); tz != "" {
-			l, lerr := time.LoadLocation(tz)
-			if lerr != nil {
-				return errResult(deps.Redactor, "validation", fmt.Errorf("invalid timezone")), nil
-			}
-			loc = l
 		}
 		limit, err := optionalIntArg(req, "limit", 50)
 		if err != nil || limit < 1 || limit > 200 {

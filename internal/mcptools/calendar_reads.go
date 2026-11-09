@@ -15,6 +15,23 @@ type calendarReadResult[T any] struct {
 	err   error
 }
 
+// parallelCalendarReadsWaves keeps at most one worker-width wave of results
+// alive. consume returns false to stop scheduling further waves.
+func parallelCalendarReadsWaves[T any](ctx context.Context, paths []string, read func(context.Context, string) (T, error), consume func(int, T, error) bool) {
+	for start := 0; start < len(paths); start += calendarReadConcurrency {
+		end := start + calendarReadConcurrency
+		if end > len(paths) {
+			end = len(paths)
+		}
+		results := parallelCalendarReads(ctx, paths[start:end], read)
+		for index, result := range results {
+			if !consume(start+index, result.value, result.err) {
+				return
+			}
+		}
+	}
+}
+
 func parallelCalendarReads[T any](ctx context.Context, paths []string, read func(context.Context, string) (T, error)) []calendarReadResult[T] {
 	results := make([]calendarReadResult[T], len(paths))
 	if len(paths) == 0 {

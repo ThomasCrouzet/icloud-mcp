@@ -142,7 +142,7 @@ func TestClient_DeleteEvent_OccurrenceAddsEXDATE(t *testing.T) {
 func TestClient_CreateEvent_ClientUIDConflict(t *testing.T) {
 	m := newMockCalDAV(t)
 	path := testHomeCalendar + "client-uid-1.ics"
-	m.objects["client-uid-1"] = mockObject{path: path, ics: icsSimpleEvent}
+	m.objects["client-uid-1"] = mockObject{path: path, ics: strings.Replace(icsSimpleEvent, "UID:uid-simple-1", "UID:client-uid-1", 1)}
 	c := m.client()
 
 	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
@@ -415,5 +415,83 @@ func TestClassifyStatus_423And409(t *testing.T) {
 	e = classifyStatus(409)
 	if e.Code != CodeConflict {
 		t.Errorf("%+v", e)
+	}
+}
+
+func TestClient_CreateEvent_ReconcilesImportedClientUID(t *testing.T) {
+	m := newMockCalDAV(t)
+	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	request := &NewEvent{
+		Title: "Imported meeting", StartTime: start, EndTime: start.Add(time.Hour),
+		ClientUID: "client-uid-imported",
+	}
+	existingICS := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:client-uid-imported\r\nSUMMARY:Imported meeting\r\n" +
+		"DTSTART:20260701T100000Z\r\nDTEND:20260701T110000Z\r\nDTSTAMP:20260701T000000Z\r\n" +
+		"END:VEVENT\r\nEND:VCALENDAR\r\n"
+	m.objects["client-uid-imported"] = mockObject{path: testHomeCalendar + "imported-name.ics", ics: existingICS}
+	client := m.client()
+
+	uid, err := client.CreateEvent(context.Background(), testHomeCalendar, request)
+	if err != nil || uid != "client-uid-imported" {
+		t.Fatalf("reconciled create = %q, %v", uid, err)
+	}
+	m.mu.Lock()
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("reconciled create issued %d PUTs", puts)
+	}
+
+	different := *request
+	different.Title = "Different meeting"
+	_, err = client.CreateEvent(context.Background(), testHomeCalendar, &different)
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeConflict {
+		t.Fatalf("different content = %v, want conflict", err)
+	}
+	m.mu.Lock()
+	puts = len(m.puts)
+	m.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("conflicting create issued %d PUTs", puts)
+	}
+}
+
+func TestClient_UpdateEvent_SeriesStartMoveWithAnchorsFailsClosed(t *testing.T) {
+	m := newMockCalDAV(t)
+	m.objects["uid-recur-1"] = mockObject{path: testHomeCalendar + "uid-recur-1.ics", ics: icsRecurringWithExdate}
+	client := m.client()
+	start := time.Date(2026, 7, 6, 19, 0, 0, 0, time.UTC)
+	err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{StartTime: &start})
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeConflict {
+		t.Fatalf("series move = %v, want conflict", err)
+	}
+	m.mu.Lock()
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("unsafe series move issued %d PUTs", puts)
+	}
+
+	title := "Renamed only"
+	if err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{Title: &title}); err != nil {
+		t.Fatalf("title-only series update = %v", err)
+	}
+}
+
+func TestClient_UpdateEvent_SeriesStartMoveWithoutAnchorsSucceeds(t *testing.T) {
+	m := newMockCalDAV(t)
+	series := strings.Replace(icsRecurringWithExdate, "EXDATE:20260713T180000Z\r\n", "", 1)
+	m.objects["uid-recur-1"] = mockObject{path: testHomeCalendar + "uid-recur-1.ics", ics: series}
+	client := m.client()
+	start := time.Date(2026, 7, 6, 17, 0, 0, 0, time.UTC)
+	if err := client.UpdateEvent(context.Background(), testHomeCalendar, "uid-recur-1", &EventUpdate{StartTime: &start}); err != nil {
+		t.Fatalf("series move without anchors = %v", err)
+	}
+	m.mu.Lock()
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if puts != 1 {
+		t.Fatalf("series move issued %d PUTs, want 1", puts)
 	}
 }

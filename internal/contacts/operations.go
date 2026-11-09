@@ -2,7 +2,9 @@ package contacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/xml"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -79,9 +81,15 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 	}
 	objects := make([]addressObject, 0, len(rows))
 	for _, row := range rows {
+		if strings.TrimSpace(row.Href) == "" {
+			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, 0, "Contacts REPORT returned a resource without an href")
+		}
+		if status := strings.TrimSpace(row.Status); status != "" && !statusIsOK(status) {
+			return nil, false, int64(len(response.Body)), newError(CodePartialFailure, 0, "Contacts REPORT returned an incomplete resource result")
+		}
 		prop := successfulProp(row)
 		if prop == nil || !prop.AddressData.Present || strings.TrimSpace(prop.AddressData.Value) == "" {
-			continue
+			return nil, false, int64(len(response.Body)), newError(CodePartialFailure, 0, "Contacts REPORT returned an incomplete resource result")
 		}
 		resourceURL, resolveErr := resolveAndValidate(c, response.URL, row.Href)
 		if resolveErr != nil {
@@ -90,7 +98,7 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 		if !urlWithin(resourceURL, book.url, false) {
 			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, 0, "Contacts REPORT returned a resource outside its address book")
 		}
-		card, version, decodeErr := decodeCard([]byte(prop.AddressData.Value))
+		card, version, raw, decodeErr := decodeRawCard([]byte(prop.AddressData.Value))
 		if decodeErr != nil {
 			return nil, false, int64(len(response.Body)), decodeErr
 		}
@@ -98,7 +106,7 @@ func (c *Client) report(ctx context.Context, book bookRecord, body string, rowLi
 		if etagErr != nil {
 			return nil, false, int64(len(response.Body)), newError(CodeProtocolError, response.Status, "Contacts REPORT response has an invalid ETag")
 		}
-		objects = append(objects, addressObject{url: resourceURL, card: card, version: version, etag: etag})
+		objects = append(objects, addressObject{url: resourceURL, card: card, raw: raw, version: version, etag: etag})
 	}
 	return objects, overflow, int64(len(response.Body)), nil
 }
@@ -123,8 +131,15 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		books = append([]bookRecord(nil), c.state.books...)
 	}
 
-	remainingCards := maxCardsScanned
-	remainingBytes := int64(maxReportBytes)
+	remainingCards := opts.RemainingCards
+	if remainingCards <= 0 || remainingCards > maxCardsScanned {
+		remainingCards = maxCardsScanned
+	}
+	remainingBytes := opts.RemainingBytes
+	if remainingBytes <= 0 || remainingBytes > int64(maxReportBytes) {
+		remainingBytes = int64(maxReportBytes)
+	}
+	startCards, startBytes := remainingCards, remainingBytes
 	var matches []ContactSummary
 	scanLimit := false
 	for index, book := range books {
@@ -144,8 +159,11 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		}
 		for _, object := range objects[:complete] {
 			remainingCards--
-			if contactMatches(object.card, opts) {
-				matches = append(matches, cardSummary(object.card, book.public.Identifier, object.etag))
+			matched, omittedMatch := contactMatches(object.card, object.raw, opts)
+			if matched {
+				summary := cardSummary(newCardView(object.card, object.raw), book.public.Identifier, object.etag)
+				summary.MatchedFieldOmitted = omittedMatch
+				matches = append(matches, summary)
 			}
 		}
 		if overflow || len(objects) > complete || remainingCards == 0 && index < len(books)-1 {
@@ -165,9 +183,14 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 		}
 		return matches[i].AddressBook < matches[j].AddressBook
 	})
-	result := SearchResult{ScanLimitReached: scanLimit, Truncated: len(matches) > opts.Limit}
+	result := SearchResult{
+		ScanLimitReached: scanLimit,
+		Truncated:        !opts.PageAll && len(matches) > opts.Limit,
+		ScannedCards:     startCards - remainingCards,
+		UsedBytes:        startBytes - remainingBytes,
+	}
 	count := len(matches)
-	if count > opts.Limit {
+	if !opts.PageAll && count > opts.Limit {
 		count = opts.Limit
 	}
 	for _, summary := range matches[:count] {
@@ -181,15 +204,20 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 	return result, nil
 }
 
-func contactMatches(card vcard.Card, opts SearchOptions) bool {
+func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched, omittedFieldMatch bool) {
 	if !opts.IncludeGroups && cardIsGroup(card) {
-		return false
+		return false, false
 	}
+	view := newCardView(card, raw)
 	if opts.Query != "" {
 		needle := strings.ToLower(opts.Query)
-		fields := card.Values(vcard.FieldFormattedName)
-		fields = append(fields, card.Values(vcard.FieldName)...)
-		fields = append(fields, card.Value(vcard.FieldOrganization))
+		fields := view.card.Values(vcard.FieldFormattedName)
+		for _, rawName := range view.values(vcard.FieldName) {
+			fields = append(fields, searchableText(rawName))
+		}
+		for _, rawOrganization := range view.values(vcard.FieldOrganization) {
+			fields = append(fields, searchableText(rawOrganization))
+		}
 		fields = append(fields, card.Values(vcard.FieldEmail)...)
 		fields = append(fields, card.Values(vcard.FieldTelephone)...)
 		matched := false
@@ -200,36 +228,44 @@ func contactMatches(card vcard.Card, opts SearchOptions) bool {
 			}
 		}
 		if !matched {
-			return false
+			return false, false
 		}
 	}
 	if opts.Email != "" {
 		needle := strings.ToLower(opts.Email)
-		matched := false
-		for _, value := range card.Values(vcard.FieldEmail) {
+		values := card.Values(vcard.FieldEmail)
+		matchIndex := -1
+		for index, value := range values {
 			if strings.Contains(strings.ToLower(value), needle) {
-				matched = true
+				matchIndex = index
 				break
 			}
 		}
-		if !matched {
-			return false
+		if matchIndex < 0 {
+			return false, false
+		}
+		if matchIndex >= maxEmails {
+			omittedFieldMatch = true
 		}
 	}
 	if opts.Phone != "" {
 		needle := normalizePhone(opts.Phone)
-		matched := false
-		for _, value := range card.Values(vcard.FieldTelephone) {
+		values := card.Values(vcard.FieldTelephone)
+		matchIndex := -1
+		for index, value := range values {
 			if strings.Contains(normalizePhone(value), needle) {
-				matched = true
+				matchIndex = index
 				break
 			}
 		}
-		if !matched {
-			return false
+		if matchIndex < 0 {
+			return false, false
+		}
+		if matchIndex >= maxPhones {
+			omittedFieldMatch = true
 		}
 	}
-	return true
+	return true, omittedFieldMatch
 }
 
 func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*addressObject, error) {
@@ -237,16 +273,28 @@ func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*a
 	if err != nil {
 		return nil, err
 	}
-	if overflow || len(objects) > 1 {
-		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact")
+	// The mandatory i;unicode-casemap collation can match UIDs that differ only
+	// by case. Select the single byte-exact UID; never guess.
+	var exact []addressObject
+	for _, object := range objects {
+		if object.card.Value(vcard.FieldUID) == uid {
+			exact = append(exact, object)
+		}
 	}
-	if len(objects) == 0 {
+	switch {
+	case len(exact) == 1:
+		return c.getObject(ctx, book, exact[0].url, uid)
+	case len(exact) > 1:
+		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact with the same UID")
+	case overflow:
+		return nil, newError(CodeProtocolError, 0, "UID lookup was truncated before an exact UID match")
+	case len(objects) > 1:
+		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact and none matched exactly")
+	case len(objects) == 0:
 		return nil, newError(CodeNotFound, http.StatusNotFound, "contact UID was not found in the address book")
-	}
-	if objects[0].card.Value(vcard.FieldUID) != uid {
+	default:
 		return nil, newError(CodeProtocolError, 0, "UID lookup returned a different contact")
 	}
-	return c.getObject(ctx, book, objects[0].url, uid)
 }
 
 func (c *Client) getObject(ctx context.Context, book bookRecord, target *url.URL, expectedUID string) (*addressObject, error) {
@@ -308,7 +356,7 @@ func (c *Client) GetContact(ctx context.Context, addressBook, uid string) (*Cont
 	if err != nil {
 		return nil, err
 	}
-	detail := cardDetail(object.card, object.version, addressBook, object.etag)
+	detail := cardDetail(newCardView(object.card, object.raw), object.version, addressBook, object.etag)
 	if !resultFits(detail) {
 		return nil, newError(CodePayloadTooLarge, 0, "contact detail exceeds the result limit")
 	}
@@ -334,17 +382,43 @@ func (c *Client) CreateContact(ctx context.Context, input *CreateContactInput) (
 			return CreateResult{}, err
 		}
 	}
-	resourceID, err := uuidV4()
-	if err != nil {
-		return CreateResult{}, err
+	// A supplied client UID uses a deterministic resource name, so a retry
+	// after a lost acknowledgement targets the same href and If-None-Match
+	// protects the logical identity even when the server does not enforce
+	// CARDDAV:no-uid-conflict across random paths.
+	resourceName := ""
+	if input.ClientUID != "" {
+		resourceName = deterministicContactResourceName(input.ClientUID)
+	} else {
+		resourceID, idErr := uuidV4()
+		if idErr != nil {
+			return CreateResult{}, idErr
+		}
+		resourceName = resourceID + ".vcf"
 	}
-	target := childResourceURL(book.url, resourceID+".vcf")
+	target := childResourceURL(book.url, resourceName)
 	if err := c.validateURL(target); err != nil {
 		return CreateResult{}, err
 	}
-	encoded, err := encodeCard(newV3Card(input, uid), book.public.MaxResourceSize)
+	encoded, err := encodeNewCard(input, uid, book.public.MaxResourceSize)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	if input.ClientUID != "" {
+		existing, lookupErr := c.findByUID(ctx, book, uid)
+		if lookupErr == nil {
+			createdCard, createdVersion, createdRaw, decodeErr := decodeRawCard(encoded)
+			if decodeErr != nil {
+				return CreateResult{}, decodeErr
+			}
+			if contactContentFingerprint(existing) != contactFingerprint(newCardView(createdCard, createdRaw), createdVersion) {
+				return CreateResult{}, newError(CodeConflict, http.StatusConflict, "a contact with this UID already exists with different content")
+			}
+			return CreateResult{AddressBook: input.AddressBook, UID: uid, ETag: readableETag(existing.etag), Reconciled: true}, nil
+		}
+		if typed := AsError(lookupErr); typed == nil || typed.Code != CodeNotFound {
+			return CreateResult{}, lookupErr
+		}
 	}
 	header := make(http.Header)
 	header.Set("Content-Type", "text/vcard; charset=utf-8")
@@ -468,6 +542,11 @@ func (c *Client) DeleteContact(ctx context.Context, input *DeleteContactInput) (
 		return DeleteResult{}, classifyDAVError(response, false)
 	}
 	return result, nil
+}
+
+func deterministicContactResourceName(uid string) string {
+	sum := sha256.Sum256([]byte(uid))
+	return fmt.Sprintf("%x.vcf", sum[:16])
 }
 
 func childResourceURL(collection *url.URL, name string) *url.URL {

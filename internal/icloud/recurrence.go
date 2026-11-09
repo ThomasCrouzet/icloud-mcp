@@ -202,7 +202,7 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		if _, skip := excluded[slot.start.UTC().Unix()]; skip {
 			continue
 		}
-		if !eventOverlaps(Event{StartTime: slot.start, EndTime: recurrenceOccurrenceEnd(master, slot.start)}, rangeStart, rangeEnd) {
+		if !eventOverlaps(overlapView(master, slot.start, recurrenceOccurrenceEnd(master, slot.start)), rangeStart, rangeEnd) {
 			continue
 		}
 		slots = append(slots, slot)
@@ -229,7 +229,7 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		// code restores their full duration. The wider lower bound intentionally
 		// includes extra occurrences. This filter restores the exact
 		// eventOverlaps behavior from the non-recurring path.
-		if !eventOverlaps(Event{StartTime: occ, EndTime: recurrenceOccurrenceEnd(master, occ)}, rangeStart, rangeEnd) {
+		if !eventOverlaps(overlapView(master, occ, recurrenceOccurrenceEnd(master, occ)), rangeStart, rangeEnd) {
 			continue
 		}
 		key := occ.UTC().Unix()
@@ -270,6 +270,12 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	}
 
 	return out, truncated, nil
+}
+
+// overlapView keeps the source form of an expanded occurrence so VALUE=DATE
+// and floating comparisons use the same policy as the non-recurring path.
+func overlapView(master Event, start, end time.Time) Event {
+	return Event{StartTime: start, EndTime: end, AllDay: master.AllDay, IsFloating: master.IsFloating}
 }
 
 // recurrenceClockSelectorSafety proves that rrule-go's high-frequency clock
@@ -907,15 +913,26 @@ func saturatingWorkMultiply(a, b int64) int64 {
 	return a * b
 }
 
-// eventOverlaps tests the half-open [start,end) overlap of an event with
-// [rangeStart, rangeEnd]. A floating event is interpreted with the wall-clock
-// coordinate of the range location: it has no instant of its own.
+// eventOverlaps tests the overlap of an event with [rangeStart, rangeEnd].
+// A zero-duration DATE-TIME event is a point: RFC 4791 section 9.9 includes it
+// when rangeStart <= DTSTART < rangeEnd. Positive-duration events keep the
+// half-open intersection rule. A floating event is interpreted with the
+// wall-clock coordinate of the range location: it has no instant of its own.
 func eventOverlaps(e Event, rangeStart, rangeEnd time.Time) bool {
 	start, end := e.StartTime, e.EndTime
-	if e.IsFloating && !e.AllDay {
-		loc := rangeStart.Location()
+	loc := rangeStart.Location()
+	if e.AllDay {
+		// VALUE=DATE is a civil day, not a UTC instant. Project both bounds
+		// onto midnight in the effective query zone so a Paris all-day event
+		// overlaps a UTC query that covers its local midnight.
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
+		end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
+	} else if e.IsFloating {
 		start = WallClockInLocation(start, loc)
 		end = WallClockInLocation(end, loc)
+	}
+	if start.Equal(end) {
+		return !start.Before(rangeStart) && start.Before(rangeEnd)
 	}
 	return start.Before(rangeEnd) && end.After(rangeStart)
 }
