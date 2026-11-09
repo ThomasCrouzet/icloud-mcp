@@ -39,6 +39,9 @@ type FreeSlotOptions struct {
 	IncludeAllDayBusy bool
 	// Limit caps the number of free slots returned (default 50, max 200).
 	Limit int
+	// ProbeExtra asks the calculation to stop one slot after Limit, so a
+	// caller can report truncation without materializing every later slot.
+	ProbeExtra bool
 }
 
 // BusyFromEvents converts events into busy intervals, ignoring TRANSPARENT
@@ -136,8 +139,12 @@ func FindFreeSlots(busy []Interval, opts FreeSlotOptions) ([]Interval, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	maximum := 200
+	if opts.ProbeExtra {
+		maximum = 201
+	}
+	if limit > maximum {
+		limit = maximum
 	}
 	loc := ResolveLocation(opts.Location)
 
@@ -145,7 +152,10 @@ func FindFreeSlots(busy []Interval, opts FreeSlotOptions) ([]Interval, error) {
 	// Invert busy into free within the range.
 	free := invertBusy(opts.RangeStart, opts.RangeEnd, merged)
 	// Clip to working hours / days.
-	free = clipWorkingHours(free, opts, loc)
+	free, err := clipWorkingHours(free, opts, loc)
+	if err != nil {
+		return nil, err
+	}
 	// Keep only slots long enough; emit fixed-duration slots greedily from
 	// each free window start (non-overlapping consecutive placements).
 	out := make([]Interval, 0, limit)
@@ -197,7 +207,71 @@ func invertBusy(rangeStart, rangeEnd time.Time, busy []Interval) []Interval {
 	return free
 }
 
-func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location) []Interval {
+// civilDate is a calendar label independent of any zone offset. Iterating by
+// civil date guarantees progress even when local midnight does not exist.
+type civilDate struct {
+	year  int
+	month time.Month
+	day   int
+}
+
+func civilDateOf(t time.Time, loc *time.Location) civilDate {
+	lt := t.In(loc)
+	return civilDate{year: lt.Year(), month: lt.Month(), day: lt.Day()}
+}
+
+func (d civilDate) next() civilDate {
+	t := time.Date(d.year, d.month, d.day+1, 12, 0, 0, 0, time.UTC)
+	return civilDate{year: t.Year(), month: t.Month(), day: t.Day()}
+}
+
+func (d civilDate) previous() civilDate {
+	t := time.Date(d.year, d.month, d.day-1, 12, 0, 0, 0, time.UTC)
+	return civilDate{year: t.Year(), month: t.Month(), day: t.Day()}
+}
+
+func (d civilDate) weekday() time.Weekday {
+	return time.Date(d.year, d.month, d.day, 12, 0, 0, 0, time.UTC).Weekday()
+}
+
+func (d civilDate) after(other civilDate) bool {
+	if d.year != other.year {
+		return d.year > other.year
+	}
+	if d.month != other.month {
+		return d.month > other.month
+	}
+	return d.day > other.day
+}
+
+// civilDayStart returns the first representable instant whose local civil date
+// is d. When midnight is missing, Go normalizes time.Date to the previous day,
+// so scan forward to the actual transition instead of looping on that value.
+func civilDayStart(d civilDate, loc *time.Location) time.Time {
+	midnight := time.Date(d.year, d.month, d.day, 0, 0, 0, 0, loc)
+	for minute := 0; minute <= 180; minute++ {
+		candidate := midnight.Add(time.Duration(minute) * time.Minute)
+		local := candidate.In(loc)
+		if local.Year() == d.year && local.Month() == d.month && local.Day() == d.day {
+			return candidate
+		}
+	}
+	return midnight
+}
+
+func localTimeOnCivilDay(d civilDate, minutesFromMidnight int, loc *time.Location) time.Time {
+	day := civilDayStart(d, loc).In(loc)
+	year, month, date := day.Date()
+	if minutesFromMidnight >= 24*60 {
+		next := d.next()
+		return civilDayStart(next, loc)
+	}
+	return time.Date(year, month, date, minutesFromMidnight/60, minutesFromMidnight%60, 0, 0, loc)
+}
+
+const maxFreeSlotCivilDays = 100_000
+
+func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location) ([]Interval, error) {
 	dayFilter := map[time.Weekday]bool{}
 	if len(opts.DaysOfWeek) == 0 {
 		for d := time.Sunday; d <= time.Saturday; d++ {
@@ -211,40 +285,40 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 	whStart := opts.WorkingHourStart
 	whEnd := opts.WorkingHourEnd
 	useWH := whStart != 0 || whEnd != 0
-
-	// Overnight working hours: End <= Start (e.g. 22:00-06:00).
 	overnight := useWH && whEnd <= whStart
+	work := 0
 
 	var out []Interval
 	for _, win := range free {
-		// Walk civil local days (not fixed 24h steps; DST days are 23h or 25h).
-		day := startOfLocalDay(win.Start.In(loc), loc)
-		// Overnight shifts of the previous civil day still cover the morning
-		// of win.Start (e.g. Tuesday 22:00 -> Wednesday 06:00 covers Wed 03:00).
+		day := civilDateOf(win.Start, loc)
 		if overnight {
-			day = prevLocalCivilDay(day, loc)
+			day = day.previous()
 		}
-		endLocal := win.End.In(loc)
-		for !day.After(endLocal) {
-			if !dayFilter[day.Weekday()] {
-				day = nextLocalCivilDay(day, loc)
+		endDate := civilDateOf(win.End, loc)
+		for !day.after(endDate) {
+			work++
+			if work > maxFreeSlotCivilDays {
+				return nil, NewError(CodePayloadTooLarge, 0, "free-slot civil-day work exceeded its bound", nil)
+			}
+			dayStart := civilDayStart(day, loc)
+			nextStart := civilDayStart(day.next(), loc)
+			if !dayFilter[day.weekday()] {
+				day = day.next()
 				continue
 			}
 			var segments []Interval
-			if !useWH {
-				segments = []Interval{{Start: day, End: nextLocalCivilDay(day, loc)}}
-			} else if !overnight {
+			switch {
+			case !useWH:
+				segments = []Interval{{Start: dayStart, End: nextStart}}
+			case !overnight:
 				segments = []Interval{{
-					Start: localTimeOnDay(day, whStart, loc),
-					End:   localTimeOnDay(day, whEnd, loc),
+					Start: localTimeOnCivilDay(day, whStart, loc),
+					End:   localTimeOnCivilDay(day, whEnd, loc),
 				}}
-			} else {
-				// Continuous overnight: [day@whStart, nextCivilDay@whEnd).
-				// DaysOfWeek filters the start day (Monday night => Mon 22:00-Tue 06:00).
-				next := nextLocalCivilDay(day, loc)
+			default:
 				segments = []Interval{{
-					Start: localTimeOnDay(day, whStart, loc),
-					End:   localTimeOnDay(next, whEnd, loc),
+					Start: localTimeOnCivilDay(day, whStart, loc),
+					End:   localTimeOnCivilDay(day.next(), whEnd, loc),
 				}}
 			}
 			for _, seg := range segments {
@@ -253,15 +327,10 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 					out = append(out, inter)
 				}
 			}
-			day = nextLocalCivilDay(day, loc)
+			day = day.next()
 		}
 	}
-	return MergeIntervals(out)
-}
-
-func startOfLocalDay(t time.Time, loc *time.Location) time.Time {
-	lt := t.In(loc)
-	return time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc)
+	return MergeIntervals(out), nil
 }
 
 // nextLocalCivilDay returns local midnight of the calendar day after day.
@@ -270,28 +339,6 @@ func startOfLocalDay(t time.Time, loc *time.Location) time.Time {
 func nextLocalCivilDay(day time.Time, loc *time.Location) time.Time {
 	lt := day.In(loc)
 	return time.Date(lt.Year(), lt.Month(), lt.Day()+1, 0, 0, 0, 0, loc)
-}
-
-// prevLocalCivilDay returns local midnight of the calendar day before day.
-func prevLocalCivilDay(day time.Time, loc *time.Location) time.Time {
-	lt := day.In(loc)
-	return time.Date(lt.Year(), lt.Month(), lt.Day()-1, 0, 0, 0, 0, loc)
-}
-
-// localTimeOnDay returns the wall-clock local time on the civil day of day
-// at minutesFromMidnight (0..1440). 1440 means next local midnight.
-// Using time.Date (not midnight.Add) preserves wall-clock hours across DST.
-func localTimeOnDay(day time.Time, minutesFromMidnight int, loc *time.Location) time.Time {
-	lt := day.In(loc)
-	if minutesFromMidnight >= 24*60 {
-		return time.Date(lt.Year(), lt.Month(), lt.Day()+1, 0, 0, 0, 0, loc)
-	}
-	if minutesFromMidnight < 0 {
-		minutesFromMidnight = 0
-	}
-	h := minutesFromMidnight / 60
-	m := minutesFromMidnight % 60
-	return time.Date(lt.Year(), lt.Month(), lt.Day(), h, m, 0, 0, loc)
 }
 
 func intersect(a, b Interval) Interval {

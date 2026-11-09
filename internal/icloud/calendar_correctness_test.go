@@ -281,7 +281,7 @@ func TestBuildAllDayRecurrenceUsesDateValues(t *testing.T) {
 	}
 	rule, exdates, err := structuredToRRULE(&StructuredRecurrence{
 		Frequency: "daily", Until: "2026-07-31", Exceptions: []string{"2026-07-10T00:00:00"},
-	}, paris)
+	}, paris, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,4 +600,102 @@ func TestWeeklyWeekdaySelectorsUseOneWeekCycle(t *testing.T) {
 	if used := maxRecurrenceSearchWork - remaining; used > 1000 {
 		t.Fatalf("aggregate work = %d, want a one-week selector sample", used)
 	}
+}
+
+func TestRRULEValueFormsMatchDTSTART(t *testing.T) {
+	if err := validateRRULEValueForms("FREQ=DAILY;UNTIL=20260702", true); err != nil {
+		t.Fatalf("valid DATE UNTIL = %v", err)
+	}
+	if err := validateRRULEValueForms("FREQ=DAILY;UNTIL=20260702", false); err == nil {
+		t.Fatal("DATE UNTIL was accepted for a DATE-TIME start")
+	}
+	for _, rule := range []string{
+		"FREQ=DAILY;UNTIL=20260702T120000Z",
+		"FREQ=DAILY;UNTIL=20260702garbage",
+		"FREQ=DAILY;BYHOUR=9,10",
+		"FREQ=DAILY;BYMINUTE=30",
+	} {
+		if err := validateRRULEValueForms(rule, true); err == nil {
+			t.Fatalf("all-day rule %q was accepted", rule)
+		}
+	}
+	if err := validateRRULEValueForms("FREQ=DAILY;UNTIL=20260702T120000Z", false); err != nil {
+		t.Fatalf("valid DATE-TIME UNTIL = %v", err)
+	}
+}
+
+func TestRecurringNumericOffsetDoesNotBecomeTZID(t *testing.T) {
+	start, err := time.Parse(time.RFC3339, "2026-07-01T09:00:00+02:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsNamedLocation(start.Location()) {
+		t.Fatal("a fabricated numeric-offset location was treated as a named zone")
+	}
+	calendar := buildEventCalendar("offset-uid", &NewEvent{
+		Title: "Offset", StartTime: start, EndTime: start.Add(time.Hour),
+		Recurrence: "FREQ=WEEKLY;COUNT=4",
+	})
+	master, err := findMasterVEvent(calendar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dtstart := master.Props.Get(ical.PropDateTimeStart)
+	if dtstart == nil || dtstart.Params.Get(ical.PropTimezoneID) != "" {
+		t.Fatalf("DTSTART carries an unnamed TZID: %+v", dtstart)
+	}
+	for _, child := range calendar.Children {
+		if child.Name == ical.CompTimezone {
+			t.Fatal("unnamed fixed offset produced a VTIMEZONE")
+		}
+	}
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsNamedLocation(paris) {
+		t.Fatal("Europe/Paris was not recognized as a named zone")
+	}
+}
+
+func BenchmarkRecurringTimezoneValidation(b *testing.B) {
+	loc, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		b.Fatal(err)
+	}
+	start := time.Date(2026, 7, 1, 9, 0, 0, 0, loc)
+	b.ResetTimer()
+	for range b.N {
+		if !recurringTimezoneStable(loc, start) {
+			b.Fatal("unexpected unstable zone")
+		}
+	}
+}
+
+func BenchmarkBuildVTimezone(b *testing.B) {
+	loc, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		b.Fatal(err)
+	}
+	from := time.Date(2026, 7, 1, 9, 0, 0, 0, loc)
+	to := from.Add(24 * time.Hour)
+	b.ResetTimer()
+	for range b.N {
+		if buildVTimezone(loc, from, to) == nil {
+			b.Fatal("no VTIMEZONE")
+		}
+	}
+}
+
+func TestOverrideOnlyResourceFailsClosed(t *testing.T) {
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Fixture//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:detached-only\r\nDTSTAMP:20260701T000000Z\r\n" +
+		"RECURRENCE-ID:20260707T090000Z\r\nDTSTART:20260707T110000Z\r\nDTEND:20260707T120000Z\r\n" +
+		"SUMMARY:Detached occurrence\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	calendar, err := decodeRemoteCalendar(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateCalendarObjectIdentity(calendar, "detached-only")
+	requireICloudCode(t, err, CodeProtocolError)
 }

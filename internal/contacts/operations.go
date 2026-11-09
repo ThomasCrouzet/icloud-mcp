@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/emersion/go-vcard"
+	"golang.org/x/text/unicode/norm"
 )
 
 type addressObject struct {
@@ -204,13 +205,19 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 	return result, nil
 }
 
+// collationFold approximates the mandatory i;unicode-casemap REPORT
+// collation: compatibility decomposition (NFKD) then case folding.
+func collationFold(value string) string {
+	return strings.ToLower(norm.NFKD.String(value))
+}
+
 func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched, omittedFieldMatch bool) {
 	if !opts.IncludeGroups && cardIsGroup(card) {
 		return false, false
 	}
 	view := newCardView(card, raw)
 	if opts.Query != "" {
-		needle := strings.ToLower(opts.Query)
+		needle := collationFold(opts.Query)
 		fields := view.card.Values(vcard.FieldFormattedName)
 		for _, rawName := range view.values(vcard.FieldName) {
 			fields = append(fields, searchableText(rawName))
@@ -222,7 +229,7 @@ func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched,
 		fields = append(fields, card.Values(vcard.FieldTelephone)...)
 		matched := false
 		for _, value := range fields {
-			if strings.Contains(strings.ToLower(value), needle) {
+			if strings.Contains(collationFold(value), needle) {
 				matched = true
 				break
 			}
@@ -232,11 +239,11 @@ func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched,
 		}
 	}
 	if opts.Email != "" {
-		needle := strings.ToLower(opts.Email)
+		needle := collationFold(opts.Email)
 		values := card.Values(vcard.FieldEmail)
 		matchIndex := -1
 		for index, value := range values {
-			if strings.Contains(strings.ToLower(value), needle) {
+			if strings.Contains(collationFold(value), needle) {
 				matchIndex = index
 				break
 			}

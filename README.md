@@ -508,7 +508,7 @@ process lifecycle. See the [package map](docs/architecture.md#packages).
 
 ### Direct dependencies
 
-The single Go module has **11 direct requirements**: **10 runtime dependencies**
+The single Go module has **12 direct requirements**: **11 runtime dependencies**
 and **one explicit test dependency**. Exact versions
 are in [go.mod](go.mod); required notices are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -520,6 +520,7 @@ are in [go.mod](go.mod); required notices are in
 | `github.com/mark3labs/mcp-go` | MCP stdio transport, schemas, and JSON-RPC |
 | `github.com/teambition/rrule-go` | Bounded recurrence expansion with timezone preservation |
 | `golang.org/x/time` | Independent domain rate limiters |
+| `golang.org/x/text` | RFC 5051-compatible Unicode collation for local Contacts matching; already present transitively |
 | `github.com/emersion/go-vcard` | vCard 3.0/4.0 reads and 3.0 writes |
 | `github.com/emersion/go-imap/v2` | IMAP through the narrow `internal/mail/imapadapter` boundary |
 | `github.com/emersion/go-message` | MIME parsing and bounded plain-text handling |

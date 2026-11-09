@@ -234,8 +234,8 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	if err := ValidateRange(ne.StartTime, ne.EndTime); err != nil {
 		return "", err
 	}
-	if ne.Recurrence != "" {
-		if err := validateRRULEForStartContext(ctx, ne.Recurrence, ne.StartTime); err != nil {
+	if ne.Recurrence != "" && !ne.Prevalidated {
+		if err := validateRRULEForEventContext(ctx, ne.Recurrence, ne.StartTime, ne.AllDay); err != nil {
 			return "", err
 		}
 		if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !recurringTimezoneStable(loc, ne.StartTime) {
@@ -398,9 +398,22 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		return err
 	}
 
+	if err := validateUpdateDateForms(vevent, up); err != nil {
+		return err
+	}
 	if scope == ScopeOccurrence {
 		if vevent.Props.Get(ical.PropRecurrenceRule) == nil {
 			return NewValidationError("scope=occurrence requires a recurring master (RRULE)")
+		}
+		exists, excluded, targetErr := occurrenceTargetStatus(found, *up.RecurrenceID)
+		if targetErr != nil {
+			return targetErr
+		}
+		if excluded {
+			return NewError(CodeNotFound, http.StatusNotFound, "occurrence is already excluded", nil)
+		}
+		if !exists {
+			return NewError(CodeNotFound, http.StatusNotFound, "recurrence_id does not identify an existing occurrence", nil)
 		}
 		if err := applyOccurrenceUpdate(found.Data, vevent, *up.RecurrenceID, up); err != nil {
 			return err
@@ -782,18 +795,43 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		}
 	}
 
+	alreadyExcluded := false
+	if scope == ScopeOccurrence {
+		exists, excluded, targetErr := occurrenceTargetStatus(obj, *opts.RecurrenceID)
+		if targetErr != nil {
+			return DeleteResult{}, targetErr
+		}
+		if excluded {
+			alreadyExcluded = true
+		} else if !exists {
+			return DeleteResult{}, NewError(CodeNotFound, http.StatusNotFound, "recurrence_id does not identify an existing occurrence", nil)
+		}
+	}
 	result := DeleteResult{
 		Title:            title,
 		UID:              uid,
 		Scope:            string(scope),
-		WouldMutate:      true,
+		WouldMutate:      !alreadyExcluded,
+		AlreadyExcluded:  alreadyExcluded,
 		IsGroupScheduled: groupScheduled,
 	}
 	if groupScheduled {
 		result.NotificationRisk = SchedulingNotificationRisk
 	}
 
+	if alreadyExcluded {
+		if opts != nil && opts.DryRun {
+			result.DryRun = true
+		}
+		return result, nil
+	}
 	if opts != nil && opts.DryRun {
+		if opts.IfMatchETag != "" {
+			if obj.ETag == "" || opts.IfMatchETag != obj.ETag {
+				return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+					"the event changed since it was read; re-read with get_event and review the current ETag", nil)
+			}
+		}
 		etag := obj.ETag
 		if opts.IfMatchETag != "" {
 			etag = opts.IfMatchETag
@@ -829,6 +867,55 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 	c.locations.evict(calendarPath, uid)
 	return result, nil
+}
+
+// validateUpdateDateForms prevents a DATE-only input from silently converting
+// a timed event, or a timed input from silently rewriting an all-day event.
+func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
+	start := vevent.Props.Get(ical.PropDateTimeStart)
+	allDay := start != nil && isDateOnlyProp(start)
+	if up.StartDateOnly && !allDay {
+		return NewValidationError("start is DATE-only but the existing event is timed")
+	}
+	end := vevent.Props.Get(ical.PropDateTimeEnd)
+	endAllDay := allDay
+	if end != nil {
+		endAllDay = isDateOnlyProp(end)
+	}
+	if up.EndDateOnly && !endAllDay {
+		return NewValidationError("end is DATE-only but the existing event is timed")
+	}
+	return nil
+}
+
+// occurrenceTargetStatus reports whether recID names an existing occurrence of
+// the series or is already excluded. A detached override counts as existing
+// under its original RECURRENCE-ID.
+func occurrenceTargetStatus(obj *extcaldav.CalendarObject, recID time.Time) (exists, excluded bool, err error) {
+	master, overrides, err := parseCalendarObject(obj)
+	if err != nil {
+		return false, false, err
+	}
+	for _, ex := range master.exDates {
+		if ex.UTC().Unix() == recID.UTC().Unix() {
+			return false, true, nil
+		}
+	}
+	for _, override := range overrides {
+		if override.RecurrenceID.UTC().Unix() == recID.UTC().Unix() {
+			return true, false, nil
+		}
+	}
+	occurrences, _, err := ExpandOccurrences(*master, overrides, recID, recID.Add(time.Second), 0)
+	if err != nil {
+		return false, false, err
+	}
+	for _, occurrence := range occurrences {
+		if occurrence.StartTime.UTC().Unix() == recID.UTC().Unix() {
+			return true, false, nil
+		}
+	}
+	return false, false, nil
 }
 
 // authorizeSchedulingMutation enforces the operator approval boundary for an

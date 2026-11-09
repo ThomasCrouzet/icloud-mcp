@@ -149,22 +149,40 @@ func resolveWriteLocation(ne *NewEvent) *time.Location {
 		}
 	}
 	if ne.Recurrence != "" {
-		if loc := ne.StartTime.Location(); loc != nil && loc != time.UTC {
+		if loc := ne.StartTime.Location(); IsNamedLocation(loc) && loc != time.UTC {
 			return loc
 		}
 	}
 	return time.UTC
 }
 
+// IsNamedLocation reports whether loc is UTC or a resolvable IANA zone. Go's
+// RFC3339 parser fabricates an unnamed fixed-offset location, which must never
+// become a TZID or VTIMEZONE identity.
+func IsNamedLocation(loc *time.Location) bool {
+	if loc == nil {
+		return false
+	}
+	if loc == time.UTC {
+		return true
+	}
+	name := loc.String()
+	if name == "" || name == "Local" {
+		return false
+	}
+	loaded, err := time.LoadLocation(name)
+	return err == nil && loaded.String() == name
+}
+
 func normalizeAllDayUntil(rule string) string {
 	parts := strings.Split(rule, ";")
 	for i, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
-		if !ok || !strings.EqualFold(key, "UNTIL") || len(value) < 8 {
+		if !ok || !strings.EqualFold(key, "UNTIL") || len(value) != len("20060102") {
 			continue
 		}
-		if _, err := time.Parse("20060102", value[:8]); err == nil {
-			parts[i] = key + "=" + value[:8]
+		if _, err := time.Parse("20060102", value); err == nil {
+			parts[i] = key + "=" + value
 		}
 	}
 	return strings.Join(parts, ";")
@@ -331,6 +349,10 @@ func formatUTCOffset(seconds int) string {
 	}
 	h := seconds / 3600
 	m := (seconds % 3600) / 60
+	s := seconds % 60
+	if s != 0 {
+		return fmt.Sprintf("%s%02d%02d%02d", sign, h, m, s)
+	}
 	return fmt.Sprintf("%s%02d%02d", sign, h, m)
 }
 
@@ -1348,7 +1370,38 @@ func parseAlarms(cal *ical.Calendar) []AlarmInfo {
 		}
 		if p := ch.Props.Get(ical.PropTrigger); p != nil {
 			info.Trigger = p.Value
-			info.MinutesBefore = parseTriggerMinutesBefore(p.Value)
+			valueType := strings.ToUpper(strings.TrimSpace(p.Params.Get(ical.ParamValue)))
+			related := strings.ToUpper(strings.TrimSpace(p.Params.Get("RELATED")))
+			switch valueType {
+			case "DATE-TIME":
+				info.TriggerType = "date-time"
+				absolute, err := p.DateTime(time.UTC)
+				if err != nil {
+					info.Warning = "unsupported_alarm_trigger"
+				} else {
+					info.AbsoluteAt = absolute.UTC().Format(time.RFC3339)
+				}
+			case "", "DURATION":
+				if related == "" {
+					related = "START"
+				}
+				if related != "START" && related != "END" {
+					info.Warning = "unsupported_alarm_trigger"
+					break
+				}
+				info.TriggerType = "duration"
+				info.RelatedTo = related
+				if related == "START" {
+					info.MinutesBefore = parseTriggerMinutesBefore(p.Value)
+					if info.MinutesBefore == 0 {
+						if duration, err := parseICalDuration(p.Value); err != nil || duration >= 0 {
+							info.Warning = "unsupported_alarm_trigger"
+						}
+					}
+				}
+			default:
+				info.Warning = "unsupported_alarm_trigger"
+			}
 		}
 		out = append(out, info)
 		if len(out) >= maxRemoteAlarms {

@@ -91,3 +91,33 @@ func TestFindFreeSlotsParsesNaiveInputInRequestedTimezone(t *testing.T) {
 		t.Fatalf("naive start = %v, want %v", service.LastSearchFrom, want)
 	}
 }
+
+func TestFindFreeSlotsReportsTruncation(t *testing.T) {
+	service := &icloud.MockService{Calendars: []icloud.Calendar{{Path: "/cal/home/"}}}
+	handler := findFreeSlotsHandler(freeSlotsTestDeps(service))
+	start := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+
+	more, err := handler(context.Background(), freeSlotsTestRequest(start, start.Add(10*time.Hour), map[string]any{
+		"calendar": "/cal/home/", "duration_minutes": 60, "limit": 2,
+	}))
+	if err != nil || more.IsError {
+		t.Fatalf("more: err=%v result=%s", err, resultText(t, more))
+	}
+	var morePayload freeSlotsResponse
+	decodeResult(t, more, &morePayload)
+	if morePayload.Count != 2 || !morePayload.Truncated {
+		t.Fatalf("more slots = %+v", morePayload)
+	}
+
+	exact, err := handler(context.Background(), freeSlotsTestRequest(start, start.Add(2*time.Hour), map[string]any{
+		"calendar": "/cal/home/", "duration_minutes": 60, "limit": 2,
+	}))
+	if err != nil || exact.IsError {
+		t.Fatalf("exact: err=%v result=%s", err, resultText(t, exact))
+	}
+	var exactPayload freeSlotsResponse
+	decodeResult(t, exact, &exactPayload)
+	if exactPayload.Count != 2 || exactPayload.Truncated {
+		t.Fatalf("exact slots = %+v", exactPayload)
+	}
+}

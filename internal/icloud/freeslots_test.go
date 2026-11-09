@@ -498,3 +498,55 @@ func formatSlots(slots []Interval, loc *time.Location) []string {
 	}
 	return out
 }
+
+func TestFindFreeSlotsSantiagoMidnightGapTerminates(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 6, 8, 0, 0, 0, loc)
+	end := time.Date(2026, 9, 7, 12, 0, 0, 0, loc)
+	slots, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart: start, RangeEnd: end, Duration: 30 * time.Minute,
+		WorkingHourStart: 9 * 60, WorkingHourEnd: 17 * 60, Location: loc, Limit: 200,
+	})
+	if err != nil {
+		t.Fatalf("FindFreeSlots() error = %v", err)
+	}
+	if len(slots) == 0 {
+		t.Fatal("no slots returned")
+	}
+	for _, slot := range slots {
+		if slot.Start.Before(start) || slot.End.After(end) || !slot.End.After(slot.Start) {
+			t.Fatalf("slot outside range: %#v", slot)
+		}
+	}
+}
+
+func TestCivilDayCursorAdvancesAcrossGapsAndSkippedDates(t *testing.T) {
+	cases := []struct {
+		zone string
+		day  civilDate
+	}{
+		{"America/Santiago", civilDate{2026, time.September, 5}},
+		{"Pacific/Apia", civilDate{2011, time.December, 29}},
+		{"Europe/Paris", civilDate{2026, time.March, 28}},
+		{"America/New_York", civilDate{2026, time.November, 1}},
+	}
+	for _, test := range cases {
+		loc, err := time.LoadLocation(test.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		day := test.day
+		previous := civilDayStart(day, loc)
+		for range 5 {
+			day = day.next()
+			next := civilDayStart(day, loc)
+			if next.Before(previous) {
+				t.Fatalf("%s: civil day start moved backward from %v to %v", test.zone, previous, next)
+			}
+			previous = next
+		}
+	}
+}

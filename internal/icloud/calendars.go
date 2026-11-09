@@ -3,7 +3,6 @@ package icloud
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // propfindCalendarsBody requests resourcetype/displayname/description/
@@ -54,12 +53,10 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Resource type, not the arbitrary URL name, determines the class.
+		// A normal VEVENT calendar under /inbox/ or /notification/ is valid;
+		// scheduling Inbox/Outbox are excluded by their resourcetype above.
 		path := resolved.EscapedPath()
-		// Prefer exact path segments over substring matches so a calendar
-		// named e.g. work-inbox is not dropped.
-		if pathHasSegment(path, "inbox") || pathHasSegment(path, "outbox") || pathHasSegment(path, "notification") {
-			continue
-		}
 		if prop.SupportedComps != nil && !supportsVEvent(prop.SupportedComps) {
 			continue // VTODO-only (Reminders) or another component set without VEVENT
 		}
@@ -80,20 +77,6 @@ func supportsVEvent(s *msSupportedSet) bool {
 	}
 	for _, comp := range s.Comps {
 		if comp.Name == "VEVENT" {
-			return true
-		}
-	}
-	return false
-}
-
-// pathHasSegment reports whether path contains an exact slash-delimited segment.
-func pathHasSegment(path, segment string) bool {
-	if path == "" || segment == "" {
-		return false
-	}
-	parts := strings.Split(path, "/")
-	for _, part := range parts {
-		if part == segment {
 			return true
 		}
 	}

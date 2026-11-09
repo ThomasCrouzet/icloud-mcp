@@ -41,6 +41,7 @@ type ContactsDeps struct {
 	Audit          *security.AuditLogger
 	Redactor       *security.Redactor
 	ResourceScopes config.ResourceScopes
+	Idempotency    *idempotencyStore
 }
 
 type contactsRawArgs map[string]json.RawMessage

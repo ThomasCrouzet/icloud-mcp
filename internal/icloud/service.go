@@ -113,9 +113,19 @@ type OccurrenceRef struct {
 
 // AlarmInfo is a parsed VALARM for read paths.
 type AlarmInfo struct {
-	Action        string `json:"action,omitempty"`
-	Trigger       string `json:"trigger,omitempty"`
-	MinutesBefore int    `json:"minutesBefore,omitempty"`
+	Action  string `json:"action,omitempty"`
+	Trigger string `json:"trigger,omitempty"`
+	// TriggerType is "duration" or "date-time". Empty only for an unsupported
+	// trigger form that is preserved in Trigger with a warning.
+	TriggerType string `json:"triggerType,omitempty"`
+	// RelatedTo is START or END for a duration trigger.
+	RelatedTo string `json:"relatedTo,omitempty"`
+	// MinutesBefore is set only for a negative START-relative duration.
+	MinutesBefore int `json:"minutesBefore,omitempty"`
+	// AbsoluteAt is the RFC3339 UTC instant of an absolute DATE-TIME trigger.
+	AbsoluteAt string `json:"absoluteAt,omitempty"`
+	// Warning marks an unsupported or malformed trigger without dropping it.
+	Warning string `json:"warning,omitempty"`
 }
 
 // NewEvent groups the data needed to create an event (create_event).
@@ -146,6 +156,9 @@ type NewEvent struct {
 	// create). If the object already exists, CreateEvent returns conflict
 	// rather than overwriting.
 	ClientUID string
+	// Prevalidated lets the MCP handler skip a second identical RRULE and
+	// timezone-stability scan. Direct library callers leave it false.
+	Prevalidated bool
 }
 
 // SearchOptions configures SearchEvents. A nil *SearchOptions means defaults
@@ -192,6 +205,11 @@ type EventUpdate struct {
 	// current strong ETag; the service rechecks scheduling metadata on its
 	// final GET before dispatch.
 	AllowGroupScheduled bool
+
+	// StartDateOnly and EndDateOnly mark YYYY-MM-DD input. The service accepts
+	// them only when the existing property already uses the DATE form.
+	StartDateOnly bool
+	EndDateOnly   bool
 }
 
 // DeleteOptions configures DeleteEvent.
@@ -213,6 +231,7 @@ type DeleteResult struct {
 	UID              string `json:"uid"`
 	Scope            string `json:"scope,omitempty"`
 	WouldMutate      bool   `json:"wouldMutate,omitempty"`
+	AlreadyExcluded  bool   `json:"alreadyExcluded,omitempty"`
 	IsGroupScheduled bool   `json:"isGroupScheduled,omitempty"`
 	// NotificationRisk is a fixed non-sensitive warning. Empty when the object
 	// has no scheduling metadata.

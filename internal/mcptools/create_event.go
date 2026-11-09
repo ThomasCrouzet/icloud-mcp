@@ -49,9 +49,10 @@ func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 }
 
 type createEventResponse struct {
-	Success  bool   `json:"success"`
-	UID      string `json:"uid"`
-	Calendar string `json:"calendar"`
+	Success  bool     `json:"success"`
+	UID      string   `json:"uid"`
+	Calendar string   `json:"calendar"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func createEventHandler(deps Deps) server.ToolHandlerFunc {
@@ -218,7 +219,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if structured != nil {
 			finalRule = vr.Normalized.Recurrence
 			// Re-run structured conversion for EXDATE times (Validate only warns).
-			if built, ex, berr := icloud.StructuredRecurrenceToRRULE(structured, deps.DefaultLocation); berr == nil {
+			if built, ex, berr := icloud.StructuredRecurrenceToRRULEForStart(structured, deps.DefaultLocation, allDay); berr == nil {
 				finalRule = built
 				exDates = ex
 			}
@@ -246,6 +247,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			URL:                eventURL,
 			Timezone:           timezone,
 			ClientUID:          clientUID,
+			Prevalidated:       true,
 		}
 
 		uid, err := deps.Service.CreateEvent(ctx, calendarPath, ne)
@@ -259,7 +261,12 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		logCalendarMutation(deps.Audit, "create_event", calendarPath, uid, "success")
 
-		return writeCalendarJSON(deps.Redactor, createEventResponse{Success: true, UID: uid, Calendar: calendarPath}), nil
+		response := createEventResponse{Success: true, UID: uid, Calendar: calendarPath}
+		if rrule != "" && timezone == "" && !icloud.IsNamedLocation(ne.StartTime.Location()) {
+			response.Warnings = append(response.Warnings,
+				"recurring event with a numeric offset and no IANA timezone is stored as a fixed UTC recurrence")
+		}
+		return writeCalendarJSON(deps.Redactor, response), nil
 	}
 }
 

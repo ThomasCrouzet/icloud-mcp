@@ -11,6 +11,16 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
+func parseUpdateDateTime(name, value string, loc *time.Location) (time.Time, bool, error) {
+	if len(value) == len("2006-01-02") {
+		if parsed, err := time.Parse("2006-01-02", value); err == nil {
+			return parsed, true, nil
+		}
+	}
+	parsed, err := icloud.ParseDateTime(name, value, loc)
+	return parsed, false, err
+}
+
 func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
 		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key to retrieve prior outcomes."),
@@ -127,21 +137,23 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if s, ok, err := optionalString("start"); err != nil {
 			return deny("start parameter", err)
 		} else if ok {
-			t, err := icloud.ParseDateTime("start", s, deps.DefaultLocation)
+			t, dateOnly, err := parseUpdateDateTime("start", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
 			}
 			update.StartTime = &t
+			update.StartDateOnly = dateOnly
 			newStart = &t
 		}
 		if s, ok, err := optionalString("end"); err != nil {
 			return deny("end parameter", err)
 		} else if ok {
-			t, err := icloud.ParseDateTime("end", s, deps.DefaultLocation)
+			t, dateOnly, err := parseUpdateDateTime("end", s, deps.DefaultLocation)
 			if err != nil {
 				return deny("validation", err)
 			}
 			update.EndTime = &t
+			update.EndDateOnly = dateOnly
 			newEnd = &t
 		}
 		if newStart != nil && newEnd != nil {
@@ -212,7 +224,10 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		var paramsHash string
 		var nsKey string
 		var idemReady bool
-		store := defaultIdempotency
+		store := deps.Idempotency
+		if store == nil {
+			store = defaultIdempotency
+		}
 		if idemKey != "" {
 			paramsHash, err = hashIdempotencyParams(map[string]any{
 				"tool":          "update_event",
