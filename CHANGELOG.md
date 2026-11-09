@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-09
+
+This minor release publishes the merged Calendar, Contacts, Mail, and
+distribution corrections. It also makes `calendar.schedule` an explicit
+operator grant for group-scheduled mutations. Users who update or delete an
+event with `ORGANIZER` or `ATTENDEE` must add that token, keep
+`acknowledge_scheduling=true`, and send the current ETag. Calendar reads remain
+the default, and no existing read-only profile changes.
+
 ### Fixed
 - Prevent the free-slot calculator from stalling at a nonexistent local
   midnight, including America/Santiago and skipped civil dates, and add a
