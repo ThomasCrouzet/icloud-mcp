@@ -110,13 +110,21 @@ func searchContactsHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		if err != nil {
 			return contactsValidationResult(deps, err), nil
 		}
-		digest := contactsSearchQueryDigest(addressBook, query, email, phone, includeGroups)
+		codec := deps.ContactsCursor
+		if codec == nil {
+			codec = defaultContactsCursor
+		}
+		digest := contactsSearchQueryDigest(addressBook, query, email, phone, contactsReadScopeBinding(deps.ResourceScopes), includeGroups)
 		position := contactsSortKey{}
 		haveCursor := false
 		if cursor != "" && cursor != "start" {
-			parsedPosition, ok, _ := defaultContactsCursor.verify(cursor, digest)
+			rawPosition, ok := codec.verify(cursor, digest)
 			if !ok {
-				return contactsValidationResult(deps, fmt.Errorf("cursor is invalid, expired, or bound to different filters")), nil
+				return contactsValidationResult(deps, fmt.Errorf("cursor is invalid, expired, or bound to different filters or read scope")), nil
+			}
+			parsedPosition, decoded := decodeContactsSortKey(rawPosition)
+			if !decoded {
+				return contactsValidationResult(deps, fmt.Errorf("cursor position is invalid")), nil
 			}
 			position, haveCursor = parsedPosition, true
 		}
@@ -150,9 +158,16 @@ func searchContactsHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		if result.Contacts == nil {
 			result.Contacts = []contacts.ContactSummary{}
 		}
+		byteBudget := contactsMaxResultBytes
+		if cursor != "" {
+			// Reserve room for the continuation token and its JSON metadata so
+			// a page that fits without a cursor cannot exceed the limit after
+			// minting one.
+			byteBudget -= contactsCursorMaxTokenLength + 512
+		}
 		for {
 			encoded, marshalErr := jsonMarshalContactsResult(result, deps)
-			if marshalErr == nil && len(encoded) <= contactsMaxResultBytes {
+			if marshalErr == nil && len(encoded) <= byteBudget {
 				break
 			}
 			if len(result.Contacts) == 0 {
@@ -167,7 +182,7 @@ func searchContactsHandler(deps ContactsDeps) server.ToolHandlerFunc {
 		result.NextCursor = ""
 		if cursor != "" && !scanLimited && len(result.Contacts) < len(allRows) {
 			last := result.Contacts[len(result.Contacts)-1]
-			token, mintErr := defaultContactsCursor.mint(digest, encodeContactsSortKey(last.DisplayName, last.UID, last.AddressBook))
+			token, mintErr := codec.mint(digest, encodeContactsSortKey(last.DisplayName, last.UID, last.AddressBook))
 			if mintErr != nil {
 				return contactsValidationResult(deps, mintErr), nil
 			}

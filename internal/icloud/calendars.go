@@ -3,6 +3,7 @@ package icloud
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // propfindCalendarsBody requests resourcetype/displayname/description/
@@ -39,9 +40,12 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 
 	var out []Calendar
 	for _, r := range response.multistatus.Responses {
+		if discoveryResponseIncomplete(r) {
+			return nil, NewError(CodePartialFailure, 0, "Calendar discovery returned an incomplete collection result", nil)
+		}
 		prop := mergedOKProp(r)
 		if prop == nil {
-			continue
+			return nil, NewError(CodePartialFailure, 0, "Calendar discovery returned an incomplete collection result", nil)
 		}
 		if prop.ResourceType == nil || prop.ResourceType.Calendar == nil {
 			continue // not a calendar collection
@@ -68,6 +72,26 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 		})
 	}
 	return out, nil
+}
+
+// discoveryResponseIncomplete reports a failed response or a failed critical
+// resourcetype property. A 404 for an optional description/color is allowed
+// when the resource type itself succeeded.
+func discoveryResponseIncomplete(r msResponse) bool {
+	if status := strings.TrimSpace(r.Status); status != "" && !isOKStatus(status) {
+		return true
+	}
+	success := false
+	for _, propstat := range r.Propstats {
+		if isOKStatus(propstat.Status) {
+			success = true
+			continue
+		}
+		if propstat.Prop.ResourceType != nil {
+			return true
+		}
+	}
+	return !success
 }
 
 func supportsVEvent(s *msSupportedSet) bool {

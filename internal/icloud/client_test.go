@@ -1180,3 +1180,28 @@ func TestClient_ListCalendarsUsesResourceTypeNotPathNames(t *testing.T) {
 		t.Fatalf("scheduling collections were included: %+v", cals)
 	}
 }
+
+func TestClient_ListCalendarsFailsOnIncompletePropfind(t *testing.T) {
+	m := newMockCalDAV(t)
+	m.calendarsBody = fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <response><href>%s</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>%s</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><displayname/></prop><status>HTTP/1.1 404 Not Found</status></propstat></response>
+  <response><href>%sbad</href><propstat><prop><resourcetype/></prop><status>HTTP/1.1 503 Unavailable</status></propstat></response>
+</multistatus>`, testHomeSetPath, testHomeCalendar, testHomeCalendar)
+	_, err := m.client().ListCalendars(context.Background())
+	requireICloudCode(t, err, CodePartialFailure)
+}
+
+func TestClient_ListCalendarsAllowsOptionalPropertyNotFound(t *testing.T) {
+	m := newMockCalDAV(t)
+	m.calendarsBody = fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <response><href>%s</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>%s</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><displayname/></prop><status>HTTP/1.1 404 Not Found</status></propstat></response>
+</multistatus>`, testHomeSetPath, testHomeCalendar)
+	cals, err := m.client().ListCalendars(context.Background())
+	if err != nil || len(cals) != 1 {
+		t.Fatalf("optional 404 discovery = %d calendars, %v", len(cals), err)
+	}
+}

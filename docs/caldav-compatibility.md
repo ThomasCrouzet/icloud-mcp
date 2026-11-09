@@ -140,6 +140,14 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A timed event with DTSTART and no DTEND or DURATION has zero duration. It is
   a point: it matches when `rangeStart <= DTSTART < rangeEnd`, and availability
   does not invent a busy interval for it.
+- The remote REPORT widens a non-UTC candidate window by 26 hours on each side
+  before local exact filtering, because a server may resolve floating and DATE
+  values in its own calendar timezone (RFC 4791 section 7.3). A dense calendar
+  that overflows the REPORT budget fails closed instead of reporting a complete
+  search.
+- A floating series keeps its recurrence identity in wall-clock coordinates.
+  The exact offset-free `recurrenceId` returned by read survives update and
+  delete under a non-UTC default, without shifting one or more hours.
 - An occurrence update or delete validates that `recurrence_id` names an
   existing generated slot or a detached override. A nonexistent slot returns
   `not_found` with no PUT or DELETE, and an already excluded slot returns
@@ -150,13 +158,23 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - Discovery classifies a collection by `DAV:resourcetype`: a positive
   `CALDAV:calendar` with VEVENT support is included even under `/inbox/` or
   `/notification/`; `schedule-inbox` and `schedule-outbox` are excluded by
-  their own resourcetype.
+  their own resourcetype. A failed response or a failed `resourcetype` propstat
+  returns `partial_failure`; an optional description or color 404 does not.
 - Update accepts `YYYY-MM-DD` for `start`/`end` only when the existing property
   already uses the DATE form. DATE-only input against a timed event fails before
   PUT.
+- A naive wall time in a DST fold uses the first occurrence, matching iCalendar
+  TZID parsing. An explicit offset that selects the second fold cannot be
+  written as a bare TZID wall time and is rejected before PUT.
+- An explicit `Z` or numeric offset with an omitted `timezone` keeps the fixed
+  UTC recurrence policy. `ICLOUD_MCP_DEFAULT_TZ` applies only to offset-free
+  input.
 - A recurring write enforces the RFC 5545 UNTIL value type and rejects
-  BYHOUR/BYMINUTE/BYSECOND on a DATE start. Invalid values are rejected, never
-  truncated into a different recurrence.
+  BYHOUR/BYMINUTE/BYSECOND on a DATE start. A timed UNTIL must end in `Z`.
+  Invalid values are rejected, never truncated into a different recurrence.
+- A recurring write rejects duplicate rule parts, COUNT with UNTIL, and
+  incompatible selector/frequency pairs such as WEEKLY+BYMONTHDAY or
+  MONTHLY+BYWEEKNO.
 - A recurring RFC3339 value with a numeric offset and no IANA timezone repeats
   as a fixed UTC instant. It is never serialized with an unnamed TZID.
 - A recurring VTIMEZONE keeps historical non-minute UTC-offset seconds when
@@ -345,6 +363,11 @@ A free-slot result with `truncated: true` means at least one more qualified slot
 exists beyond `limit`; the client checks one extra slot without materializing
 the rest. An exact-limit result sets `truncated: false`. The slot boundaries,
 greedy non-overlapping policy, and 200-slot cap do not change.
+
+Working-hour boundaries use the same RFC 5545 resolver as event values: a gap
+moves forward and a fold selects the first occurrence. A completely skipped
+civil date is empty and keeps its own weekday label; it is never an alias for a
+neighbouring real day.
 
 Civil-day iteration is independent of whether local midnight exists. A
 midnight gap (for example America/Santiago on 2026-09-06) or a skipped date

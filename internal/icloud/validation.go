@@ -160,13 +160,14 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 		loc = time.UTC
 	}
 	if wall, err := time.Parse(naiveDateTimeLayout, value); err == nil {
-		if !WallClockExists(wall, loc) {
+		resolved, adjusted := ResolveWallClock(wall, loc)
+		if adjusted {
 			return time.Time{}, fmt.Errorf(
 				"invalid %s: local time %s does not exist in %s because of a daylight-saving gap",
 				name, value, loc,
 			)
 		}
-		return time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc), nil
+		return resolved, nil
 	}
 	return time.Time{}, fmt.Errorf(
 		"invalid %s: expected RFC3339 with an explicit offset (e.g. 2026-07-01T14:00:00+02:00, or ...Z for UTC) "+
@@ -222,6 +223,9 @@ func ValidateRRULE(rule string) error {
 	if strings.HasPrefix(strings.ToUpper(rule), "RRULE:") {
 		return fmt.Errorf("RRULE must not include the RRULE: prefix; pass only the value (e.g. FREQ=WEEKLY;COUNT=10)")
 	}
+	if err := validateRRULEParts(rule); err != nil {
+		return err
+	}
 	ropt, err := rrule.StrToROption(strings.ToUpper(rule))
 	if err != nil {
 		return fmt.Errorf("invalid RRULE: %w", err)
@@ -231,6 +235,22 @@ func ValidateRRULE(rule string) error {
 	}
 	if len(ropt.Byeaster) != 0 {
 		return fmt.Errorf("RRULE BYEASTER is not supported")
+	}
+	if ropt.Freq == rrule.WEEKLY && len(ropt.Bymonthday) != 0 {
+		return fmt.Errorf("RRULE BYMONTHDAY is not valid with FREQ=WEEKLY")
+	}
+	if (ropt.Freq == rrule.DAILY || ropt.Freq == rrule.WEEKLY || ropt.Freq == rrule.MONTHLY) && len(ropt.Byyearday) != 0 {
+		return fmt.Errorf("RRULE BYYEARDAY is not valid with this frequency")
+	}
+	if len(ropt.Byweekno) != 0 && ropt.Freq != rrule.YEARLY {
+		return fmt.Errorf("RRULE BYWEEKNO is valid only with FREQ=YEARLY")
+	}
+	if len(ropt.Byweekno) != 0 {
+		for i := range ropt.Byweekday {
+			if ropt.Byweekday[i].N() != 0 {
+				return fmt.Errorf("RRULE ordinal BYDAY is not valid with YEARLY and BYWEEKNO")
+			}
+		}
 	}
 	for i := range ropt.Byweekday {
 		if ropt.Byweekday[i].N() != 0 && ropt.Freq != rrule.YEARLY && ropt.Freq != rrule.MONTHLY {
@@ -254,6 +274,39 @@ func ValidateRRULE(rule string) error {
 		if !hasBound {
 			return fmt.Errorf("RRULE with FREQ=HOURLY requires COUNT or UNTIL")
 		}
+	}
+	return nil
+}
+
+// validateRRULEParts enforces RFC 5545 section 3.3.10 cardinality: FREQ is
+// required, every rule part occurs at most once, and COUNT and UNTIL are
+// mutually exclusive. rrule-go otherwise silently keeps the last occurrence.
+func validateRRULEParts(rule string) error {
+	seen := make(map[string]bool)
+	freq := false
+	for _, part := range strings.Split(rule, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return fmt.Errorf("RRULE contains an empty part")
+		}
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("RRULE contains a malformed part")
+		}
+		key = strings.ToUpper(strings.TrimSpace(key))
+		if seen[key] {
+			return fmt.Errorf("RRULE part %s occurs more than once", key)
+		}
+		seen[key] = true
+		if key == "FREQ" {
+			freq = true
+		}
+	}
+	if !freq {
+		return fmt.Errorf("RRULE requires FREQ")
+	}
+	if seen["COUNT"] && seen["UNTIL"] {
+		return fmt.Errorf("RRULE cannot use both COUNT and UNTIL")
 	}
 	return nil
 }
@@ -292,10 +345,10 @@ func validateRRULEValueForms(rule string, allDay bool) error {
 			if len(value) == len("20060102") {
 				return fmt.Errorf("DATE-TIME RRULE UNTIL must include a time and a valid value type")
 			}
+			// The write path serializes timed DTSTART as UTC Z or a named TZID.
+			// RFC 5545 requires UNTIL to be a UTC DATE-TIME in both cases.
 			if _, err := time.Parse("20060102T150405Z", value); err != nil {
-				if _, err := time.Parse("20060102T150405", value); err != nil {
-					return fmt.Errorf("RRULE UNTIL must use a valid DATE-TIME form")
-				}
+				return fmt.Errorf("timed RRULE UNTIL must be a UTC DATE-TIME ending in Z")
 			}
 		case "BYSECOND", "BYMINUTE", "BYHOUR":
 			if allDay {

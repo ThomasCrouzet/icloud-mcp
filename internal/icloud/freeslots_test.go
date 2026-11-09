@@ -550,3 +550,69 @@ func TestCivilDayCursorAdvancesAcrossGapsAndSkippedDates(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeSlotsSkippedCivilDateIsEmpty(t *testing.T) {
+	apia, err := time.LoadLocation("Pacific/Apia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2011, 12, 29, 0, 0, 0, 0, apia)
+	end := time.Date(2011, 12, 31, 0, 0, 0, 0, apia)
+	thursday, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart: start, RangeEnd: end, Duration: time.Hour, Location: apia,
+		DaysOfWeek: []time.Weekday{time.Thursday}, Limit: 200,
+	})
+	if err != nil || len(thursday) == 0 {
+		t.Fatalf("Thursday slots = %d, %v", len(thursday), err)
+	}
+	friday, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart: start, RangeEnd: end, Duration: time.Hour, Location: apia,
+		DaysOfWeek: []time.Weekday{time.Friday}, Limit: 200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(friday) != 0 {
+		t.Fatalf("skipped Friday produced %d slots: %#v", len(friday), friday)
+	}
+}
+
+func TestFreeSlotsWorkingHoursRespectDSTGapAndFold(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nyStart := time.Date(2026, 3, 8, 0, 0, 0, 0, newYork)
+	nyEnd := time.Date(2026, 3, 8, 6, 0, 0, 0, newYork)
+	nySlots, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart: nyStart, RangeEnd: nyEnd, Duration: time.Hour, Location: newYork,
+		WorkingHourStart: 2*60 + 30, WorkingHourEnd: 4*60 + 30, Limit: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	honestStart := time.Date(2026, 3, 8, 3, 30, 0, 0, newYork)
+	for _, slot := range nySlots {
+		if slot.Start.Before(honestStart) {
+			t.Fatalf("gap working hours advertised a pre-start slot: %v", slot)
+		}
+	}
+
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parisStart := time.Date(2026, 10, 25, 0, 0, 0, 0, paris)
+	parisEnd := time.Date(2026, 10, 25, 5, 0, 0, 0, paris)
+	parisSlots, err := FindFreeSlots(nil, FreeSlotOptions{
+		RangeStart: parisStart, RangeEnd: parisEnd, Duration: time.Hour, Location: paris,
+		WorkingHourStart: 2*60 + 30, WorkingHourEnd: 4 * 60, Limit: 50,
+	})
+	if err != nil || len(parisSlots) == 0 {
+		t.Fatalf("fold slots = %d, %v", len(parisSlots), err)
+	}
+	firstFold := time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC)
+	if !parisSlots[0].Start.Equal(firstFold) {
+		t.Fatalf("fold start = %v, want first occurrence %v", parisSlots[0].Start, firstFold)
+	}
+}

@@ -1647,3 +1647,26 @@ func TestUnknownBookStopsBeforeOperationAndSemaphoreCapsDAV(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscoveryFailsOnIncompleteAddressBookPropfind(t *testing.T) {
+	doer := doerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/":
+			return httpResponse(req, http.StatusMultiStatus, principalXML("/principal/"), nil), nil
+		case "/principal/":
+			return httpResponse(req, http.StatusMultiStatus, homesXML("/home/"), nil), nil
+		case "/home/":
+			body := `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` +
+				`<D:response><D:href>/home/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>` +
+				`<D:response><D:href>/home/book/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>` +
+				`<D:response><D:href>/home/bad/</D:href><D:propstat><D:prop><D:resourcetype/></D:prop><D:status>HTTP/1.1 500 Internal Server Error</D:status></D:propstat></D:response>` +
+				`</D:multistatus>`
+			return httpResponse(req, http.StatusMultiStatus, body, nil), nil
+		default:
+			return httpResponse(req, http.StatusNotFound, "", nil), nil
+		}
+	})
+	client := NewClient(doer, "https://contacts.icloud.com/", allowContactsHost)
+	_, err := client.ListAddressBooks(context.Background())
+	requireCode(t, err, CodePartialFailure)
+}

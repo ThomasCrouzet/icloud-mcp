@@ -176,6 +176,7 @@ type recurrenceProtocol struct {
 	transport *mcptransport.InProcessTransport
 	nextID    int64
 	dav       *recurrenceProtocolDAV
+	zone      *time.Location
 }
 
 type recurrenceProtocolDAV struct {
@@ -259,7 +260,7 @@ func newRecurrenceProtocol(t *testing.T, timezone string, collections map[string
 			t.Error(err)
 		}
 	})
-	protocol := &recurrenceProtocol{transport: transport, dav: dav}
+	protocol := &recurrenceProtocol{transport: transport, dav: dav, zone: location}
 	protocol.request(t, "initialize", map[string]any{
 		"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "capabilities": map[string]any{},
 		"clientInfo": map[string]string{"name": "recurrence-protocol", "version": "test"},
@@ -358,7 +359,15 @@ func (p *recurrenceProtocol) call(t *testing.T, tool string, args map[string]any
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := instant.UTC().Format("20060102T150405Z"); actual != want {
+			wantInstant := instant.UTC()
+			if p.zone != nil && p.zone.String() != "UTC" {
+				if key == "start" {
+					wantInstant = wantInstant.Add(-26 * time.Hour)
+				} else {
+					wantInstant = wantInstant.Add(26 * time.Hour)
+				}
+			}
+			if want := wantInstant.Format("20060102T150405Z"); actual != want {
 				t.Fatalf("REPORT %s = %q, want %q", key, actual, want)
 			}
 		}

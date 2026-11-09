@@ -150,8 +150,8 @@ func filterContactsByBook(contactsList []contacts.ContactSummary, addressBook st
 
 func sortContactSummaries(result *contacts.SearchResult) {
 	sort.SliceStable(result.Contacts, func(i, j int) bool {
-		left := strings.ToLower(result.Contacts[i].DisplayName)
-		right := strings.ToLower(result.Contacts[j].DisplayName)
+		left := contacts.NormalizeSortName(result.Contacts[i].DisplayName)
+		right := contacts.NormalizeSortName(result.Contacts[j].DisplayName)
 		if left != right {
 			return left < right
 		}

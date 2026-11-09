@@ -699,3 +699,68 @@ func TestOverrideOnlyResourceFailsClosed(t *testing.T) {
 	err = validateCalendarObjectIdentity(calendar, "detached-only")
 	requireICloudCode(t, err, CodeProtocolError)
 }
+
+func TestValidateRRULEStrictWriteRules(t *testing.T) {
+	invalid := []string{
+		"FREQ=WEEKLY;BYMONTHDAY=1;COUNT=4",
+		"FREQ=DAILY;BYYEARDAY=100;COUNT=4",
+		"FREQ=WEEKLY;BYYEARDAY=100;COUNT=4",
+		"FREQ=MONTHLY;BYWEEKNO=2;COUNT=4",
+		"FREQ=YEARLY;BYWEEKNO=2;BYDAY=2MO;COUNT=4",
+		"FREQ=DAILY;COUNT=2;COUNT=10",
+		"FREQ=WEEKLY;FREQ=DAILY;COUNT=3",
+		"FREQ=DAILY;COUNT=4;UNTIL=20261201T000000Z",
+		"FREQ=WEEKLY;BYDAY=MO;BYDAY=TU;COUNT=5",
+		"FREQ=DAILY;;COUNT=2",
+	}
+	for _, rule := range invalid {
+		if err := ValidateRRULE(rule); err == nil {
+			t.Errorf("ValidateRRULE(%q) accepted an invalid rule", rule)
+		}
+	}
+	valid := []string{
+		"FREQ=DAILY;COUNT=3",
+		"FREQ=WEEKLY;BYDAY=MO,TU;COUNT=5",
+		"FREQ=MONTHLY;BYMONTHDAY=1;COUNT=4",
+		"FREQ=YEARLY;BYYEARDAY=100;COUNT=4",
+		"FREQ=YEARLY;BYWEEKNO=2;COUNT=4",
+		"FREQ=MONTHLY;BYDAY=2MO;COUNT=4",
+		"FREQ=DAILY;UNTIL=20261201T000000Z",
+	}
+	for _, rule := range valid {
+		if err := ValidateRRULE(rule); err != nil {
+			t.Errorf("ValidateRRULE(%q) error = %v", rule, err)
+		}
+	}
+}
+
+func TestTimedRRULEUntilMustBeUTC(t *testing.T) {
+	for _, rule := range []string{
+		"FREQ=DAILY;UNTIL=20261115T090000",
+		"FREQ=WEEKLY;COUNT=4;UNTIL=20261115T090000",
+	} {
+		if err := validateRRULEValueForms(rule, false); err == nil {
+			t.Errorf("floating timed UNTIL %q was accepted", rule)
+		}
+	}
+	if err := validateRRULEValueForms("FREQ=DAILY;UNTIL=20261115T080000Z", false); err != nil {
+		t.Fatalf("UTC UNTIL = %v", err)
+	}
+	if err := validateRRULEValueForms("FREQ=DAILY;UNTIL=20261115", true); err != nil {
+		t.Fatalf("DATE UNTIL = %v", err)
+	}
+}
+
+func TestParseDateTimeUsesFirstFold(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseDateTime("start", "2026-10-25T02:30:00", paris)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("naive fold = %v, want first occurrence %v", got, want)
+	}
+}

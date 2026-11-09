@@ -17,6 +17,14 @@ import (
 // maxAlarmMinutesBefore caps the alarm at 4 weeks before the event.
 const maxAlarmMinutesBefore = 40320
 
+func hasExplicitDateTimeOffset(value string) bool {
+	if len(value) <= len("2006-01-02") {
+		return false
+	}
+	rest := value[len("2006-01-02"):]
+	return strings.ContainsAny(rest, "Zz+-")
+}
+
 func newCreateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("create_event",
 		mcp.WithDescription("Creates a timed or all-day event with recurrence, up to 5 alarms, and optional idempotent client UID. Existing UIDs conflict; attendees are unsupported."),
@@ -225,10 +233,21 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			}
 		}
 
-		// Recurring timed events need a wall-clock zone; fall back to DEFAULT_TZ.
-		if timezone == "" && finalRule != "" && !allDay {
+		// Recurring timed events need a wall-clock zone. Apply DEFAULT_TZ only
+		// when the caller gave an offset-free wall time; an explicit Z or
+		// numeric offset keeps its fixed-instant policy.
+		explicitOffset := hasExplicitDateTimeOffset(startStr) || hasExplicitDateTimeOffset(endStr)
+		if timezone == "" && finalRule != "" && !allDay && !explicitOffset {
 			if deps.DefaultLocation != nil && deps.DefaultLocation != time.UTC {
 				timezone = deps.DefaultLocation.String()
+			}
+		}
+		if timezone != "" {
+			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
+				resolved, _ := icloud.ResolveWallClock(icloud.WallClockOf(start.In(loc)), loc)
+				if !resolved.Equal(start) {
+					return deny("validation", fmt.Errorf("start offset selects a daylight-saving fold that cannot be represented by timezone %s; use an offset-free local time or a UTC start", timezone))
+				}
 			}
 		}
 		ne := &icloud.NewEvent{
@@ -262,9 +281,9 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		logCalendarMutation(deps.Audit, "create_event", calendarPath, uid, "success")
 
 		response := createEventResponse{Success: true, UID: uid, Calendar: calendarPath}
-		if rrule != "" && timezone == "" && !icloud.IsNamedLocation(ne.StartTime.Location()) {
+		if rrule != "" && timezone == "" && (explicitOffset || !icloud.IsNamedLocation(ne.StartTime.Location())) {
 			response.Warnings = append(response.Warnings,
-				"recurring event with a numeric offset and no IANA timezone is stored as a fixed UTC recurrence")
+				"recurring event with an explicit offset and no IANA timezone is stored as a fixed UTC recurrence")
 		}
 		return writeCalendarJSON(deps.Redactor, response), nil
 	}

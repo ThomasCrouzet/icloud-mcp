@@ -54,6 +54,23 @@ func (c *Client) discover(ctx context.Context) error {
 	}
 }
 
+func incompleteDiscoveryRow(row multiStatusResponse) bool {
+	if status := strings.TrimSpace(row.Status); status != "" && !statusIsOK(status) {
+		return true
+	}
+	success := false
+	for _, propstat := range row.Propstats {
+		if statusIsOK(propstat.Status) {
+			success = true
+			continue
+		}
+		if propstat.Prop.ResourceType != nil {
+			return true
+		}
+	}
+	return !success
+}
+
 func (c *Client) runDiscovery(ctx context.Context) (*discoveryState, error) {
 	entry, err := url.Parse(c.baseURL)
 	if err != nil || entry.Path == "" && entry.Host == "" {
@@ -121,6 +138,9 @@ func (c *Client) runDiscovery(ctx context.Context) (*discoveryState, error) {
 			return nil, propErr
 		}
 		for _, row := range response.rows {
+			if incompleteDiscoveryRow(row) {
+				return nil, newError(CodePartialFailure, 0, "Contacts discovery returned an incomplete address-book result")
+			}
 			prop := successfulProp(row)
 			if prop == nil || prop.ResourceType == nil || prop.ResourceType.AddressBook == nil {
 				continue

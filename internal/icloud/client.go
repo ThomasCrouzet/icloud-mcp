@@ -105,11 +105,18 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, start, e
 		expand = opts.ExpandRecurrence
 	}
 
-	// Time-range filter on VEVENT (the server only returns events, including
-	// recurring ones, overlapping [start, end]).
+	// A server may resolve floating DATE/DATE-TIME values in the collection's
+	// calendar-timezone or its own chosen zone (RFC 4791 section 7.3). Widen
+	// the remote candidate window by the largest civil offset when the
+	// effective query zone is not UTC, then apply the exact local filter.
+	remoteStart, remoteEnd := start, end
+	if _, offset := start.Zone(); offset != 0 || start.Location() != time.UTC {
+		remoteStart = start.Add(-26 * time.Hour)
+		remoteEnd = end.Add(26 * time.Hour)
+	}
 	filterXML := `<C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">` +
-		`<C:time-range start="` + start.UTC().Format(icalTimeLayout) +
-		`" end="` + end.UTC().Format(icalTimeLayout) + `"/>` +
+		`<C:time-range start="` + remoteStart.UTC().Format(icalTimeLayout) +
+		`" end="` + remoteEnd.UTC().Format(icalTimeLayout) + `"/>` +
 		`</C:comp-filter></C:comp-filter></C:filter>`
 	objs, err := c.reportCalendarQuery(ctx, calendarPath, filterXML)
 	if err != nil {
@@ -379,6 +386,10 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 	vevent, err := findMasterVEvent(found.Data)
 	if err != nil {
 		return err
+	}
+	if scope == ScopeOccurrence && up.RecurrenceID != nil {
+		normalized := normalizeFloatingRecurrenceID(vevent, *up.RecurrenceID)
+		up.RecurrenceID = &normalized
 	}
 	if scope == ScopeSeries && up.StartTime != nil && hasRecurrenceAnchors(found.Data) {
 		current, startErr := vevent.Props.DateTime(ical.PropDateTimeStart, time.UTC)
@@ -795,9 +806,13 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		}
 	}
 
+	recID := time.Time{}
+	if scope == ScopeOccurrence {
+		recID = normalizeFloatingRecurrenceID(master, *opts.RecurrenceID)
+	}
 	alreadyExcluded := false
 	if scope == ScopeOccurrence {
-		exists, excluded, targetErr := occurrenceTargetStatus(obj, *opts.RecurrenceID)
+		exists, excluded, targetErr := occurrenceTargetStatus(obj, recID)
 		if targetErr != nil {
 			return DeleteResult{}, targetErr
 		}
@@ -848,7 +863,7 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	}
 
 	if scope == ScopeOccurrence {
-		if err := c.deleteOccurrence(ctx, calendarPath, obj, *opts.RecurrenceID, opts.IfMatchETag); err != nil {
+		if err := c.deleteOccurrence(ctx, calendarPath, obj, recID, opts.IfMatchETag); err != nil {
 			err = withOutcomeReconciliation(err, uid,
 				"Call get_event with this UID and inspect the occurrence. If it is absent, do not repeat the delete; otherwise compare the current ETag before retrying.")
 			return DeleteResult{}, fmt.Errorf("deleting occurrence: %w", err)
@@ -886,6 +901,22 @@ func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
 		return NewValidationError("end is DATE-only but the existing event is timed")
 	}
 	return nil
+}
+
+// normalizeFloatingRecurrenceID keeps a floating series identity in the same
+// wall-clock coordinate as the stored values. ParseDateTime turns the
+// offset-free input into an instant in DEFAULT_TZ; the floating parser stores
+// the same components in UTC, so rebase the components, not the instant.
+func normalizeFloatingRecurrenceID(master *ical.Event, recID time.Time) time.Time {
+	start := master.Props.Get(ical.PropDateTimeStart)
+	if start == nil || isDateOnlyProp(start) || start.Params.Get(ical.PropTimezoneID) != "" {
+		return recID
+	}
+	if strings.HasSuffix(strings.ToUpper(strings.TrimSpace(start.Value)), "Z") {
+		return recID
+	}
+	local := recID.In(recID.Location())
+	return time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
 }
 
 // occurrenceTargetStatus reports whether recID names an existing occurrence of
