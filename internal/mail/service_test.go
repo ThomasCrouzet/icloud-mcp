@@ -1625,3 +1625,19 @@ func TestArchiveSentHonorsResourceScope(t *testing.T) {
 		t.Fatalf("APPEND reached out-of-scope mailbox %q", imap.appendedMailbox)
 	}
 }
+
+func TestSetFlagsNonCondstorePostconditionMismatch(t *testing.T) {
+	t.Parallel()
+	input := SetFlagsInput{Mailbox: "INBOX", UIDValidity: 5, UID: 2, Operation: FlagOperationAdd, Flags: []MessageFlag{FlagSeen}}
+	fake := &fakeIMAP{
+		selected: imapadapter.SelectedMailbox{UIDValidity: 5, UIDNext: 3},
+		flags:    imapadapter.Message{UID: 2, Flags: nil},
+	}
+	_, err := testService(t, fake, nil, true, false).SetMessageFlags(context.Background(), input)
+	if errorCode(t, err) != CodeConcurrentModification {
+		t.Fatalf("postcondition mismatch = %v", err)
+	}
+	if strings.Count(strings.Join(fake.log, ","), "store-delta") != 1 {
+		t.Fatalf("unexpected STORE replay: %v", fake.log)
+	}
+}

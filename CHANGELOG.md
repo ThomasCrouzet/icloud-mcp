@@ -32,6 +32,28 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Match local Contacts filters with RFC 5051 compatibility decomposition, and
   expose `truncated` on free-slot results.
 - Document the override-only CalDAV resource no-go decision.
+- Use one canonical trimmed sort key for Contacts service ordering,
+  cross-book aggregation, and cursor continuation.
+- Replace reversible Contacts cursor positions with a per-registration opaque
+  token, bind it to the effective `contacts.read` scope, and page beyond the
+  service result-byte projection.
+- Apply RFC 5051 titlecase preparation to Contacts query and email filters.
+- Reach an exact UID after a bounded set of casefold-equivalent CardDAV matches
+  and report `partial_failure` when uniqueness cannot be proven.
+- Include omitted repeated values and alarm/scheduling semantics in create
+  reconciliation fingerprints.
+- Require a UTC UNTIL for timed RRULE writes, reject duplicate rule parts and
+  COUNT+UNTIL, and enforce selector-frequency compatibility.
+- Resolve naive DST folds with the first-occurrence policy; keep explicit
+  offsets out of DEFAULT_TZ recurring inference; preserve floating
+  RECURRENCE-ID wall time.
+- Widen the remote CalDAV candidate window for non-UTC queries and fail
+  incomplete PROPFIND collection discovery.
+- Keep working-hour boundaries and skipped civil dates out of DST gaps,
+  folds, and dateline jumps.
+- Refuse unprovable CONDSTORE flag mutations and verify non-CONDSTORE flag
+  postconditions.
+- Expose `truncated` on free-slot results.
 - Decode escaped semicolons in structured vCard `N`, `ADR`, and `ORG` values
   and escape them again on create and targeted patch, so a literal separator
   no longer shifts name, address, or organization components.

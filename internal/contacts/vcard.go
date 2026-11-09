@@ -957,7 +957,8 @@ func contactContentFingerprint(object *addressObject) string {
 func contactFingerprint(view cardView, version string) string {
 	detail := cardDetail(view, version, "", "")
 	detail.ETag = ""
-	detail.TruncatedFields = nil
+	// Keep truncation metadata: an omitted eleventh email or a clipped value
+	// changes the comparison and must not look like an identical retry.
 	detail.MatchedFieldOmitted = false
 	encoded, err := json.Marshal(detail)
 	if err != nil {
@@ -1128,6 +1129,12 @@ func uuidV4() (string, error) {
 		value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
-func normalizeForSort(value string) string {
+// NormalizeSortName is the canonical Contacts sort key. One function is used
+// by the service, cross-book aggregation, and cursor continuation.
+func NormalizeSortName(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeForSort(value string) string {
+	return NormalizeSortName(value)
 }

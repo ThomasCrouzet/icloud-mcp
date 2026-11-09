@@ -128,7 +128,11 @@ reduce the candidate set. The client then applies the phone condition locally.
 
 Local matching is:
 
-- `query`: case-insensitive substring across FN, N, EMAIL, TEL, and ORG.
+- `query`: `i;unicode-casemap`-compatible substring across FN, N, EMAIL, TEL,
+  and ORG. The local comparator applies per-code-point titlecase, a
+  case-insensitive comparison, then NFKD compatibility decomposition. This
+  treats Greek small sigma, final sigma, and capital sigma alike and keeps
+  ligature equivalence.
 - `email`: case-insensitive EMAIL substring.
 - `phone`: digit-normalized TEL substring.
 - `include_groups`: false by default.
@@ -138,16 +142,25 @@ REPORT responses. Results sort by normalized display name, then UID, then book.
 The default result limit is 50, and the maximum is 100. A call without `cursor`
 keeps that single-page result and returns no continuation.
 
+The canonical sort key is `strings.ToLower(strings.TrimSpace(displayName))`,
+then UID, then address book. The same key is used by the single-book service,
+the scoped multi-book merge, and cursor continuation.
+
 `cursor="start"` opts into bounded continuation. The service scans the same
 aggregate 2,000-card and 32 MiB budget and keeps the complete bounded match set,
 then the handler returns one page of at most `limit` summaries. `nextCursor` is
-a signed `c1` token that expires after 300 seconds and binds the address book
-and every filter; `limit` is not bound and may change. A later page re-runs the
-bounded scan and returns rows strictly after the last emitted sort key
-(normalized display name, UID, then address book). A forged, expired, or
-cross-filter token fails before any backend call. A `scanLimitReached` result
-issues no token because later rows are not reachable within the budget. The
-token holds no raw vCard or private field value.
+a signed `c2` token that expires after 300 seconds and binds the address book,
+every filter, and the effective `contacts.read` scope. `limit` is not bound and
+may change. The token carries only a random position ID; the last sort key stays
+in a bounded per-registration process-local map. A forged, expired, cross-filter,
+cross-scope, or cross-registration token fails before any backend call. A
+`scanLimitReached` result issues no token because later rows are not reachable
+within the budget. Decoding the token reveals no contact name, UID, book, or
+filter value.
+
+The complete bounded match set is retained for cursor pages before the 256 KiB
+MCP page budget is applied. Each page reserves room for the token, and a page
+byte cut still points to the last emitted contact.
 
 `truncated` means that the result count or byte limit removed matches.
 `scanLimitReached` means that the scan limit excluded selected cards or books.

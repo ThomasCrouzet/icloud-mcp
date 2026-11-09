@@ -600,3 +600,105 @@ func TestClient_UpdateEvent_AllDayDateForm(t *testing.T) {
 		t.Fatal("invalid DATE form issued a PUT")
 	}
 }
+
+func TestClient_FloatingOccurrenceRoundTrip(t *testing.T) {
+	floating := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:floating-series\r\nSUMMARY:Floating\r\n" +
+		"DTSTART:20260701T090000\r\nDTEND:20260701T100000\r\nDTSTAMP:20260701T000000Z\r\n" +
+		"RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"update", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			m := newMockCalDAV(t)
+			path := testHomeCalendar + "floating-series.ics"
+			m.objects["floating-series"] = mockObject{path: path, ics: floating}
+			client := m.client()
+			recID, err := ParseDateTime("recurrence_id", "2026-07-01T09:00:00", paris)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation == "update" {
+				title := "Updated"
+				if err := client.UpdateEvent(context.Background(), testHomeCalendar, "floating-series", &EventUpdate{
+					Title: &title, Scope: ScopeOccurrence, RecurrenceID: &recID,
+				}); err != nil {
+					t.Fatalf("floating update = %v", err)
+				}
+				m.mu.Lock()
+				body := m.puts[0].body
+				m.mu.Unlock()
+				if !strings.Contains(body, "RECURRENCE-ID:20260701T090000") || strings.Contains(body, "RECURRENCE-ID:20260701T070000") {
+					t.Fatalf("floating RECURRENCE-ID shifted:\n%s", body)
+				}
+			} else {
+				if _, err := client.DeleteEvent(context.Background(), testHomeCalendar, "floating-series", &DeleteOptions{
+					Scope: ScopeOccurrence, RecurrenceID: &recID,
+				}); err != nil {
+					t.Fatalf("floating delete = %v", err)
+				}
+				m.mu.Lock()
+				body := m.puts[0].body
+				m.mu.Unlock()
+				if !strings.Contains(body, "EXDATE:20260701T090000") || strings.Contains(body, "EXDATE:20260701T070000") {
+					t.Fatalf("floating EXDATE shifted:\n%s", body)
+				}
+			}
+		})
+	}
+}
+
+func TestClient_SearchEventsWidensRemoteWindowForNonUTCQuery(t *testing.T) {
+	floating := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\n" +
+		"UID:floating-search\r\nSUMMARY:Floating\r\nDTSTART:20260701T123000\r\nDTEND:20260701T124500\r\n" +
+		"DTSTAMP:20260701T000000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	m := newMockCalDAV(t)
+	m.objects["floating-search"] = mockObject{path: testHomeCalendar + "floating-search.ics", ics: floating}
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC).In(paris)
+	end := time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC).In(paris)
+	result, err := m.client().SearchEvents(context.Background(), testHomeCalendar, start, end, nil)
+	if err != nil {
+		t.Fatalf("SearchEvents() error = %v", err)
+	}
+	if len(result.Events) != 1 || result.Events[0].UID != "floating-search" {
+		t.Fatalf("floating result = %#v", result.Events)
+	}
+	m.mu.Lock()
+	report := string(m.lastReportBody)
+	m.mu.Unlock()
+	widened := start.Add(-26 * time.Hour).UTC().Format(icalTimeLayout)
+	if !strings.Contains(report, `start="`+widened+`"`) {
+		t.Fatalf("REPORT did not widen the remote window:\n%s", report)
+	}
+}
+
+func TestClient_CreateEventReconciliationRejectsDifferentAlarmSemantics(t *testing.T) {
+	m := newMockCalDAV(t)
+	existing := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\n" +
+		"UID:alarm-uid\r\nSUMMARY:Alarm event\r\nDTSTAMP:20260701T000000Z\r\n" +
+		"DTSTART:20260701T090000Z\r\nDTEND:20260701T100000Z\r\n" +
+		"BEGIN:VALARM\r\nACTION:EMAIL\r\nTRIGGER:-PT15M\r\nATTENDEE:mailto:private@example.test\r\n" +
+		"SUMMARY:Reminder\r\nDESCRIPTION:Private\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	m.objects["alarm-uid"] = mockObject{path: testHomeCalendar + "alarm.ics", ics: existing}
+	client := m.client()
+	start := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	_, err := client.CreateEvent(context.Background(), testHomeCalendar, &NewEvent{
+		Title: "Alarm event", StartTime: start, EndTime: start.Add(time.Hour),
+		AlarmMinutesBefore: 15, ClientUID: "alarm-uid",
+	})
+	if ie := AsICloudError(err); ie == nil || ie.Code != CodeConflict {
+		t.Fatalf("alarm semantics reconciliation = %v", err)
+	}
+	m.mu.Lock()
+	puts := len(m.puts)
+	m.mu.Unlock()
+	if puts != 0 {
+		t.Fatalf("different alarm semantics issued %d PUTs", puts)
+	}
+}

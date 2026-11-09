@@ -59,6 +59,10 @@ func (s *Client) SetMessageFlags(ctx context.Context, input SetFlagsInput) (SetF
 			result.ResultIncomplete = true
 			return result, nil
 		}
+		if !flagDeltaMatches(updated.Flags, input.Operation == FlagOperationAdd, flags) {
+			return nil, newError(CodeConcurrentModification,
+				"the flag change was dispatched but the fetched flags contradict the requested state; re-read before mutating")
+		}
 		result.Flags = publicFlags(updated.Flags)
 		result.ModSeq = updated.ModSeq
 		return result, nil
@@ -67,6 +71,19 @@ func (s *Client) SetMessageFlags(ctx context.Context, input SetFlagsInput) (SetF
 		return SetFlagsResult{}, err
 	}
 	return value.(SetFlagsResult), nil
+}
+
+func flagDeltaMatches(actual []string, add bool, requested []string) bool {
+	present := make(map[string]bool, len(actual))
+	for _, flag := range actual {
+		present[strings.ToLower(flag)] = true
+	}
+	for _, flag := range requested {
+		if add != present[strings.ToLower(flag)] {
+			return false
+		}
+	}
+	return true
 }
 
 func protocolFlags(flags []MessageFlag) []string {

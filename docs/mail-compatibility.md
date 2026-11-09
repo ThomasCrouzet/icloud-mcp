@@ -177,19 +177,20 @@ delta-only `+FLAGS.SILENT` or `-FLAGS.SILENT`. It never sends a full replacement
 The result reports `conditionalUpdate: false`. Then, it tries to get the
 resulting flags.
 
-When the IMAP server advertises CONDSTORE, flag updates require `expected_modseq`.
-The adapter sends one UID STORE with `UNCHANGEDSINCE`. It does not replace all
-flags. Because beta.8 discards tagged MODIFIED, the adapter validates the
-single-UID result from the returned FETCH metadata instead. A missing FETCH, an
-unrelated UID, or a malformed response maps to `protocol_error`. The adapter
-checks the exact requested add or remove state on every returned FETCH,
-including one whose MODSEQ increased. A missing requested flag, a flag that
-should be absent but remains, or a partial multi-flag delta maps to
-`concurrent_modification`. It never treats a tagged OK or a MODSEQ increase as
-success by itself.
+When the IMAP server advertises CONDSTORE, `set_message_flags` requires
+`expected_modseq` but the pinned beta.8 cannot expose the tagged `MODIFIED`
+response code. A matching unsolicited FETCH, even with the requested flags and
+a higher MODSEQ, does not prove that the guarded STORE ran. The adapter
+therefore reports `protocol_error` before dispatch and does not claim a
+conditional success. A future library that exposes MODIFIED can restore the
+conditional path.
 
-A FETCH that proves the requested delta reports `conditionalUpdate: true` and
-the new flags and MODSEQ.
+Without CONDSTORE, the adapter sends one unconditional delta STORE and fetches
+the final flags. If the fetched flags do not contain or omit exactly the
+requested delta, the result is `concurrent_modification` with reconciliation
+guidance, never a definitive success. A matching fetch reports
+`conditionalUpdate: false`, which explicitly means no atomic concurrency
+guarantee.
 A stale MODSEQ changes no flags and returns `concurrent_modification`. The
 adapter never retries the conditional STORE. An ambiguous dispatched write still
 returns `outcome_unknown`.

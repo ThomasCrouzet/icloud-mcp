@@ -42,6 +42,7 @@ type ContactsDeps struct {
 	Redactor       *security.Redactor
 	ResourceScopes config.ResourceScopes
 	Idempotency    *idempotencyStore
+	ContactsCursor *contactsCursorCodec
 }
 
 type contactsRawArgs map[string]json.RawMessage

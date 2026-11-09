@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/emersion/go-vcard"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -55,7 +57,7 @@ func uidQuery(uid string) string {
 		`<D:prop><D:getetag/><C:address-data/></D:prop>` +
 		`<C:filter><C:prop-filter name="UID"><C:text-match collation="i;unicode-casemap" match-type="equals">` +
 		xmlEscape(uid) + `</C:text-match></C:prop-filter></C:filter>` +
-		`<C:limit><C:nresults>2</C:nresults></C:limit>` +
+		`<C:limit><C:nresults>64</C:nresults></C:limit>` +
 		`</C:addressbook-query>`
 }
 
@@ -196,7 +198,7 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 	}
 	for _, summary := range matches[:count] {
 		result.Contacts = append(result.Contacts, summary)
-		if !resultFits(result) {
+		if !opts.PageAll && !resultFits(result) {
 			result.Contacts = result.Contacts[:len(result.Contacts)-1]
 			result.Truncated = true
 			break
@@ -205,10 +207,18 @@ func (c *Client) SearchContacts(ctx context.Context, opts SearchOptions) (Search
 	return result, nil
 }
 
-// collationFold approximates the mandatory i;unicode-casemap REPORT
-// collation: compatibility decomposition (NFKD) then case folding.
+// collationFold implements RFC 5051 i;unicode-casemap preparation:
+// per-code-point Unicode titlecase, then recursive compatibility decomposition.
 func collationFold(value string) string {
-	return strings.ToLower(norm.NFKD.String(value))
+	titlecase := cases.Title(language.Und, cases.NoLower)
+	var prepared strings.Builder
+	prepared.Grow(len(value))
+	for _, r := range value {
+		// Full per-code-point titlecase (final sigma and ligatures expand),
+		// then a case-insensitive comparison, then compatibility decomposition.
+		prepared.WriteString(strings.ToLower(titlecase.String(string(r))))
+	}
+	return norm.NFKD.String(prepared.String())
 }
 
 func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched, omittedFieldMatch bool) {
@@ -276,7 +286,7 @@ func contactMatches(card vcard.Card, raw *rawCard, opts SearchOptions) (matched,
 }
 
 func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*addressObject, error) {
-	objects, overflow, _, err := c.report(ctx, book, uidQuery(uid), 3, maxReportBytes)
+	objects, overflow, _, err := c.report(ctx, book, uidQuery(uid), 65, maxReportBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -294,13 +304,15 @@ func (c *Client) findByUID(ctx context.Context, book bookRecord, uid string) (*a
 	case len(exact) > 1:
 		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact with the same UID")
 	case overflow:
-		return nil, newError(CodeProtocolError, 0, "UID lookup was truncated before an exact UID match")
-	case len(objects) > 1:
-		return nil, newError(CodeProtocolError, 0, "UID lookup returned more than one contact and none matched exactly")
-	case len(objects) == 0:
-		return nil, newError(CodeNotFound, http.StatusNotFound, "contact UID was not found in the address book")
+		return nil, newError(CodePartialFailure, 0, "UID lookup was truncated before an exact UID match")
+	case len(objects) > 0:
+		// The server returned casefold-equivalent UIDs but not the exact one.
+		// A conforming server may have truncated the result set, so this is
+		// not proof that the exact UID is absent. Fail closed without
+		// selecting an arbitrary casefold match.
+		return nil, newError(CodePartialFailure, 0, "UID lookup could not prove whether the exact UID exists")
 	default:
-		return nil, newError(CodeProtocolError, 0, "UID lookup returned a different contact")
+		return nil, newError(CodeNotFound, http.StatusNotFound, "contact UID was not found in the address book")
 	}
 }
 

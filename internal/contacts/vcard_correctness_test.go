@@ -2,12 +2,15 @@ package contacts
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/emersion/go-vcard"
 )
 
 type multiCardFixture struct {
@@ -476,5 +479,92 @@ func TestContactSearchUsesUnicodeCollation(t *testing.T) {
 	view := newCardView(card, raw)
 	if summary := cardSummary(view, "book", "\"e\""); summary.DisplayName != "Émile Laurent" {
 		t.Fatalf("display value was rewritten: %q", summary.DisplayName)
+	}
+}
+
+func TestCreateContactReconciliationRejectsOmittedExistingValues(t *testing.T) {
+	var extras []string
+	for i := 1; i <= 11; i++ {
+		extras = append(extras, fmt.Sprintf("EMAIL:user%d@example.test", i))
+	}
+	cards := map[string]string{"/home/book/ten.vcf": v3Card("client-ten", "Ten", extras...)}
+	fixture := &multiCardFixture{cards: cards}
+	client := NewClient(fixture, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	var emails []TypedValue
+	for i := 1; i <= 10; i++ {
+		emails = append(emails, TypedValue{Value: fmt.Sprintf("user%d@example.test", i)})
+	}
+	_, err := client.CreateContact(context.Background(), &CreateContactInput{
+		AddressBook: book.Identifier, DisplayName: "Ten", Name: StructuredName{FamilyName: "Ten"},
+		Emails: emails, ClientUID: "client-ten",
+	})
+	requireCode(t, err, CodeConflict)
+	if len(fixture.recordsFor(http.MethodPut)) != 0 {
+		t.Fatal("omitted existing value still issued a PUT")
+	}
+}
+
+func TestFindByUIDReachesExactMatchBeyondCaseFoldPrefix(t *testing.T) {
+	cards := make(map[string]string)
+	for _, uid := range []string{"Aaa", "AAA", "aaa", "AaA"} {
+		cards["/home/book/"+uid+".vcf"] = v3Card(uid, "Case "+uid)
+	}
+	client := NewClient(&multiCardFixture{cards: cards}, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	record := client.state.byID[book.Identifier]
+	object, err := client.findByUID(context.Background(), record, "AaA")
+	if err != nil {
+		t.Fatalf("findByUID() error = %v", err)
+	}
+	if got := object.card.Value(vcard.FieldUID); got != "AaA" {
+		t.Fatalf("findByUID() selected %q, want AaA", got)
+	}
+}
+
+func TestFindByUIDDoesNotSelectCaseFoldMatchWhenTruncated(t *testing.T) {
+	cards := map[string]string{"/home/book/Aaa.vcf": v3Card("Aaa", "Case Aaa")}
+	client := NewClient(&multiCardFixture{cards: cards}, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	record := client.state.byID[book.Identifier]
+	_, err := client.findByUID(context.Background(), record, "AaA")
+	requireCode(t, err, CodePartialFailure)
+}
+
+func TestSearchContactsPageAllKeepsMatchesBeyondResultByteLimit(t *testing.T) {
+	cards := make(map[string]string, 200)
+	for i := 0; i < 200; i++ {
+		var extras []string
+		for j := 0; j < 5; j++ {
+			extras = append(extras, fmt.Sprintf("EMAIL:%s%d-%d@example.test", strings.Repeat("x", 280), i, j))
+		}
+		cards[fmt.Sprintf("/home/book/%03d.vcf", i)] = v3Card(fmt.Sprintf("uid-%03d", i), fmt.Sprintf("Dense %03d", i), extras...)
+	}
+	client := NewClient(&multiCardFixture{cards: cards}, "https://contacts.icloud.com/", allowContactsHost)
+	book := discoveredBook(t, client)
+	result, err := client.SearchContacts(context.Background(), SearchOptions{AddressBook: book.Identifier, Limit: 100, PageAll: true})
+	if err != nil {
+		t.Fatalf("SearchContacts(PageAll) error = %v", err)
+	}
+	if len(result.Contacts) != 200 {
+		t.Fatalf("PageAll contacts = %d, want 200", len(result.Contacts))
+	}
+	if result.Truncated {
+		t.Fatal("PageAll was truncated by the serialized result cap")
+	}
+}
+
+func TestContactSearchTreatsGreekSigmasAsEqual(t *testing.T) {
+	card, _, raw, err := decodeRawCard([]byte(v3Card("greek", "Οδυσσεύς")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"σ", "ς", "Σ"} {
+		if matched, _ := contactMatches(card, raw, SearchOptions{Query: query}); !matched {
+			t.Fatalf("query %q did not match Οδυσσεύς", query)
+		}
+	}
+	if collationFold("σ") != collationFold("ς") || collationFold("σ") != collationFold("Σ") {
+		t.Fatal("sigma variants do not share the RFC 5051 preparation")
 	}
 }

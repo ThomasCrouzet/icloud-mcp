@@ -247,3 +247,54 @@ func TestCreateEventRejectsConflictingAliasesBeforeService(t *testing.T) {
 		t.Fatalf("conflicting aliases reached CreateEvent %d times", svc.CreateCallCount)
 	}
 }
+
+func TestCreateEventExplicitOffsetKeepsFixedPolicy(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &icloud.MockService{CreatedUID: "fixed-uid"}
+	deps := testDeps(svc)
+	deps.DefaultLocation = paris
+	handler := createEventHandler(deps)
+	res, err := handler(context.Background(), newReq(map[string]any{
+		"title": "Fixed UTC", "start": "2026-07-01T09:00:00Z", "end": "2026-07-01T10:00:00Z",
+		"calendar": "/cal/home/", "rrule": "FREQ=WEEKLY;COUNT=40",
+	}))
+	if err != nil || res.IsError {
+		t.Fatalf("explicit Z create: err=%v result=%s", err, resultText(t, res))
+	}
+	if svc.LastCreated == nil || svc.LastCreated.Timezone != "" {
+		t.Fatalf("explicit Z recurrence inferred timezone: %+v", svc.LastCreated)
+	}
+
+	svc = &icloud.MockService{CreatedUID: "naive-uid"}
+	deps = testDeps(svc)
+	deps.DefaultLocation = paris
+	handler = createEventHandler(deps)
+	res, err = handler(context.Background(), newReq(map[string]any{
+		"title": "Paris local", "start": "2026-07-01T09:00:00", "end": "2026-07-01T10:00:00",
+		"calendar": "/cal/home/", "rrule": "FREQ=WEEKLY;COUNT=40",
+	}))
+	if err != nil || res.IsError {
+		t.Fatalf("naive create: err=%v result=%s", err, resultText(t, res))
+	}
+	if svc.LastCreated == nil || svc.LastCreated.Timezone != "Europe/Paris" {
+		t.Fatalf("naive recurrence timezone: %+v", svc.LastCreated)
+	}
+
+	svc = &icloud.MockService{CreatedUID: "fold-uid"}
+	deps = testDeps(svc)
+	deps.DefaultLocation = paris
+	handler = createEventHandler(deps)
+	res, err = handler(context.Background(), newReq(map[string]any{
+		"title": "Fold", "start": "2026-10-25T02:30:00+01:00", "end": "2026-10-25T03:30:00+01:00",
+		"calendar": "/cal/home/", "timezone": "Europe/Paris",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || svc.CreateCallCount != 0 {
+		t.Fatalf("ambiguous fold reached create: %s", resultText(t, res))
+	}
+}

@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"maps"
@@ -876,9 +877,11 @@ func validateCalendarObjectIdentity(cal *ical.Calendar, expectedUID string) erro
 	return nil
 }
 
-// objectContentFingerprint compares the modeled master VEVENT properties that
-// a create request controls. Server-managed fields (DTSTAMP, SEQUENCE,
-// CREATED, LAST-MODIFIED) and property order do not participate.
+// objectContentFingerprint compares every create-controlled, side-effect-
+// bearing property of the master and its overrides. Server-managed fields
+// (DTSTAMP, SEQUENCE, CREATED, LAST-MODIFIED, PRODID, VERSION) and property
+// order do not participate. Alarm and scheduling values are hashed so no
+// address appears in an error or log.
 func objectContentFingerprint(cal *ical.Calendar) (string, bool) {
 	if cal == nil {
 		return "", false
@@ -888,37 +891,55 @@ func objectContentFingerprint(cal *ical.Calendar) (string, bool) {
 		ical.PropDescription: true, ical.PropDateTimeStart: true, ical.PropDateTimeEnd: true,
 		ical.PropDuration: true, ical.PropRecurrenceRule: true, ical.PropExceptionDates: true,
 		ical.PropStatus: true, ical.PropTransparency: true, ical.PropURL: true,
+		ical.PropOrganizer: true, ical.PropAttendee: true, ical.PropRecurrenceID: true,
 	}
 	var lines []string
 	for _, child := range cal.Children {
 		if child == nil || child.Name != ical.CompEvent {
 			continue
 		}
-		if len(child.Props[ical.PropRecurrenceID]) > 0 {
-			continue
+		prefix := ""
+		if recID := child.Props.Get(ical.PropRecurrenceID); recID != nil {
+			prefix = "override:" + recID.Value + "|"
 		}
 		for name := range names {
 			for _, property := range child.Props[name] {
-				entry := name
-				for param, values := range property.Params {
-					for _, value := range values {
-						entry += ";" + param + "=" + value
-					}
-				}
-				lines = append(lines, entry+":"+property.Value)
+				lines = append(lines, prefix+fingerprintProperty(name, property))
 			}
 		}
 		for _, alarm := range child.Children {
 			if alarm == nil || alarm.Name != ical.CompAlarm {
 				continue
 			}
-			for _, property := range alarm.Props[ical.PropTrigger] {
-				lines = append(lines, ical.PropTrigger+":"+property.Value)
+			for name, properties := range alarm.Props {
+				for _, property := range properties {
+					lines = append(lines, prefix+"alarm:"+fingerprintProperty(name, property))
+				}
 			}
 		}
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n"), true
+}
+
+func fingerprintProperty(name string, property ical.Prop) string {
+	entry := name
+	params := make([]string, 0, len(property.Params))
+	for param, values := range property.Params {
+		for _, value := range values {
+			params = append(params, param+"="+value)
+		}
+	}
+	sort.Strings(params)
+	for _, param := range params {
+		entry += ";" + param
+	}
+	value := property.Value
+	if strings.EqualFold(name, ical.PropAttendee) || strings.EqualFold(name, ical.PropOrganizer) {
+		sum := sha256.Sum256([]byte(value))
+		value = hex.EncodeToString(sum[:])
+	}
+	return entry + ":" + value
 }
 
 func remoteEventFieldLimit(name string) int {

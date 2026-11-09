@@ -536,11 +536,10 @@ func commandTag(line string) string {
 
 func TestValidateConditionalStoreSingleUID(t *testing.T) {
 	flags := []string{"\\Seen"}
-	success, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
+	if _, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
 		{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}},
-	})
-	if err != nil || success.ModSeq != 12 || len(success.Flags) != 1 {
-		t.Fatalf("success = %+v, %v", success, err)
+	}); err == nil {
+		t.Fatal("changed MODSEQ with matching flags was accepted without tagged MODIFIED")
 	}
 	for _, test := range []struct {
 		name    string

@@ -130,7 +130,7 @@ func (s *Session) SupportsModifiedDetection() bool { return false }
 // SupportsConditionalStore reports whether a single-UID conditional STORE can
 // be validated from the returned FETCH metadata. This does not require the
 // tagged MODIFIED response code.
-func (s *Session) SupportsConditionalStore() bool { return s.caps.CondStore }
+func (s *Session) SupportsConditionalStore() bool { return false }
 
 func (s *Session) List() ([]Mailbox, error) {
 	var options *imap.ListOptions
@@ -618,7 +618,7 @@ func (s *Session) ConditionalStoreDelta(uid uint32, add bool, flags []string, ex
 	return validateConditionalStore(uid, add, flags, expectedModSeq, buffers)
 }
 
-func validateConditionalStore(uid uint32, add bool, flags []string, _ uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
+func validateConditionalStore(uid uint32, add bool, flags []string, expectedModSeq uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
 	if len(buffers) == 0 {
 		return Message{}, &Error{Kind: ErrorConflict}
 	}
@@ -644,6 +644,13 @@ func validateConditionalStore(uid uint32, add bool, flags []string, _ uint64, bu
 		if add != present[flag] {
 			return Message{}, &Error{Kind: ErrorConflict}
 		}
+	}
+	// A changed MODSEQ cannot be attributed to this guarded STORE: an
+	// unsolicited FETCH or another writer may have produced the same flags.
+	// Without the tagged MODIFIED code, fail closed instead of claiming that
+	// the UNCHANGEDSINCE precondition passed.
+	if buffer.ModSeq > expectedModSeq {
+		return Message{}, &Error{Kind: ErrorConflict}
 	}
 	return message, nil
 }

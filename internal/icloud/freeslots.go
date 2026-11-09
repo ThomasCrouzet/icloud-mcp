@@ -244,6 +244,19 @@ func (d civilDate) after(other civilDate) bool {
 	return d.day > other.day
 }
 
+// civilDayExists reports whether any local instant carries this civil date.
+// A dateline shift can skip an entire date (Pacific/Apia 2011-12-30).
+func civilDayExists(d civilDate, loc *time.Location) bool {
+	midnight := time.Date(d.year, d.month, d.day, 0, 0, 0, 0, loc)
+	for minute := 0; minute <= 26*60; minute += 15 {
+		local := midnight.Add(time.Duration(minute) * time.Minute).In(loc)
+		if local.Year() == d.year && local.Month() == d.month && local.Day() == d.day {
+			return true
+		}
+	}
+	return false
+}
+
 // civilDayStart returns the first representable instant whose local civil date
 // is d. When midnight is missing, Go normalizes time.Date to the previous day,
 // so scan forward to the actual transition instead of looping on that value.
@@ -260,13 +273,19 @@ func civilDayStart(d civilDate, loc *time.Location) time.Time {
 }
 
 func localTimeOnCivilDay(d civilDate, minutesFromMidnight int, loc *time.Location) time.Time {
-	day := civilDayStart(d, loc).In(loc)
-	year, month, date := day.Date()
 	if minutesFromMidnight >= 24*60 {
 		next := d.next()
+		for !civilDayExists(next, loc) {
+			next = next.next()
+		}
 		return civilDayStart(next, loc)
 	}
-	return time.Date(year, month, date, minutesFromMidnight/60, minutesFromMidnight%60, 0, 0, loc)
+	// Resolve the working-hour wall time with the same RFC 5545 policy as
+	// iCalendar values: a gap moves forward, a fold selects the first
+	// occurrence. time.Date can choose the second fold or move a gap backward.
+	wall := time.Date(d.year, d.month, d.day, minutesFromMidnight/60, minutesFromMidnight%60, 0, 0, time.UTC)
+	resolved, _ := ResolveWallClock(wall, loc)
+	return resolved
 }
 
 const maxFreeSlotCivilDays = 100_000
@@ -300,8 +319,18 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 			if work > maxFreeSlotCivilDays {
 				return nil, NewError(CodePayloadTooLarge, 0, "free-slot civil-day work exceeded its bound", nil)
 			}
+			if !civilDayExists(day, loc) {
+				// A date skipped by a dateline shift is empty, never an alias
+				// for the previous or next real day.
+				day = day.next()
+				continue
+			}
+			nextDay := day.next()
+			for !civilDayExists(nextDay, loc) {
+				nextDay = nextDay.next()
+			}
 			dayStart := civilDayStart(day, loc)
-			nextStart := civilDayStart(day.next(), loc)
+			nextStart := civilDayStart(nextDay, loc)
 			if !dayFilter[day.weekday()] {
 				day = day.next()
 				continue
@@ -318,7 +347,7 @@ func clipWorkingHours(free []Interval, opts FreeSlotOptions, loc *time.Location)
 			default:
 				segments = []Interval{{
 					Start: localTimeOnCivilDay(day, whStart, loc),
-					End:   localTimeOnCivilDay(day.next(), whEnd, loc),
+					End:   localTimeOnCivilDay(nextDay, whEnd, loc),
 				}}
 			}
 			for _, seg := range segments {
