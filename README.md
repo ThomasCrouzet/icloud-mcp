@@ -434,7 +434,7 @@ for search, parser, recurrence, and concurrency bounds.
 ### Build and test
 
 From the repository root, use Go 1.26.0 or newer and Make. Build and test need
-no iCloud account or running service. CI and release builds pin Go 1.26.10.
+no iCloud account or running service. CI and release builds pin Go 1.26.11.
 
 ```sh
 make build        # bin/icloud-mcp, host Go; version defaults to dev

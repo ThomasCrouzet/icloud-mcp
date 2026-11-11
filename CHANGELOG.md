@@ -6,6 +6,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- Pin CI and the release builder image to Go 1.26.11 for GO-2026-6859, the
+  `net/http` `MaxBytesReader` header race. Keep the module minimum at Go 1.26.0.
+
 ## [1.1.0] - 2026-11-09
 
 This minor release publishes the merged Calendar, Contacts, Mail, and

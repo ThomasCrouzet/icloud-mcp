@@ -5,7 +5,7 @@
 `make lint` uses golangci-lint v2.15.0 and supports Go 1.27.3.
 The linter requires Go 1.26 or newer to build. With an older host toolchain,
 Go can download a compatible version when automatic toolchain selection is enabled.
-The CI lint step uses Go 1.27.3. Other CI checks and release builds use Go 1.26.10.
+The CI lint step uses Go 1.27.3. Other CI checks and release builds use Go 1.26.11.
 
 Run the complete local gates:
 
@@ -13,7 +13,7 @@ Run the complete local gates:
 GOMAXPROCS=2 GOFLAGS=-p=1 make test # go test ./... -race -cover
 GOMAXPROCS=2 GOFLAGS=-p=1 make lint # go vet plus pinned golangci-lint
 GOMAXPROCS=2 GOFLAGS=-p=1 make build # host-toolchain development binary
-make release VERSION=v1.2.3 # packaged linux/arm64 in pinned Go 1.26.10 container
+make release VERSION=v1.2.3 # packaged linux/arm64 in pinned Go 1.26.11 container
 ```
 
 Useful focused commands for the unified domains:
@@ -499,7 +499,7 @@ Package coverage floors are:
 | `cmd/icloud-mcp` | 55% |
 
 Tag releases build the candidate bytes exactly once, in `release-candidates`.
-That job runs `make release-all` with Go 1.26.10 pinned (`check-latest: false`),
+That job runs `make release-all` with Go 1.26.11 pinned (`check-latest: false`),
 builds one MCPB bundle per target, appends the bundle hashes to the checksums
 file, validates `server.json` package hashes, and writes
 `candidate-digests.txt`. It uploads the directory as one immutable artifact.
