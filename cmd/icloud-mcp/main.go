@@ -363,6 +363,10 @@ func newBootRedactor(cfg *config.Config) *security.Redactor {
 			Username: cfg.MailAddress,
 			Password: cfg.MailPassword,
 		})
+		if cfg.MailFrom != "" {
+			// The sender is an identity too, but never a login: no password variants.
+			credentials = append(credentials, security.CredentialPair{Username: cfg.MailFrom})
+		}
 	}
 	return security.NewRedactor(security.RedactionVariants(credentials...)...)
 }
@@ -408,6 +412,7 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 		archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
 		mailService, err = maildomain.NewService(maildomain.Config{
 			Address:         strings.Clone(cfg.MailAddress),
+			From:            strings.Clone(cfg.MailFrom),
 			Password:        strings.Clone(cfg.MailPassword),
 			RecipientPolicy: recipientPolicy,
 			EnableSentCopy:  capabilities.MailArchive,

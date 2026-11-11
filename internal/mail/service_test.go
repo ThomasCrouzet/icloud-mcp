@@ -195,10 +195,12 @@ type fakeSMTP struct {
 	closeFn     func()
 	message     []byte
 	from        string
+	authUser    string
 }
 
 func (f *fakeSMTP) add(value string) { *f.log = append(*f.log, value) }
-func (f *fakeSMTP) Auth(_, _ string) error {
+func (f *fakeSMTP) Auth(user, _ string) error {
+	f.authUser = user
 	f.add("auth")
 	if f.authFn != nil {
 		return f.authFn()
