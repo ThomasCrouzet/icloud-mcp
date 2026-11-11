@@ -31,6 +31,7 @@ const (
 // Config contains the immutable service settings. NewService copies it.
 type Config struct {
 	Address         string          `json:"-"`
+	From            string          `json:"-"` // optional sender; empty means Address
 	Password        string          `json:"-"`
 	RecipientPolicy RecipientPolicy `json:"-"`
 	EnableSentCopy  bool            `json:"-"`

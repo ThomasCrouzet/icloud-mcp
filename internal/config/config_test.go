@@ -25,6 +25,7 @@ func clearEnv(t *testing.T) {
 		"ICLOUD_MCP_ENABLE_CONTACTS",
 		"ICLOUD_MCP_ENABLE_MAIL",
 		"ICLOUD_MAIL_ADDRESS",
+		"ICLOUD_MAIL_FROM",
 		"ICLOUD_MAIL_PASSWORD",
 		"ICLOUD_MCP_ENABLE_MAIL_WRITE",
 		"ICLOUD_MCP_ENABLE_MAIL_SEND",
@@ -507,6 +508,38 @@ func TestLoad_MailCredentialsAndPasswordFallback(t *testing.T) {
 	}
 	if cfg.MailPassword != "separate-mail-password" {
 		t.Errorf("dedicated Mail password was not loaded")
+	}
+}
+
+func TestLoad_MailFromIsOptionalAndValidated(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("ICLOUD_EMAIL", "calendar@example.com")
+	t.Setenv("ICLOUD_PASSWORD", "calendar-app-password")
+	t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+	t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() without ICLOUD_MAIL_FROM: %v", err)
+	}
+	if cfg.MailFrom != "" {
+		t.Errorf("MailFrom = %q, want empty by default", cfg.MailFrom)
+	}
+
+	t.Setenv("ICLOUD_MAIL_FROM", "alias@custom.example")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() with ICLOUD_MAIL_FROM: %v", err)
+	}
+	if cfg.MailFrom != "alias@custom.example" || cfg.MailAddress != "mailbox@example.com" {
+		t.Errorf("MailFrom/MailAddress = %q/%q", cfg.MailFrom, cfg.MailAddress)
+	}
+
+	for _, bad := range []string{"not-an-address", "Alias <alias@custom.example>", "alias@custom.example\r\nBcc: x@example.com"} {
+		t.Setenv("ICLOUD_MAIL_FROM", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("ICLOUD_MAIL_FROM %q was accepted", bad)
+		}
 	}
 }
 
