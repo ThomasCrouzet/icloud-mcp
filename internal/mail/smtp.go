@@ -317,7 +317,7 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	if err := session.Auth(s.config.Address, s.config.Password); err != nil {
 		return result, mapSMTPAuthError(err, ctx)
 	}
-	if err := session.Mail(s.config.Address, int64(len(prepared.bytes)), prepared.smtpUTF8); err != nil {
+	if err := session.Mail(s.config.From, int64(len(prepared.bytes)), prepared.smtpUTF8); err != nil {
 		return result, mapSMTPError(err, ctx, false, "envelope sender was rejected")
 	}
 	var firstRejection error
@@ -420,12 +420,12 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 	if err := validateReplyHeaders(input.InReplyTo, input.References); err != nil {
 		return preparedMessage{}, err
 	}
-	messageID, err := generateMessageID(s.config.Address)
+	messageID, err := generateMessageID(s.config.From)
 	if err != nil {
 		return preparedMessage{}, newError(CodeInternalError, "could not generate a message identifier")
 	}
 	var header msgmail.Header
-	header.SetAddressList("From", []*msgmail.Address{{Address: s.config.Address}})
+	header.SetAddressList("From", []*msgmail.Address{{Address: s.config.From}})
 	header.SetAddressList("To", to)
 	header.SetAddressList("Cc", cc)
 	header.SetDate(s.now())
@@ -457,7 +457,7 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 	if buffer.Len() > MaxEncodedMessage {
 		return preparedMessage{}, newError(CodePayloadTooLarge, "encoded message exceeds 256 KiB")
 	}
-	smtpUTF8 := containsNonASCII(s.config.Address)
+	smtpUTF8 := containsNonASCII(s.config.From)
 	for _, recipient := range recipients {
 		smtpUTF8 = smtpUTF8 || containsNonASCII(recipient)
 	}
