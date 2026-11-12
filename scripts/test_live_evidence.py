@@ -230,6 +230,18 @@ class OutputDirectoryTests(unittest.TestCase):
 
 
 class RedactionTests(unittest.TestCase):
+    def test_mail_from_is_a_secret_literal_raw_and_from_file(self):
+        env = valid_mail_env(ICLOUD_MAIL_FROM="alias@custom.example")
+        self.assertIn("alias@custom.example", live_evidence.secret_literals(env))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mail-from"
+            path.write_text("file-alias@custom.example\n", encoding="ascii")
+            path.chmod(0o600)
+            env = valid_mail_env(ICLOUD_MAIL_FROM=f"file://{path}")
+            secrets = live_evidence.secret_literals(env)
+        self.assertIn("file-alias@custom.example", secrets)
+        self.assertIn(f"file://{path}", secrets)
+
     def test_configured_secrets_and_protocol_credentials_are_removed(self):
         env = valid_mail_env()
         env["ICLOUD_MCP_INTEGRATION_CALENDAR"] = "/123456789/calendars/private/"

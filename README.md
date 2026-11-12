@@ -359,7 +359,7 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_MCP_ENABLE_CONTACTS` | No | `false` | Enable Contacts reads; writes require `contacts.write` or `contacts.delete` |
 | `ICLOUD_MCP_ENABLE_MAIL` | No | `false` | Enable Mail reads |
 | `ICLOUD_MAIL_ADDRESS` | When Mail is on | None | Full iCloud Mail address; supports `file://` |
-| `ICLOUD_MAIL_FROM` | No | `ICLOUD_MAIL_ADDRESS` | Sender address for From and `MAIL FROM`, for example an iCloud+ custom-domain address; login stays on `ICLOUD_MAIL_ADDRESS`; supports `file://` |
+| `ICLOUD_MAIL_FROM` | No | `ICLOUD_MAIL_ADDRESS` | Sender address for From and `MAIL FROM`, for example an iCloud+ custom-domain address; login stays on `ICLOUD_MAIL_ADDRESS`; ASCII only; supports `file://` (an empty file is an error) |
 | `ICLOUD_MAIL_PASSWORD` | No | `ICLOUD_PASSWORD` | Separate Mail app-specific password; supports `file://` |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No | `false` | Compatibility gate only; Mail mutation requires `mail.mutate` or `mail.trash` |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | No | `false` | Compatibility gate only; send requires `mail.send` and a recipient policy |

@@ -52,7 +52,7 @@ func TestNewServiceRejectsInvalidFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, from := range []string{"not-an-address", "Alias <alias@example.com>", "a@example.com\r\nBcc: x@example.com"} {
+	for _, from := range []string{"not-an-address", "Alias <alias@example.com>", "a@example.com\r\nBcc: x@example.com", "élise@custom.example"} {
 		_, err := newService(Config{Address: "sender@icloud.com", From: from, Password: "app-password", RecipientPolicy: policy},
 			func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
 			func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
@@ -139,18 +139,5 @@ func TestSentCopyMatchesSubmittedMessageWithFrom(t *testing.T) {
 	}
 	if !strings.Contains(string(imap.appendedMessage), "From: <alias@custom.example>\r\n") {
 		t.Fatalf("Sent copy does not carry the configured sender:\n%s", imap.appendedMessage)
-	}
-}
-
-func TestNonASCIIFromRequestsSMTPUTF8(t *testing.T) {
-	t.Parallel()
-	service := testService(t, nil, &fakeSMTP{log: new([]string)}, false, true)
-	service.config.From = "élise@custom.example"
-	prepared, err := service.buildMessage(SendInput{To: []string{"to@example.com"}, Subject: "s", Body: "body"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !prepared.smtpUTF8 {
-		t.Fatal("non-ASCII sender did not request SMTPUTF8")
 	}
 }

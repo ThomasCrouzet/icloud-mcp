@@ -10,8 +10,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add optional `ICLOUD_MAIL_FROM` to send from an address other than the login,
   such as an iCloud+ custom-domain address. It sets the From header, `MAIL FROM`
   and the Message-ID domain; AUTH and IMAP stay on `ICLOUD_MAIL_ADDRESS`,
-  reply-all drops both identities, and the boot redactor masks the sender.
-  Without it, behavior is unchanged.
+  reply-all drops both identities, and the boot redactor and live-evidence
+  guard mask the sender. The address must be ASCII, and an empty `file://`
+  sender fails startup. Without it, behavior is unchanged.
 
 ## [1.1.0] - 2026-11-09
 

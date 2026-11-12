@@ -535,12 +535,94 @@ func TestLoad_MailFromIsOptionalAndValidated(t *testing.T) {
 		t.Errorf("MailFrom/MailAddress = %q/%q", cfg.MailFrom, cfg.MailAddress)
 	}
 
-	for _, bad := range []string{"not-an-address", "Alias <alias@custom.example>", "alias@custom.example\r\nBcc: x@example.com"} {
+	// This version is ASCII-only: a Unicode sender is rejected at boot.
+	for _, bad := range []string{"not-an-address", "Alias <alias@custom.example>", "alias@custom.example\r\nBcc: x@example.com", "élise@custom.example", "   "} {
 		t.Setenv("ICLOUD_MAIL_FROM", bad)
 		if _, err := Load(); err == nil {
 			t.Errorf("ICLOUD_MAIL_FROM %q was accepted", bad)
 		}
 	}
+}
+
+func TestLoad_MailFromFile(t *testing.T) {
+	setup := func(t *testing.T) string {
+		clearEnv(t)
+		t.Setenv("ICLOUD_EMAIL", "calendar@example.com")
+		t.Setenv("ICLOUD_PASSWORD", "calendar-app-password")
+		t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+		t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+		return filepath.Join(t.TempDir(), "mail-from")
+	}
+
+	t.Run("valid file", func(t *testing.T) {
+		path := setup(t)
+		if err := os.WriteFile(path, []byte("alias@custom.example\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ICLOUD_MAIL_FROM", "file://"+path)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.MailFrom != "alias@custom.example" || cfg.MailAddress != "mailbox@example.com" {
+			t.Errorf("MailFrom/MailAddress = %q/%q", cfg.MailFrom, cfg.MailAddress)
+		}
+	})
+
+	// An empty env value keeps the login fallback; an explicit file that
+	// resolves to nothing must fail instead of silently changing the sender.
+	t.Run("empty env value falls back", func(t *testing.T) {
+		setup(t)
+		t.Setenv("ICLOUD_MAIL_FROM", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.MailFrom != "" {
+			t.Errorf("MailFrom = %q, want empty", cfg.MailFrom)
+		}
+	})
+
+	for name, content := range map[string]string{"empty file": "", "whitespace-only file": " \n\t\n"} {
+		t.Run(name+" is rejected", func(t *testing.T) {
+			path := setup(t)
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ICLOUD_MAIL_FROM", "file://"+path)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "ICLOUD_MAIL_FROM") {
+				t.Fatalf("Load() error = %v, want ICLOUD_MAIL_FROM rejection", err)
+			}
+		})
+	}
+
+	t.Run("insecure permissions are rejected", func(t *testing.T) {
+		path := setup(t)
+		if err := os.WriteFile(path, []byte("alias@custom.example\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ICLOUD_MAIL_FROM", "file://"+path)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "insecure_permissions") {
+			t.Fatalf("Load() error = %v, want insecure_permissions", err)
+		}
+	})
+
+	t.Run("oversized file is rejected", func(t *testing.T) {
+		path := setup(t)
+		if err := os.WriteFile(path, []byte(strings.Repeat("a", maxCredentialFileBytes+1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ICLOUD_MAIL_FROM", "file://"+path)
+		_, err := Load()
+		if err == nil || strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "too_large") {
+			t.Fatalf("Load() error = %v, want too_large without path", err)
+		}
+	})
 }
 
 func TestLoad_MailCredentialsFromFiles(t *testing.T) {
