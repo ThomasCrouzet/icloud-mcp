@@ -46,19 +46,47 @@ func TestSendUsesConfiguredFromButAuthenticatesWithAddress(t *testing.T) {
 	}
 }
 
-func TestNewServiceRejectsInvalidFrom(t *testing.T) {
-	t.Parallel()
-	policy, err := ParseRecipientPolicy("*")
+const invalidFromMessage = "mail sender must be a plain ASCII addr-spec"
+
+// newServiceWithFactories builds a sender configuration through real session
+// factories so the sender check runs after the dialer checks. Nil factories
+// would stop newService earlier and hide the sender path.
+func newServiceWithFactories(t *testing.T, from string) (*Client, error) {
+	t.Helper()
+	policy, err := ParseRecipientPolicy("Allowed@Example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var log []string
+	imapFactory := func(context.Context, net.Conn, string, string) (imapSession, error) {
+		return &fakeIMAP{}, nil
+	}
+	smtpFactory := func(context.Context, net.Conn) (smtpSession, error) {
+		return &fakeSMTP{log: &log}, nil
+	}
+	return newService(Config{Address: "sender@icloud.com", From: from, Password: "app-password", RecipientPolicy: policy},
+		func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
+		func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
+		false, true, imapFactory, smtpFactory)
+}
+
+func TestNewServiceRejectsInvalidFrom(t *testing.T) {
+	t.Parallel()
+	// Control: the same factories accept a valid ASCII sender, so a rejection
+	// below comes from the sender check and not from a missing session factory.
+	if _, err := newServiceWithFactories(t, "alias@custom.example"); err != nil {
+		t.Fatalf("valid From was rejected: %v", err)
+	}
 	for _, from := range []string{"not-an-address", "Alias <alias@example.com>", "a@example.com\r\nBcc: x@example.com", "élise@custom.example"} {
-		_, err := newService(Config{Address: "sender@icloud.com", From: from, Password: "app-password", RecipientPolicy: policy},
-			func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
-			func(context.Context) (net.Conn, error) { return fakeConn{}, nil },
-			false, true, nil, nil)
+		_, err := newServiceWithFactories(t, from)
 		if err == nil {
 			t.Fatalf("From %q was accepted", from)
+		}
+		if code := errorCode(t, err); code != CodeValidation {
+			t.Fatalf("From %q error code = %q, want %q", from, code, CodeValidation)
+		}
+		if !strings.Contains(err.Error(), invalidFromMessage) {
+			t.Fatalf("From %q error = %v, want the sender rejection", from, err)
 		}
 	}
 }
