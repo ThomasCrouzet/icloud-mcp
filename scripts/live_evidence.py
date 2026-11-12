@@ -273,6 +273,7 @@ def secret_literals(env):
         "ICLOUD_EMAIL",
         "ICLOUD_PASSWORD",
         "ICLOUD_MAIL_ADDRESS",
+        "ICLOUD_MAIL_FROM",
         "ICLOUD_MAIL_PASSWORD",
         "ICLOUD_MCP_INTEGRATION_SELF_RECIPIENT",
         "ICLOUD_MCP_INTEGRATION_CALENDAR",

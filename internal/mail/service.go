@@ -61,8 +61,8 @@ func newService(config Config, imapDial IMAPDialFunc, smtpDial SMTPDialFunc, ena
 	config.Address = address
 	if config.From == "" {
 		config.From = address
-	} else if config.From, err = validateAddrSpec(config.From); err != nil {
-		return nil, validationError("mail sender must be a plain addr-spec")
+	} else if config.From, err = validateAddrSpec(config.From); err != nil || containsNonASCII(config.From) {
+		return nil, validationError("mail sender must be a plain ASCII addr-spec")
 	}
 	config.RecipientPolicy = config.RecipientPolicy.clone()
 	return &Client{
