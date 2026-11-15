@@ -328,7 +328,7 @@ jobs:
           echo "candidate_manifest_sha256=$(sha256sum dist/candidate-digests.txt | cut -d" " -f1)"
 
       - name: Upload immutable candidate artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-candidates-${{ steps.version.outputs.value }}
           path: dist/
@@ -420,7 +420,7 @@ jobs:
           cp "$after" "$RUNNER_TEMP/native-digests-${ASSET_OS}-${ASSET_ARCH}.txt"
 
       - name: Record native-tested digests
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-digests-${{ steps.version.outputs.value }}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
           path: ${{ runner.temp }}/native-digests-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.txt
