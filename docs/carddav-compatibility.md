@@ -146,21 +146,53 @@ The canonical sort key is `strings.ToLower(strings.TrimSpace(displayName))`,
 then UID, then address book. The same key is used by the single-book service,
 the scoped multi-book merge, and cursor continuation.
 
-`cursor="start"` opts into bounded continuation. The service scans the same
-aggregate 2,000-card and 32 MiB budget and keeps the complete bounded match set,
-then the handler returns one page of at most `limit` summaries. `nextCursor` is
-a signed `c2` token that expires after 300 seconds and binds the address book,
-every filter, and the effective `contacts.read` scope. `limit` is not bound and
-may change. The token carries only a random position ID; the last sort key stays
-in a bounded per-registration process-local map. A forged, expired, cross-filter,
-cross-scope, or cross-registration token fails before any backend call. A
-`scanLimitReached` result issues no token because later rows are not reachable
-within the budget. Decoding the token reveals no contact name, UID, book, or
-filter value.
+`cursor="start"` opts into bounded continuation. The first page runs the same
+aggregate 2,000-card and 32 MiB scan budget, keeps the complete bounded match
+set, and returns one page of at most `limit` summaries. Every later page reads
+that retained result set and issues no CardDAV request, so page navigation does
+not repeat a REPORT, vCard decode, or sort per book.
 
-The complete bounded match set is retained for cursor pages before the 256 KiB
-MCP page budget is applied. Each page reserves room for the token, and a page
-byte cut still points to the last emitted contact.
+`nextCursor` is a signed `c3` token that expires after 300 seconds and binds the
+address book, every filter, and the effective `contacts.read` scope. `limit` is
+not bound and may change between pages. The token carries only a random entry
+identifier and the filter digest; the result set stays in a bounded
+per-registration, process-local cache. A forged, expired, cross-filter,
+cross-scope, or cross-registration token fails before any backend call.
+
+Cursor snapshot retention is bounded in two dimensions: at most 4 snapshots and
+at most 32 MiB of retained summary bytes, with at most 128 cursor entries. The
+byte budget equals the existing REPORT scan budget, so a result set that the
+scan budget admitted always fits and pagination never fails for size alone. A
+snapshot is evicted only with every entry that points into it, so an evicted
+generation cannot silently advance inside newer results. A token whose snapshot
+left the cache fails closed with a validation error and never rebases onto a
+later scan of the same filters. The codec refuses a result set that is empty or
+unordered, and then the walk ends without a token.
+
+Snapshot semantics:
+
+- The snapshot is immutable. Contact edits, deletes, and new contacts that
+  happen after the first page stay invisible to that walk; a new walk started
+  with `cursor=start` observes them.
+- All pages of one walk share the snapshot deadline, so a page chain cannot
+  extend the 5-minute lifetime.
+- A process restart drops every snapshot and every token. A later page of an
+  interrupted walk fails closed with a validation error, and the caller
+  restarts with `cursor=start`.
+- A `scanLimitReached` first page issues no token, because rows beyond the
+  budget are not reachable. The same rule applies when the byte budget truncated
+  the match set.
+- The cache is per registration and per process. Two sessions with different
+  filters hold separate snapshots, and a scope change rejects the token.
+
+Decoding a token reveals no contact name, UID, book, or filter value. Snapshot
+rows are never written to disk, never logged, and never placed in an error
+message. The retained set is a bounded search result, not an address-book
+mirror.
+
+The complete bounded match set backs the 256 KiB MCP page budget. Each page
+reserves room for the token, and a page byte cut still points to the next
+unemitted row.
 
 `truncated` means that the result count or byte limit removed matches.
 `scanLimitReached` means that the scan limit excluded selected cards or books.
