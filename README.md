@@ -60,7 +60,7 @@ See the [threat model and reporting policy](SECURITY.md) and
 
 | Capability | Operations | Enablement |
 |---|---|---|
-| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | Reads always on; `calendar.write` and `calendar.delete` in `ICLOUD_MCP_PERMISSIONS` are required for effects; group-scheduled mutations also need `calendar.schedule` and `acknowledge_scheduling` |
+| Calendar | List calendars; search, get, and validate events; find free slots; create, update, and delete events | `calendar.read` in `ICLOUD_MCP_PERMISSIONS` registers the read tools; a profile without it receives no Calendar tool; `calendar.write` and `calendar.delete` are required for effects; group-scheduled mutations also need `calendar.schedule` and `acknowledge_scheduling` |
 | Contacts | List books; search and get contacts; create, update, and delete vCard 3.0 contacts | Reads require `ICLOUD_MCP_ENABLE_CONTACTS=true`; writes require `contacts.write` or `contacts.delete` |
 | Mail read | List mailboxes; search messages; get plain text and attachment metadata | `ICLOUD_MCP_ENABLE_MAIL=true` |
 | Mail mutation | Change flags; move or trash a message | Mail plus `mail.mutate` or `mail.trash` |

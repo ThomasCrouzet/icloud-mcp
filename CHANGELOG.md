@@ -13,6 +13,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reply-all drops both identities, and the boot redactor and live-evidence
   guard mask the sender. The address must be ASCII, and an empty `file://`
   sender fails startup. Without it, behavior is unchanged.
+  Contributed by patobiskoto.
 
 ## [1.1.1] - 2026-11-15
 
