@@ -24,7 +24,7 @@ against that host or model. Review those policies before any account read.
 
 ## Configuration reference
 
-Exactly **14** product environment variables:
+Exactly **15** product environment variables:
 
 | Variable | Default | Contract |
 |----------|---------|----------|
@@ -38,6 +38,7 @@ Exactly **14** product environment variables:
 | `ICLOUD_MCP_ENABLE_CONTACTS` | `false` | Contacts reads. Writes require `contacts.write` or `contacts.delete`. |
 | `ICLOUD_MCP_ENABLE_MAIL` | `false` | Mail reads. Requires a Mail address and password. |
 | `ICLOUD_MAIL_ADDRESS` | none | Full IMAP/SMTP address when Mail is on. `file://` as above. |
+| `ICLOUD_MAIL_FROM` | `ICLOUD_MAIL_ADDRESS` | Optional sender for From and `MAIL FROM`, such as an iCloud+ custom-domain address. Login stays on `ICLOUD_MAIL_ADDRESS`. ASCII only. `file://` as above; an empty file is an error. |
 | `ICLOUD_MAIL_PASSWORD` | `ICLOUD_PASSWORD` | Optional dedicated Mail app password. `file://` as above. |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Compatibility gate. Mutation tools require `mail.mutate` or `mail.trash`. |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | Compatibility gate. Send tools require `mail.send`. |
@@ -300,7 +301,7 @@ ICLOUD_MCP_ENABLE_CONTACTS: "false"
 
 An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
 before the server starts. See the [configuration reference](#configuration-reference)
-for all 14 product variables.
+for all 15 product variables.
 
 ## Logs and health
 

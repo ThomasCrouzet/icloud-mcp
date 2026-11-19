@@ -128,6 +128,35 @@ class BundleTests(unittest.TestCase):
         )
         self.assertEqual(manifest["user_config"]["read_only"]["default"], "true")
         self.assertTrue(manifest["user_config"]["icloud_password"]["sensitive"])
+        # Every product variable the manifest sets must have an owning setting,
+        # so an operator can change it without editing the bundle.
+        product_keys = {
+            "ICLOUD_EMAIL",
+            "ICLOUD_PASSWORD",
+            "ICLOUD_MCP_READ_ONLY",
+            "ICLOUD_MCP_PERMISSIONS",
+            "ICLOUD_MCP_RESOURCE_SCOPES",
+            "ICLOUD_MCP_DEFAULT_TZ",
+            "ICLOUD_MCP_ENABLE_CONTACTS",
+            "ICLOUD_MCP_ENABLE_MAIL",
+            "ICLOUD_MAIL_ADDRESS",
+            "ICLOUD_MAIL_FROM",
+            "ICLOUD_MAIL_PASSWORD",
+            "ICLOUD_MCP_ENABLE_MAIL_WRITE",
+            "ICLOUD_MCP_ENABLE_MAIL_SEND",
+            "ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS",
+        }
+        env = manifest["server"]["mcp_config"]["env"]
+        self.assertEqual(set(env), product_keys)
+        for name, reference in env.items():
+            setting = reference.removeprefix("${user_config.").removesuffix("}")
+            self.assertNotEqual(reference, setting, name)
+            self.assertIn(setting, manifest["user_config"], name)
+        self.assertEqual(
+            env["ICLOUD_MAIL_FROM"], "${user_config.mail_from}"
+        )
+        self.assertFalse(manifest["user_config"]["mail_from"]["sensitive"])
+        self.assertNotIn("default", manifest["user_config"]["mail_from"])
 
     def test_build_from_release_archive(self):
         archive = self.root / "release.tar.gz"

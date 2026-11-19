@@ -70,6 +70,7 @@ environment variable:
 | `enable_contacts` | `ICLOUD_MCP_ENABLE_CONTACTS` | No |
 | `enable_mail` | `ICLOUD_MCP_ENABLE_MAIL` | No |
 | `mail_address` | `ICLOUD_MAIL_ADDRESS` | No |
+| `mail_from` | `ICLOUD_MAIL_FROM` | No |
 | `mail_password` | `ICLOUD_MAIL_PASSWORD` | Yes |
 | `enable_mail_write` | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No |
 | `enable_mail_send` | `ICLOUD_MCP_ENABLE_MAIL_SEND` | No |

@@ -79,7 +79,7 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {
 		address := strings.TrimSpace(candidate.Address)
-		if address == "" || canonicalAddrSpec(address) == canonicalAddrSpec(s.config.Address) {
+		if address == "" || canonicalAddrSpec(address) == canonicalAddrSpec(s.config.Address) || canonicalAddrSpec(address) == canonicalAddrSpec(s.config.From) {
 			continue
 		}
 		normalized, err := validateAddrSpec(address)

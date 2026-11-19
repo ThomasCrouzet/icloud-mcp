@@ -149,6 +149,9 @@ def evaluate_gates(env, destructive=False):
 
     mail_present = True
     mail_password_name = None
+    # The optional sender goes through the same file reference checks as the
+    # address. Boot rejects an empty sender, so a live run must reject it too.
+    mail_from_set = bool(env_text(env, "ICLOUD_MAIL_FROM"))
     if mail:
         try:
             if check_secret_reference(env, "ICLOUD_MAIL_ADDRESS") is None:
@@ -169,6 +172,14 @@ def evaluate_gates(env, destructive=False):
         if mail_password_name:
             try:
                 check_secret_reference(env, mail_password_name)
+            except GateError as error:
+                mail_present = False
+                problems.append(str(error))
+        # The optional sender goes through the same file reference checks as the
+        # address. Boot rejects an empty sender, so a live run must reject it too.
+        if mail_from_set:
+            try:
+                check_secret_reference(env, "ICLOUD_MAIL_FROM")
             except GateError as error:
                 mail_present = False
                 problems.append(str(error))
@@ -257,6 +268,7 @@ def evaluate_gates(env, destructive=False):
         "calendar_selector_set": calendar_selector_set,
         "smtp_policy_exact": bool(policy) and not wildcard,
         "self_recipient_set": self_recipient_set,
+        "mail_from_set": mail_from_set,
         "credentials": {
             "calendar": calendar_present,
             "mail": mail_present if mail else False,
@@ -273,6 +285,7 @@ def secret_literals(env):
         "ICLOUD_EMAIL",
         "ICLOUD_PASSWORD",
         "ICLOUD_MAIL_ADDRESS",
+        "ICLOUD_MAIL_FROM",
         "ICLOUD_MAIL_PASSWORD",
         "ICLOUD_MCP_INTEGRATION_SELF_RECIPIENT",
         "ICLOUD_MCP_INTEGRATION_CALENDAR",
@@ -280,7 +293,12 @@ def secret_literals(env):
         raw = env_text(env, name)
         if raw:
             values.append(raw)
-        secret = secret_text(env, name)
+        try:
+            secret = secret_text(env, name)
+        except GateError:
+            # The gate refuses an invalid reference. Redaction must still run so
+            # a stored artifact never contains the raw reference.
+            secret = None
         if secret:
             values.append(secret)
     values.extend(recipient_policy(env))
@@ -508,6 +526,7 @@ def markdown_evidence(evidence):
         "read_only",
         "contacts",
         "mail",
+        "mail_from_set",
         "mail_write",
         "mail_send",
         "integration_writes",
@@ -577,6 +596,7 @@ def check_command(env, destructive=False):
     print(f"- Calendar credentials: {'present' if state['credentials']['calendar'] else 'missing'}")
     print(f"- Contacts gate: {'on' if state['contacts'] else 'off'}")
     print(f"- Mail gate: {'on' if state['mail'] else 'off'}")
+    print(f"- Mail sender override: {'on' if state['mail_from_set'] else 'off'}")
     print(f"- Mail write gate: {'on' if state['mail_write'] else 'off'}")
     print(f"- Mail send gate: {'on' if state['mail_send'] else 'off'}")
     print(f"- Destructive gate: {'on' if state['integration_writes'] else 'off'}")

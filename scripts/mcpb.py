@@ -188,6 +188,18 @@ def manifest_for(target, version, allow_untested_windows=False):
             "required": False,
             "sensitive": False,
         },
+        "mail_from": {
+            "type": "string",
+            "title": "Optional sender address",
+            "description": (
+                "Sender for the From header and MAIL FROM, for example an "
+                "iCloud+ custom-domain address. Login stays on the Mail "
+                "address. ASCII only. A file:// value is allowed; an empty "
+                "file fails startup."
+            ),
+            "required": False,
+            "sensitive": False,
+        },
         "mail_password": {
             "type": "string",
             "title": "Mail app-specific password",
@@ -242,6 +254,7 @@ def manifest_for(target, version, allow_untested_windows=False):
         "ICLOUD_MCP_ENABLE_CONTACTS": "${user_config.enable_contacts}",
         "ICLOUD_MCP_ENABLE_MAIL": "${user_config.enable_mail}",
         "ICLOUD_MAIL_ADDRESS": "${user_config.mail_address}",
+        "ICLOUD_MAIL_FROM": "${user_config.mail_from}",
         "ICLOUD_MAIL_PASSWORD": "${user_config.mail_password}",
         "ICLOUD_MCP_ENABLE_MAIL_WRITE": "${user_config.enable_mail_write}",
         "ICLOUD_MCP_ENABLE_MAIL_SEND": "${user_config.enable_mail_send}",

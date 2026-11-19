@@ -220,6 +220,19 @@ func TestBootRedactorExcludesDisabledMailCredentials(t *testing.T) {
 	}
 }
 
+func TestBootRedactorIncludesMailFrom(t *testing.T) {
+	cfg := &config.Config{
+		EnableMail:   true,
+		MailAddress:  "login-user@icloud.com",
+		MailFrom:     "alias-sender@custom.example",
+		MailPassword: "mail-app-secret",
+	}
+	output := newBootRedactor(cfg).Redact("sent as " + cfg.MailFrom)
+	if strings.Contains(output, cfg.MailFrom) || !strings.Contains(output, "[REDACTED]") {
+		t.Fatalf("configured sender was not redacted: %q", output)
+	}
+}
+
 func TestOptionalServiceConstructionIsLazyAndGated(t *testing.T) {
 	base := config.Config{
 		Email:        "calendar-user@example.com",

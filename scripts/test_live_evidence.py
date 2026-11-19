@@ -191,6 +191,88 @@ class GateValidationTests(unittest.TestCase):
             problems,
         )
 
+    def test_mail_from_reference_is_validated_when_set(self):
+        # Unset sender keeps the login address: no problem.
+        problems, state = live_evidence.evaluate_gates(valid_mail_env())
+        self.assertEqual(problems, [])
+        self.assertFalse(state["mail_from_set"])
+
+        # An inline sender is accepted.
+        problems, state = live_evidence.evaluate_gates(
+            valid_mail_env(ICLOUD_MAIL_FROM="alias@custom.example")
+        )
+        self.assertEqual(problems, [])
+        self.assertTrue(state["mail_from_set"])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            # A valid secret file is accepted.
+            good = root / "mail-from"
+            good.write_text("alias@custom.example\n", encoding="ascii")
+            os.chmod(good, 0o600)
+            problems, _state = live_evidence.evaluate_gates(
+                valid_mail_env(ICLOUD_MAIL_FROM=f"file://{good}")
+            )
+            self.assertEqual(problems, [])
+
+            # An empty file is a problem, as it is at boot.
+            empty = root / "mail-from-empty"
+            empty.write_text("", encoding="ascii")
+            os.chmod(empty, 0o600)
+            problems, _state = live_evidence.evaluate_gates(
+                valid_mail_env(ICLOUD_MAIL_FROM=f"file://{empty}")
+            )
+            self.assertTrue(
+                any(
+                    "ICLOUD_MAIL_FROM" in problem and "empty" in problem
+                    for problem in problems
+                ),
+                problems,
+            )
+
+            # A permissive mode is a problem, and the path stays out of the text.
+            loose = root / "mail-from-loose"
+            loose.write_text("alias@custom.example\n", encoding="ascii")
+            os.chmod(loose, 0o644)
+            problems, _state = live_evidence.evaluate_gates(
+                valid_mail_env(ICLOUD_MAIL_FROM=f"file://{loose}")
+            )
+            self.assertTrue(
+                any(
+                    "ICLOUD_MAIL_FROM" in problem and "0600" in problem
+                    for problem in problems
+                ),
+                problems,
+            )
+            self.assertFalse(any(str(loose) in problem for problem in problems))
+
+    def test_mail_from_secret_literals_skip_an_invalid_reference(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "mail-from-empty"
+            path.write_text("", encoding="ascii")
+            os.chmod(path, 0o600)
+            env = valid_mail_env(ICLOUD_MAIL_FROM=f"file://{path}")
+            # The gate reports the bad reference, so redaction must not raise.
+            problems, _state = live_evidence.evaluate_gates(env)
+            self.assertTrue(problems)
+            self.assertIsInstance(live_evidence.secret_literals(env), list)
+
+    def test_check_reports_an_invalid_sender_reference_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "mail-from-empty"
+            path.write_text("", encoding="ascii")
+            os.chmod(path, 0o600)
+            completed = run_cli(
+                "--check",
+                env=clean_env(**valid_mail_env(ICLOUD_MAIL_FROM=f"file://{path}")),
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertIn("live evidence gate check: FAIL", completed.stderr)
+            self.assertIn("ICLOUD_MAIL_FROM file:// target is empty", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertNotIn(str(path), completed.stderr)
+
     def test_invalid_boolean_is_reported(self):
         env = valid_calendar_env(ICLOUD_MCP_ENABLE_MAIL="yes")
         problems, _state = live_evidence.evaluate_gates(env)
@@ -230,6 +312,18 @@ class OutputDirectoryTests(unittest.TestCase):
 
 
 class RedactionTests(unittest.TestCase):
+    def test_mail_from_is_a_secret_literal_raw_and_from_file(self):
+        env = valid_mail_env(ICLOUD_MAIL_FROM="alias@custom.example")
+        self.assertIn("alias@custom.example", live_evidence.secret_literals(env))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mail-from"
+            path.write_text("file-alias@custom.example\n", encoding="ascii")
+            path.chmod(0o600)
+            env = valid_mail_env(ICLOUD_MAIL_FROM=f"file://{path}")
+            secrets = live_evidence.secret_literals(env)
+        self.assertIn("file-alias@custom.example", secrets)
+        self.assertIn(f"file://{path}", secrets)
+
     def test_configured_secrets_and_protocol_credentials_are_removed(self):
         env = valid_mail_env()
         env["ICLOUD_MCP_INTEGRATION_CALENDAR"] = "/123456789/calendars/private/"

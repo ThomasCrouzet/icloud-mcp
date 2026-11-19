@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add optional `ICLOUD_MAIL_FROM` to send from an address other than the login,
+  such as an iCloud+ custom-domain address. It sets the From header, `MAIL FROM`
+  and the Message-ID domain; AUTH and IMAP stay on `ICLOUD_MAIL_ADDRESS`,
+  reply-all drops both identities, and the boot redactor and live-evidence
+  guard mask the sender. The address must be ASCII, and an empty `file://`
+  sender fails startup. Without it, behavior is unchanged.
+
 ## [1.1.1] - 2026-11-15
 
 This patch release rebuilds the published archives and MCPB bundles with Go
@@ -18,6 +26,7 @@ This patch release rebuilds the published archives and MCPB bundles with Go
 ### Changed
 - Update the release pipeline to `actions/upload-artifact` v7.0.2 and
   `actions/download-artifact` v8.0.2.
+
 
 ## [1.1.0] - 2026-11-09
 

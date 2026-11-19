@@ -44,6 +44,7 @@ const (
 	enableMailWriteEnvVar       = "ICLOUD_MCP_ENABLE_MAIL_WRITE"
 	enableMailSendEnvVar        = "ICLOUD_MCP_ENABLE_MAIL_SEND"
 	mailAddressEnvVar           = "ICLOUD_MAIL_ADDRESS"
+	mailFromEnvVar              = "ICLOUD_MAIL_FROM"
 	mailPasswordEnvVar          = "ICLOUD_MAIL_PASSWORD"
 	smtpAllowedRecipientsEnvVar = "ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS"
 )
@@ -360,6 +361,7 @@ type Config struct {
 	EnableMailWrite       bool            // ICLOUD_MCP_ENABLE_MAIL_WRITE, configured value
 	EnableMailSend        bool            // ICLOUD_MCP_ENABLE_MAIL_SEND, configured value
 	MailAddress           string          // ICLOUD_MAIL_ADDRESS (file:// supported)
+	MailFrom              string          // ICLOUD_MAIL_FROM: optional sender (From and MAIL FROM), e.g. a custom-domain alias; ASCII only; empty means MailAddress
 	MailPassword          string          // ICLOUD_MAIL_PASSWORD (file:// supported), NEVER log it
 	SMTPAllowedRecipients []string        // normalized exact addresses, or a single literal "*"
 	SMTPRecipientPolicy   RecipientPolicy // immutable exact-match policy for SMTP authorization
@@ -435,11 +437,22 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	var mailAddress, mailPassword string
+	var mailAddress, mailPassword, mailFrom string
 	if mailRequested {
 		mailAddress, err = loadCredential(mailAddressEnvVar)
 		if err != nil {
 			return nil, err
+		}
+		if os.Getenv(mailFromEnvVar) != "" {
+			mailFrom, err = loadCredential(mailFromEnvVar)
+			if err != nil {
+				return nil, err
+			}
+			if mailFrom == "" {
+				// An explicit sender that resolves to nothing (empty file://
+				// target) must not silently fall back to the login address.
+				return nil, fmt.Errorf("invalid %s: configured sender is empty", mailFromEnvVar)
+			}
 		}
 		if os.Getenv(mailPasswordEnvVar) == "" {
 			mailPassword = password
@@ -470,6 +483,7 @@ func Load() (*Config, error) {
 		EnableMailWrite:       enableMailWrite,
 		EnableMailSend:        enableMailSend,
 		MailAddress:           mailAddress,
+		MailFrom:              mailFrom,
 		MailPassword:          mailPassword,
 		SMTPAllowedRecipients: recipientPolicy.Recipients(),
 		SMTPRecipientPolicy:   recipientPolicy,
@@ -553,6 +567,16 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid %s: must be a full email address", mailAddressEnvVar)
 		}
 		c.MailAddress = normalized
+		if c.MailFrom != "" {
+			if hasCredentialControl(c.MailFrom) {
+				return fmt.Errorf("invalid %s: must be a full email address", mailFromEnvVar)
+			}
+			from, err := normalizePlainAddress(c.MailFrom)
+			if err != nil || len(from) < minRedactableIdentityBytes {
+				return fmt.Errorf("invalid %s: must be a full email address", mailFromEnvVar)
+			}
+			c.MailFrom = from
+		}
 		if c.MailPassword == "" {
 			c.MailPassword = c.Password
 		}

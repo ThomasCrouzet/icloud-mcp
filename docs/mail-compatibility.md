@@ -284,9 +284,12 @@ smtp.mail.me.com:587 -> EHLO -> mandatory STARTTLS -> verified TLS -> EHLO
 ```
 
 There is no plaintext-authentication fallback. The envelope and MIME From value
-is exactly `ICLOUD_MAIL_ADDRESS`. The message is UTF-8 plain text. The client
-generates Date and Message-ID locally. To and Cc occur in headers. Bcc occurs
-only in the envelope.
+is exactly `ICLOUD_MAIL_FROM` when it is set, and `ICLOUD_MAIL_ADDRESS`
+otherwise. AUTH always uses `ICLOUD_MAIL_ADDRESS`; iCloud SMTP decides whether
+the account may send from the configured address. The configured sender must be
+ASCII; Unicode senders are rejected at startup. The message is UTF-8 plain text.
+The client generates Date and Message-ID locally. To and Cc occur in headers.
+Bcc occurs only in the envelope.
 
 The client rejects HTML, attachments, raw MIME, custom headers, and display-name
 recipients. It also rejects groups, caller-selected From, header newlines, and
