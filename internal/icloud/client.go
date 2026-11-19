@@ -834,19 +834,25 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		result.NotificationRisk = SchedulingNotificationRisk
 	}
 
-	if alreadyExcluded {
-		if opts != nil && opts.DryRun {
-			result.DryRun = true
+	if alreadyExcluded && (opts == nil || !opts.DryRun) {
+		return result, nil
+	}
+	// A dry run is a concurrency preflight, including the already-excluded
+	// no-op outcome: a supplied strong caller ETag must match the object that
+	// this call fetched. A mismatch is a stale read, not a confirmed no-op, so
+	// it returns concurrent_modification before any success path. No PUT or
+	// DELETE is reachable from here.
+	if opts != nil && opts.DryRun && opts.IfMatchETag != "" {
+		if obj.ETag == "" || opts.IfMatchETag != obj.ETag {
+			return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+				"the event changed since it was read; re-read with get_event and review the current ETag", nil)
 		}
+	}
+	if alreadyExcluded {
+		result.DryRun = true
 		return result, nil
 	}
 	if opts != nil && opts.DryRun {
-		if opts.IfMatchETag != "" {
-			if obj.ETag == "" || opts.IfMatchETag != obj.ETag {
-				return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
-					"the event changed since it was read; re-read with get_event and review the current ETag", nil)
-			}
-		}
 		etag := obj.ETag
 		if opts.IfMatchETag != "" {
 			etag = opts.IfMatchETag

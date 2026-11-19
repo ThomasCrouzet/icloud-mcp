@@ -21,7 +21,7 @@ func newDeleteEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("calendar", mcp.Required(), mcp.MaxLength(1024), mcp.Description("Calendar path; max 1024 UTF-8 bytes")),
 		mcp.WithString("scope", mcp.Enum("series", "occurrence"), mcp.Description("series (default) or occurrence")),
 		mcp.WithString("recurrence_id", mcp.Description("Required for scope=occurrence; copy search_events.recurrenceId. All-day uses YYYY-MM-DD; timed values follow "+datetimeParamDescription("start", defaultLoc))),
-		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *")),
+		mcp.WithString("etag", mcp.Description("If-Match ETag from get_event or search_events; not *. A dry run compares it with the current strong ETag, including for an occurrence that is already excluded.")),
 		mcp.WithBoolean("dry_run", mcp.DefaultBool(false), mcp.Description("Validate without PUT or DELETE")),
 		mcp.WithBoolean("acknowledge_scheduling", mcp.Description("Required for a non-dry-run delete of an event with organizer or attendee metadata. Requires an explicit operator ICLOUD_MCP_PERMISSIONS grant and the current strong etag.")),
 	)
@@ -34,6 +34,7 @@ type deleteEventResponse struct {
 	DryRun           bool   `json:"dryRun,omitempty"`
 	Scope            string `json:"scope,omitempty"`
 	WouldMutate      bool   `json:"wouldMutate,omitempty"`
+	AlreadyExcluded  bool   `json:"alreadyExcluded,omitempty"`
 	IsGroupScheduled bool   `json:"isGroupScheduled,omitempty"`
 	NotificationRisk string `json:"notificationRisk,omitempty"`
 }
@@ -135,6 +136,7 @@ func deleteEventHandler(deps Deps) server.ToolHandlerFunc {
 			DryRun:           res.DryRun,
 			Scope:            res.Scope,
 			WouldMutate:      res.WouldMutate,
+			AlreadyExcluded:  res.AlreadyExcluded,
 			IsGroupScheduled: res.IsGroupScheduled,
 			NotificationRisk: res.NotificationRisk,
 		}), nil

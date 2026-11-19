@@ -153,7 +153,13 @@ the complete object. Identical UIDs in different calendars stay isolated.
   `not_found` with no PUT or DELETE, and an already excluded slot returns
   `alreadyExcluded` with `wouldMutate=false`.
 - A successful delete dry run compares a supplied caller ETag with the current
-  strong GET ETag and returns `concurrent_modification` when they differ.
+  strong GET ETag and returns `concurrent_modification` when they differ. This
+  applies to every dry-run outcome, including an already-excluded occurrence:
+  the no-op preview is not returned for a stale read. A missing caller ETag
+  keeps the point-in-time preview. A weak or absent server ETag fails closed
+  with `concurrent_modification` when the caller supplied one.
+- The `alreadyExcluded` result field is reported for an excluded occurrence, so
+  a caller can tell a confirmed no-op from an actionable delete.
 - A DELETE dry run is a point-in-time preflight, not a lock.
 - Discovery classifies a collection by `DAV:resourcetype`: a positive
   `CALDAV:calendar` with VEVENT support is included even under `/inbox/` or
