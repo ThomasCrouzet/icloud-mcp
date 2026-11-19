@@ -11,6 +11,11 @@ import (
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
+// updateDateFormDescription states the value-form contract of an update to a
+// date-bearing field. update_event preserves the stored form and never
+// converts an event between all-day and timed.
+const updateDateFormDescription = " The value form must match the stored event: send YYYY-MM-DD for an all-day (VALUE=DATE) event and a DATE-TIME for a timed event. A DATE-TIME value for an all-day event is rejected before any write."
+
 func parseUpdateDateTime(name, value string, loc *time.Location) (time.Time, bool, error) {
 	if len(value) == len("2006-01-02") {
 		if parsed, err := time.Parse("2006-01-02", value); err == nil {
@@ -23,7 +28,7 @@ func parseUpdateDateTime(name, value string, loc *time.Location) (time.Time, boo
 
 func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 	return mcp.NewTool("update_event",
-		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key to retrieve prior outcomes."),
+		mcp.WithDescription("Updates an event series or one occurrence. Omitted fields stay unchanged; empty text clears. Each date value form must match the event: an all-day event requires YYYY-MM-DD and rejects a DATE-TIME value. Use recurrenceId for an occurrence, etag for concurrency safety, and idempotency_key to retrieve prior outcomes."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -32,8 +37,8 @@ func newUpdateEventTool(defaultLoc *time.Location) mcp.Tool {
 		mcp.WithString("title", mcp.MaxLength(icloud.MaxTitleLen), mcp.Description("New title; empty clears; max 500 UTF-8 bytes")),
 		mcp.WithString("location", mcp.MaxLength(icloud.MaxLocationLen), mcp.Description("New location; empty clears; max 1000 UTF-8 bytes")),
 		mcp.WithString("notes", mcp.MaxLength(icloud.MaxNotesLen), mcp.Description("New notes; empty clears; max 4000 UTF-8 bytes")),
-		mcp.WithString("start", mcp.Description(datetimeParamDescription("New start time. Omitted = unchanged", defaultLoc))),
-		mcp.WithString("end", mcp.Description(datetimeParamDescription("New end time. Omitted = unchanged", defaultLoc))),
+		mcp.WithString("start", mcp.Description(datetimeParamDescription("New start time. Omitted = unchanged", defaultLoc)+updateDateFormDescription)),
+		mcp.WithString("end", mcp.Description(datetimeParamDescription("New end time. Omitted = unchanged", defaultLoc)+updateDateFormDescription)),
 		mcp.WithString("status", mcp.Description("TENTATIVE, CONFIRMED, or CANCELLED")),
 		mcp.WithString("transparency", mcp.Description("OPAQUE or TRANSPARENT")),
 		mcp.WithString("url", mcp.MaxLength(icloud.MaxURLLen), mcp.Description("http(s) URL; max 2000 UTF-8 bytes")),

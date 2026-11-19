@@ -884,13 +884,21 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	return result, nil
 }
 
-// validateUpdateDateForms prevents a DATE-only input from silently converting
-// a timed event, or a timed input from silently rewriting an all-day event.
+// validateUpdateDateForms requires an explicit, matching value form for the
+// date-bearing fields. A DATE-only input must not convert a timed event, and a
+// DATE-TIME input must not rewrite a VALUE=DATE event: setDatePropLike keeps
+// the existing DATE form and discards the clock, so the caller would believe a
+// time was stored. Both directions fail before any conditional PUT. Implicit
+// all-day to timed conversion is not supported.
 func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
 	start := vevent.Props.Get(ical.PropDateTimeStart)
 	allDay := start != nil && isDateOnlyProp(start)
 	if up.StartDateOnly && !allDay {
 		return NewValidationError("start is DATE-only but the existing event is timed")
+	}
+	if up.StartTime != nil && !up.StartDateOnly && allDay {
+		return newDateFormMismatchError("start", "start_date",
+			"the existing event is all-day (VALUE=DATE), so a DATE-TIME start would lose its clock")
 	}
 	end := vevent.Props.Get(ical.PropDateTimeEnd)
 	endAllDay := allDay
@@ -900,7 +908,22 @@ func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
 	if up.EndDateOnly && !endAllDay {
 		return NewValidationError("end is DATE-only but the existing event is timed")
 	}
+	if up.EndTime != nil && !up.EndDateOnly && endAllDay {
+		return newDateFormMismatchError("end", "end_date",
+			"the existing event is all-day (VALUE=DATE), so a DATE-TIME end would lose its clock")
+	}
 	return nil
+}
+
+// newDateFormMismatchError builds the typed validation error for a value-form
+// mismatch. The guidance names the accepted input forms, so a caller can
+// correct the request without an implicit conversion.
+func newDateFormMismatchError(field, dateParam, reason string) *Error {
+	err := NewValidationError(field + " is a DATE-TIME value but " + reason + "; the requested time cannot be stored")
+	err.Details = map[string]string{
+		"reconciliation": "Send " + field + " as YYYY-MM-DD (" + dateParam + " for the proposed separate conversion feature), or update a timed event to set a clock time. Use get_event to confirm the stored value form.",
+	}
+	return err
 }
 
 // normalizeFloatingRecurrenceID keeps a floating series identity in the same

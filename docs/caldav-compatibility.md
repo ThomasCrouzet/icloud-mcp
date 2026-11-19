@@ -163,6 +163,15 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - Update accepts `YYYY-MM-DD` for `start`/`end` only when the existing property
   already uses the DATE form. DATE-only input against a timed event fails before
   PUT.
+- Update requires the matching value form in both directions. A DATE-TIME
+  `start` or `end` against a `VALUE=DATE` property fails with `validation`
+  before any conditional PUT. The stored form is never converted, so a clock
+  time is not silently discarded on an all-day event. This covers a series
+  update, an occurrence update, start-only and end-only patches, an all-day
+  event without DTEND, and an all-day occurrence override. The error names the
+  field and gives guidance; `start_date` and `end_date` describe the explicit
+  conversion feature that does not exist yet. A read with `get_event` shows the
+  stored form before an update.
 - A naive wall time in a DST fold uses the first occurrence, matching iCalendar
   TZID parsing. An explicit offset that selects the second fold cannot be
   written as a bare TZID wall time and is rejected before PUT.
