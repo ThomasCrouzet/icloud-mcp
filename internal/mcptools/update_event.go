@@ -14,7 +14,7 @@ import (
 // updateDateFormDescription states the value-form contract of an update to a
 // date-bearing field. update_event preserves the stored form and never
 // converts an event between all-day and timed.
-const updateDateFormDescription = " The value form must match the stored event: send YYYY-MM-DD for an all-day (VALUE=DATE) event and a DATE-TIME for a timed event. A DATE-TIME value for an all-day event is rejected before any write."
+const updateDateFormDescription = " The value form must match the stored event: send YYYY-MM-DD for an all-day (VALUE=DATE) event and a DATE-TIME for a timed event. A DATE-TIME value for an all-day event is rejected before any write. For a named-TZID event, an instant in a repeated DST hour must be the first fold; a second-fold instant cannot be stored and is rejected."
 
 func parseUpdateDateTime(name, value string, loc *time.Location) (time.Time, bool, error) {
 	if len(value) == len("2006-01-02") {

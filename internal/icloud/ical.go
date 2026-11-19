@@ -488,6 +488,14 @@ func setDatePropLike(prop, reference *ical.Prop, t time.Time) error {
 		if !WallClockExists(wall, loc) {
 			return NewValidationError("event time does not exist in timezone " + tzid + " because of a daylight-saving gap")
 		}
+		// A bare TZID value carries no offset, so the reader must resolve the
+		// wall clock again. A repeated wall time resolves to the first fold
+		// (RFC 5545 section 3.3.5), so a second-fold instant cannot round-trip.
+		// Compare the requested instant with that resolution before writing;
+		// never coerce it silently.
+		if resolved, _ := ResolveWallClock(wall, loc); !resolved.Equal(t) {
+			return newFoldMismatchError(tzid, wall)
+		}
 		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
 		prop.SetDateTime(t.In(loc))
 		return nil
@@ -502,6 +510,19 @@ func setDatePropLike(prop, reference *ical.Prop, t time.Time) error {
 	prop.Value = t.Format("20060102T150405")
 	prop.Params.Del(ical.PropTimezoneID)
 	return nil
+}
+
+// newFoldMismatchError builds the typed validation error for a requested
+// instant that the named TZID would re-read at a different instant. A bare
+// TZID wall time cannot encode the second occurrence of a repeated hour, so the
+// caller must choose an unambiguous instant or another representation.
+func newFoldMismatchError(tzid string, wall time.Time) *Error {
+	err := NewValidationError("event time " + wall.Format("2006-01-02T15:04:05") +
+		" in timezone " + tzid + " does not round-trip: a TZID value cannot encode the second occurrence of a daylight-saving fold")
+	err.Details = map[string]string{
+		"reconciliation": "Select an unambiguous instant, for example one outside the repeated hour, or send an offset-free local time so the first fold applies. Use get_event to confirm the stored value.",
+	}
+	return err
 }
 
 // isDateOnlyProp reports whether p is a VALUE=DATE (all-day) property.

@@ -180,7 +180,14 @@ the complete object. Identical UIDs in different calendars stay isolated.
   stored form before an update.
 - A naive wall time in a DST fold uses the first occurrence, matching iCalendar
   TZID parsing. An explicit offset that selects the second fold cannot be
-  written as a bare TZID wall time and is rejected before PUT.
+  written as a bare TZID wall time and is rejected before PUT. The check
+  compares the requested instant with `ResolveWallClock` of its local wall form
+  under the existing TZID, for a series start, a series end, an occurrence
+  start, and a derived occurrence end. It returns `validation` with guidance
+  and no PUT. First-fold instants, normal hours, UTC events, floating values,
+  DATE values, and UTC-bound ends of a mixed-form event keep their instants.
+  The rule uses the same resolver as recurrence expansion, so it matches the
+  RFC 5545 section 3.3.5 first-fold interpretation that a later read applies.
 - An explicit `Z` or numeric offset with an omitted `timezone` keeps the fixed
   UTC recurrence policy. `ICLOUD_MCP_DEFAULT_TZ` applies only to offset-free
   input.
