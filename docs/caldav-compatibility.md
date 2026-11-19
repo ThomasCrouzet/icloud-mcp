@@ -153,7 +153,17 @@ the complete object. Identical UIDs in different calendars stay isolated.
   `not_found` with no PUT or DELETE, and an already excluded slot returns
   `alreadyExcluded` with `wouldMutate=false`.
 - A successful delete dry run compares a supplied caller ETag with the current
-  strong GET ETag and returns `concurrent_modification` when they differ.
+  strong GET ETag and returns `concurrent_modification` when they differ. This
+  applies to every dry-run outcome, including an already-excluded occurrence:
+  the no-op preview is not returned for a stale read. A missing caller ETag
+  keeps the point-in-time preview.
+- A weak server ETag never reaches the delete preflight. The GET and REPORT
+  readers reject it one layer earlier with `protocol_error`, so the ETag in the
+  fetched object is always a strong value. A missing server ETag still fails
+  closed with `concurrent_modification` when the caller supplied one, because no
+  comparison is possible.
+- The `alreadyExcluded` result field is reported for an excluded occurrence, so
+  a caller can tell a confirmed no-op from an actionable delete.
 - A DELETE dry run is a point-in-time preflight, not a lock.
 - Discovery classifies a collection by `DAV:resourcetype`: a positive
   `CALDAV:calendar` with VEVENT support is included even under `/inbox/` or
@@ -163,9 +173,29 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - Update accepts `YYYY-MM-DD` for `start`/`end` only when the existing property
   already uses the DATE form. DATE-only input against a timed event fails before
   PUT.
+- Update requires the matching value form in both directions. A DATE-TIME
+  `start` or `end` against a `VALUE=DATE` property fails with `validation`
+  before any conditional PUT. The stored form is never converted, so a clock
+  time is not silently discarded on an all-day event. This covers a series
+  update, an occurrence update, start-only and end-only patches, an all-day
+  event without DTEND, and an all-day occurrence override. The error names the
+  field and gives guidance; `start_date` and `end_date` describe the explicit
+  conversion feature that does not exist yet. A read with `get_event` shows the
+  stored form before an update.
 - A naive wall time in a DST fold uses the first occurrence, matching iCalendar
   TZID parsing. An explicit offset that selects the second fold cannot be
-  written as a bare TZID wall time and is rejected before PUT.
+  written as a bare TZID wall time and is rejected before PUT. The check
+  compares the requested instant with `ResolveWallClock` of its local wall form
+  under the existing TZID, for a series start, a series end, an occurrence
+  start, and a derived occurrence end. It returns `validation` with guidance
+  and no PUT. First-fold instants, normal hours, UTC events, floating values,
+  DATE values, and UTC-bound ends of a mixed-form event keep their instants.
+  The rule uses the same resolver as recurrence expansion, so it matches the
+  RFC 5545 section 3.3.5 first-fold interpretation that a later read applies.
+- Create applies the same round-trip rule to both `start` and `end` when it
+  writes a named TZID. A second-fold instant returns `validation` before the
+  `If-None-Match: *` PUT. An all-day create and a UTC create keep their values,
+  because they do not store a bare TZID wall time.
 - An explicit `Z` or numeric offset with an omitted `timezone` keeps the fixed
   UTC recurrence policy. `ICLOUD_MCP_DEFAULT_TZ` applies only to offset-free
   input.
@@ -203,6 +233,13 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
   the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
   `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
+- A RECURRENCE-ID override is resolved before the occurrence cap applies. An
+  override moved outside the requested range therefore consumes no result
+  capacity, and an override moved into the range is still returned. The cap
+  bounds the final projected set: the results are ordered by effective start
+  and then by stable identity, and one result beyond the cap sets
+  `truncatedByExpansion`. The same master and override set always returns the
+  same page.
 - Availability interprets a floating event in the requested timezone before
   querying and filtering, so it cannot make the same wall-clock slot look free.
   A naive `start` or `end` with an explicit `timezone` is parsed in that
@@ -270,8 +307,13 @@ unreviewed mutation of an object that could produce one.
   10,000 filtered events materialize.
 - `find_free_slots` accepts at most 10,000 returned events across permitted
   calendars, for explicit and implicit selections. It counts before busy filtering.
-- Availability reads ordered waves of at most four calendars. It checks each
-  batch before accumulation and releases wave results before the next reads.
+- Availability reads ordered waves of at most four calendars. It projects each
+  batch to busy intervals and releases the wave results before the next reads.
+  It keeps no Event value between waves.
+- The collector appends intervals to one bounded slice and runs a single sort
+  and merge at the end. Earlier waves are not copied or re-sorted again.
+- A separate interval budget of 10,000 busy intervals fails closed with
+  `payload_too_large`, like the event budget.
 - Overflow returns `payload_too_large` with guidance to narrow the range or calendars.
   No partial availability is returned. Incomplete searches and truncated recurrence also fail closed.
 - Cancellation joins the active wave. Errors follow selected-calendar order,
@@ -346,6 +388,12 @@ remain or the result is incomplete. A result beyond the 256 KiB serialized
 budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
+
+The floating and daylight-saving warning describes the completed scan in cursor
+mode. The first page computes it before the snapshot is stored, and every later
+page replays the same warning once, even when that page holds no affected row.
+A direct query without a cursor keeps page-local semantics: the warning
+describes only the returned rows.
 
 `total` is the bounded snapshot count while the generation is live. A token
 whose generation expired or was evicted is stale and the caller restarts. Within

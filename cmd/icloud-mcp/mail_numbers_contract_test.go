@@ -106,7 +106,7 @@ func TestContractMailNumbersTransports(t *testing.T) {
 	for _, mode := range []string{"inprocess", "bounded-stdio"} {
 		t.Run(mode, func(t *testing.T) {
 			red := security.NewRedactor("synthetic-numeric-secret")
-			s := newMCPServer(red)
+			s := newMCPServer(red, mcptools.NewCapabilityPlan(false, false, true, true, false))
 			backend := &contractNumericMail{}
 			mcptools.RegisterMail(s, mcptools.MailDeps{Service: backend, Redactor: red, Audit: security.NewAuditLogger(io.Discard)}, false, true, false, false, false)
 			request := contractNumericTransport(t, s, mode)
@@ -187,7 +187,7 @@ func TestContractMailNumbersTransports(t *testing.T) {
 
 func TestContractMailNumericUIDSpellings(t *testing.T) {
 	red := security.NewRedactor("synthetic-numeric-secret")
-	s := newMCPServer(red)
+	s := newMCPServer(red, mcptools.NewCapabilityPlan(false, false, true, true, false))
 	backend := &contractNumericMail{}
 	mcptools.RegisterMail(s, mcptools.MailDeps{Service: backend, Redactor: red, Audit: security.NewAuditLogger(io.Discard)}, false, true, false, false, false)
 	request := contractNumericTransport(t, s, "inprocess")

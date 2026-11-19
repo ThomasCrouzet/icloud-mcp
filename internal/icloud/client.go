@@ -273,9 +273,18 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 		}
 	}
 	if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !ne.AllDay {
-		for _, value := range []time.Time{ne.StartTime, ne.EndTime} {
-			if !WallClockExists(WallClockOf(value.In(loc)), loc) {
-				return "", NewValidationError("event time does not exist in timezone " + loc.String() + " because of a daylight-saving gap")
+		// A TZID write stores a bare wall time, so both bounds must survive the
+		// first-fold resolution the reader applies. A second-fold instant would
+		// re-read at a different instant; reject it before any PUT.
+		for _, bound := range []struct {
+			field   string
+			instant time.Time
+		}{
+			{field: "start", instant: ne.StartTime},
+			{field: "end", instant: ne.EndTime},
+		} {
+			if err := ValidateNamedTZIDRoundTrip(bound.field, bound.instant, loc); err != nil {
+				return "", err
 			}
 		}
 	}
@@ -834,19 +843,25 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 		result.NotificationRisk = SchedulingNotificationRisk
 	}
 
-	if alreadyExcluded {
-		if opts != nil && opts.DryRun {
-			result.DryRun = true
+	if alreadyExcluded && (opts == nil || !opts.DryRun) {
+		return result, nil
+	}
+	// A dry run is a concurrency preflight, including the already-excluded
+	// no-op outcome: a supplied strong caller ETag must match the object that
+	// this call fetched. A mismatch is a stale read, not a confirmed no-op, so
+	// it returns concurrent_modification before any success path. No PUT or
+	// DELETE is reachable from here.
+	if opts != nil && opts.DryRun && opts.IfMatchETag != "" {
+		if obj.ETag == "" || opts.IfMatchETag != obj.ETag {
+			return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
+				"the event changed since it was read; re-read with get_event and review the current ETag", nil)
 		}
+	}
+	if alreadyExcluded {
+		result.DryRun = true
 		return result, nil
 	}
 	if opts != nil && opts.DryRun {
-		if opts.IfMatchETag != "" {
-			if obj.ETag == "" || opts.IfMatchETag != obj.ETag {
-				return DeleteResult{}, NewError(CodeConcurrentModification, http.StatusPreconditionFailed,
-					"the event changed since it was read; re-read with get_event and review the current ETag", nil)
-			}
-		}
 		etag := obj.ETag
 		if opts.IfMatchETag != "" {
 			etag = opts.IfMatchETag
@@ -884,13 +899,21 @@ func (c *Client) DeleteEvent(ctx context.Context, calendarPath, uid string, opts
 	return result, nil
 }
 
-// validateUpdateDateForms prevents a DATE-only input from silently converting
-// a timed event, or a timed input from silently rewriting an all-day event.
+// validateUpdateDateForms requires an explicit, matching value form for the
+// date-bearing fields. A DATE-only input must not convert a timed event, and a
+// DATE-TIME input must not rewrite a VALUE=DATE event: setDatePropLike keeps
+// the existing DATE form and discards the clock, so the caller would believe a
+// time was stored. Both directions fail before any conditional PUT. Implicit
+// all-day to timed conversion is not supported.
 func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
 	start := vevent.Props.Get(ical.PropDateTimeStart)
 	allDay := start != nil && isDateOnlyProp(start)
 	if up.StartDateOnly && !allDay {
 		return NewValidationError("start is DATE-only but the existing event is timed")
+	}
+	if up.StartTime != nil && !up.StartDateOnly && allDay {
+		return newDateFormMismatchError("start", "start_date",
+			"the existing event is all-day (VALUE=DATE), so a DATE-TIME start would lose its clock")
 	}
 	end := vevent.Props.Get(ical.PropDateTimeEnd)
 	endAllDay := allDay
@@ -900,7 +923,22 @@ func validateUpdateDateForms(vevent *ical.Event, up *EventUpdate) error {
 	if up.EndDateOnly && !endAllDay {
 		return NewValidationError("end is DATE-only but the existing event is timed")
 	}
+	if up.EndTime != nil && !up.EndDateOnly && endAllDay {
+		return newDateFormMismatchError("end", "end_date",
+			"the existing event is all-day (VALUE=DATE), so a DATE-TIME end would lose its clock")
+	}
 	return nil
+}
+
+// newDateFormMismatchError builds the typed validation error for a value-form
+// mismatch. The guidance names the accepted input forms, so a caller can
+// correct the request without an implicit conversion.
+func newDateFormMismatchError(field, dateParam, reason string) *Error {
+	err := NewValidationError(field + " is a DATE-TIME value but " + reason + "; the requested time cannot be stored")
+	err.Details = map[string]string{
+		"reconciliation": "Send " + field + " as YYYY-MM-DD (" + dateParam + " for the proposed separate conversion feature), or update a timed event to set a clock time. Use get_event to confirm the stored value form.",
+	}
+	return err
 }
 
 // normalizeFloatingRecurrenceID keeps a floating series identity in the same

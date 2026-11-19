@@ -17,6 +17,11 @@ type MailDeps struct {
 	Audit          *security.AuditLogger
 	Redactor       *security.Redactor
 	ResourceScopes config.ResourceScopes
+
+	// Plan is the effective authorization plan for this registration. Tool
+	// registration and the mailbox listing read the same plan, so a listing
+	// never advertises a capability that this process did not register.
+	Plan CapabilityPlan
 }
 
 // RegisterMail registers Mail reads and the independently gated mutation and

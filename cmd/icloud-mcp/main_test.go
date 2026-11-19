@@ -310,11 +310,12 @@ func TestOptionalServiceConstructionIsLazyAndGated(t *testing.T) {
 
 func TestProductionServerEnforcesStrictInputSchemas(t *testing.T) {
 	redactor := security.NewRedactor("unused-secret")
-	mcpServer := newMCPServer(redactor)
+	plan := mcptools.NewCapabilityPlan(true, false, false, false, false)
+	mcpServer := newMCPServer(redactor, plan)
 	svc := &icloud.MockService{}
 	mcptools.RegisterUnified(mcpServer, mcptools.Deps{
 		Service: svc, Redactor: redactor, DefaultLocation: time.UTC,
-	}, mcptools.NewCapabilityPlan(true, false, false, false, false))
+	}, plan)
 
 	searchTool := mcpServer.ListTools()["search_events"]
 	if searchTool == nil {

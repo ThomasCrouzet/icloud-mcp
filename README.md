@@ -164,23 +164,23 @@ exists, this page does not claim that an MCPB host install was performed.
 ### Path A: MCPB bundle (host installation unverified)
 
 1. Download the bundle for your platform from the
-   [`v1.1.0` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v1.1.0):
-   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-linux-amd64.mcpb),
-   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-linux-arm64.mcpb),
+   [`v1.1.1` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v1.1.1):
+   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.1/icloud-mcp-v1.1.1-linux-amd64.mcpb),
+   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.1/icloud-mcp-v1.1.1-linux-arm64.mcpb),
    or
-   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-darwin-arm64.mcpb).
+   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.1/icloud-mcp-v1.1.1-darwin-arm64.mcpb).
 2. Download
-   [`icloud-mcp-v1.1.0-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.0/icloud-mcp-v1.1.0-checksums.txt)
+   [`icloud-mcp-v1.1.1-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.1.1/icloud-mcp-v1.1.1-checksums.txt)
    and the matching `.sig` and `.pem` files. Verify the bytes:
 
    ```sh
-   shasum -a 256 -c icloud-mcp-v1.1.0-checksums.txt
+   shasum -a 256 -c icloud-mcp-v1.1.1-checksums.txt
    cosign verify-blob \
-     --certificate icloud-mcp-v1.1.0-linux-amd64.mcpb.pem \
-     --signature icloud-mcp-v1.1.0-linux-amd64.mcpb.sig \
-     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.1.0" \
+     --certificate icloud-mcp-v1.1.1-linux-amd64.mcpb.pem \
+     --signature icloud-mcp-v1.1.1-linux-amd64.mcpb.sig \
+     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.1.1" \
      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-     icloud-mcp-v1.1.0-linux-amd64.mcpb
+     icloud-mcp-v1.1.1-linux-amd64.mcpb
    ```
 
 3. Open the `.mcpb` file in your MCPB-capable host, or use that host's install
@@ -212,7 +212,7 @@ Download the archive for Linux amd64/arm64 or macOS arm64 from the
 checksum and signature, then extract it:
 
 ```sh
-tar -xzf icloud-mcp-v1.1.0-linux-amd64.tar.gz
+tar -xzf icloud-mcp-v1.1.1-linux-amd64.tar.gz
 ./icloud-mcp -version
 ```
 
@@ -435,7 +435,7 @@ for search, parser, recurrence, and concurrency bounds.
 ### Build and test
 
 From the repository root, use Go 1.26.0 or newer and Make. Build and test need
-no iCloud account or running service. CI and release builds pin Go 1.26.10.
+no iCloud account or running service. CI and release builds pin Go 1.26.11.
 
 ```sh
 make build        # bin/icloud-mcp, host Go; version defaults to dev

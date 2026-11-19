@@ -14,6 +14,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   guard mask the sender. The address must be ASCII, and an empty `file://`
   sender fails startup. Without it, behavior is unchanged.
 
+## [1.1.1] - 2026-11-15
+
+This patch release rebuilds the published archives and MCPB bundles with Go
+1.26.11. It has no change to the tools, configuration, or protocol behavior.
+
+### Security
+- Pin CI and the release builder image to Go 1.26.11 for GO-2026-6859, the
+  `net/http` `MaxBytesReader` header race. Keep the module minimum at Go 1.26.0.
+
+### Changed
+- Update the release pipeline to `actions/upload-artifact` v7.0.2 and
+  `actions/download-artifact` v8.0.2.
+
+
 ## [1.1.0] - 2026-11-09
 
 This minor release publishes the merged Calendar, Contacts, Mail, and

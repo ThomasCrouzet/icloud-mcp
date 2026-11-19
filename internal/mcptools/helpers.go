@@ -52,12 +52,23 @@ type toolErrorPayload struct {
 	Details        map[string]string `json:"details,omitempty"`
 }
 
+// errorMessage joins the caller-facing context with the error text. A typed
+// *icloud.Error already prefixes its code in Error(), so the context must not
+// repeat it: "validation: validation: ..." hides the useful part of the message.
+// A plain error keeps the context, because it carries no code of its own.
+func errorMessage(context string, err error) string {
+	if typed := icloud.AsICloudError(err); typed != nil && string(typed.Code) == context {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s: %v", context, err)
+}
+
 // errResult builds an error CallToolResult and sends its message through the
 // Redactor. All tool errors use this helper. A classified *icloud.Error adds a
 // stable JSON code, so agents do not need to parse English text. The result
 // never includes raw HTTP or XML bodies.
 func errResult(red *security.Redactor, context string, err error) *mcp.CallToolResult {
-	msg := boundedUTF8(redact(red, fmt.Sprintf("%s: %v", context, err)), maxErrorMessageBytes)
+	msg := boundedUTF8(redact(red, errorMessage(context, err)), maxErrorMessageBytes)
 	payload := toolErrorPayload{Message: msg}
 	if ie := icloud.AsICloudError(err); ie != nil {
 		payload.Code = string(icloud.PublicCode(ie.Code))

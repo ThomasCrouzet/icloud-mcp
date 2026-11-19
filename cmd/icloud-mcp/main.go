@@ -153,7 +153,7 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	}
 
 	// 5. MCP server.
-	s := newMCPServer(red)
+	s := newMCPServer(red, plan)
 	healthEnabled := healthAddr != ""
 	mcptools.RegisterUnified(s, mcptools.Deps{
 		Service:         calendarService,
@@ -208,7 +208,10 @@ func runServer(cfg *config.Config, auditFormat security.AuditFormat, healthAddr 
 	return serveBoundedStdio(s, stdin, stdout, errLogger, red)
 }
 
-func newMCPServer(red *security.Redactor) *server.MCPServer {
+// newMCPServer builds the MCP server for one effective capability plan. The
+// initialize instructions come from that plan, so a host never reads a domain
+// claim that the registration omitted.
+func newMCPServer(red *security.Redactor, plan mcptools.CapabilityPlan) *server.MCPServer {
 	s := server.NewMCPServer("icloud-mcp", version,
 		server.WithToolCapabilities(false),
 		server.WithInputSchemaValidation(),
@@ -217,7 +220,7 @@ func newMCPServer(red *security.Redactor) *server.MCPServer {
 		// first. It redacts each error before JSON-RPC serializes it. Keep
 		// WithRecovery as a second safety layer.
 		server.WithRecovery(),
-		server.WithInstructions("Unified Apple/iCloud server. Calendar is always available; optional Contacts and Mail tools appear only when enabled. Call the relevant list tool before using domain-specific resource identifiers."),
+		server.WithInstructions(plan.Instructions()),
 		server.WithToolHandlerMiddleware(timeoutMiddleware(toolTimeout)),
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)

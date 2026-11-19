@@ -1063,9 +1063,10 @@ func TestClient_UpdateEvent_PreservesAllDayFormat(t *testing.T) {
 	c := m.client()
 
 	// icsAllDay runs July 10 to 11 (exclusive DTEND); move the start to
-	// July 9 to stay before the existing end.
+	// July 9 to stay before the existing end. The value form is explicit:
+	// issue #225 rejects a DATE-TIME input for a VALUE=DATE property.
 	newStart := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
-	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-allday-1", &EventUpdate{StartTime: &newStart})
+	err := c.UpdateEvent(context.Background(), testHomeCalendar, "uid-allday-1", &EventUpdate{StartTime: &newStart, StartDateOnly: true})
 	if err != nil {
 		t.Fatalf("UpdateEvent() error: %v", err)
 	}

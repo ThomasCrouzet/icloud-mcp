@@ -68,11 +68,12 @@ type CapabilityPlan struct {
 	contactsWrite  bool
 	contactsDelete bool
 
-	mailRead   bool
-	mailMutate bool
-	mailTrash  bool
-	mailSend   bool
-	mailReply  bool
+	mailRead    bool
+	mailMutate  bool
+	mailTrash   bool
+	mailSend    bool
+	mailReply   bool
+	mailArchive bool
 }
 
 // NewCapabilityPlan applies the global read-only and domain enable gates to
@@ -91,6 +92,9 @@ func NewCapabilityPlan(readOnly, contactsEnabled, mailEnabled, mailMutations, ma
 		mailTrash:      mailEnabled && mailMutations && !readOnly,
 		mailSend:       mailEnabled && mailSend && !readOnly,
 		mailReply:      mailEnabled && mailSend && !readOnly,
+		// mail.archive is an explicit permission token. No legacy switch grants
+		// it, so the legacy plan never enables it.
+		mailArchive: false,
 	}
 }
 
@@ -115,6 +119,7 @@ func NewCapabilityPlanFromConfig(readOnly bool, set config.CapabilitySet) Capabi
 		mailTrash:      set.MailTrash,
 		mailSend:       set.MailSend,
 		mailReply:      set.MailRead && set.MailSend,
+		mailArchive:    set.MailArchive,
 	}
 }
 
@@ -178,6 +183,11 @@ func (p CapabilityPlan) MailSendEnabled() bool { return p.mailSend }
 // MailReplyEnabled reports whether reply_message is effective. It requires
 // both Mail read and Mail send.
 func (p CapabilityPlan) MailReplyEnabled() bool { return p.mailReply }
+
+// MailArchiveEnabled reports whether the Sent-copy archive capability is
+// effective. It requires Mail send, so it is false under global read-only and
+// in every profile without an explicit mail.archive grant.
+func (p CapabilityPlan) MailArchiveEnabled() bool { return p.mailArchive }
 
 // RegisteredTools returns a sorted copy of the exact registration manifest.
 func (p CapabilityPlan) RegisteredTools() []string {
@@ -307,6 +317,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if plan.MailEnabled() {
 		registered = append(registered, RegisterMail(s, MailDeps{
 			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor, ResourceScopes: deps.ResourceScopes,
+			Plan: plan,
 		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled(), plan.MailReplyEnabled())...)
 	}
 	s.AddTool(newICloudCapabilitiesTool(), icloudCapabilitiesHandler(deps, plan))

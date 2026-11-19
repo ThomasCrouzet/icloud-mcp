@@ -91,29 +91,78 @@ An absent cursor and `scanLimitReached: false` mean the scan reached UID 1.
 `scanLimitReached` means that the search did not read older UID space.
 `truncated` means that the count or 256 KiB output limit removed summaries.
 
-Search gets only UID, flags, envelope, internal date, RFC822 size, and
-BODYSTRUCTURE. It also gets MODSEQ when available. It gets no snippet or body
-section.
+Reads use one of three FETCH projections. Each read asks for the smallest one
+it can use, so a MIME tree never blocks a read that does not need it.
+
+| Projection | Used by | FETCH items |
+|------------|---------|-------------|
+| Summary | `search_messages` | UID, flags, envelope, internal date, RFC822 size, and MODSEQ when available |
+| Reply headers | `reply_message` | Summary items plus the header section for Message-ID, In-Reply-To, References, and Reply-To |
+| Full message | `get_message` | Reply-header items plus extended BODYSTRUCTURE |
+
+No projection requests a snippet or a whole body section.
 
 ## Message retrieval
 
 Read tools select mailboxes read-only and use PEEK. They must not set Seen.
 
-`get_message` first gets metadata, BODYSTRUCTURE, and four additional headers:
-Message-ID, In-Reply-To, References, and Reply-To. It selects inline
-`text/plain` leaves without attachment or filename semantics. Then, bounded
-partial PEEK requests get the MIME header and body. It never gets an unbounded
-`BODY.PEEK[]`.
+`get_message` gets the full-message projection: metadata, BODYSTRUCTURE, and the
+four curated headers. It selects inline `text/plain` leaves without attachment
+or filename semantics. Then, bounded partial PEEK requests get the MIME header
+and body. It never gets an unbounded `BODY.PEEK[]`.
+
+## BODYSTRUCTURE limits
+
+Search and reply reads do not request BODYSTRUCTURE, so a message with a wide
+or deep MIME tree still appears in a bounded summary page and can still be
+replied to. `get_message` keeps the tree limits: 200 flattened parts, MIME path
+depth 20, and one part per attachment. A tree above a limit fails that read with
+`payload_too_large` after `guardedConn` applied the 4 MiB inbound session cap.
 
 Parts of `multipart/mixed` are independent. The client joins each selected
 plain part in document order with a blank line, within `max_body_bytes`. When a
 later part does not fit, the result keeps the earlier bounded text, sets
-`bodyOmitted`, and adds a `body_truncated` warning. Parts of one
-`multipart/alternative` are equivalent: the client skips whitespace-only
-representatives within the group, keeps the first meaningful plain
-representation, and never concatenates the alternatives. A part that is
-malformed or too large adds `body_decode_failed` or `body_too_large`; the client
-continues with the other independent parts.
+`bodyOmitted`, and adds a `body_truncated` warning.
+
+Parts of one `multipart/alternative` are competing representations. The direct
+children of that container are the competing branches. The client skips
+whitespace-only representatives, keeps the first meaningful plain branch, and
+never appends a leaf from a competing branch.
+
+Branch identity is separate from segment identity. A child `multipart/mixed`
+branch can hold several independent plain segments, and the client keeps every
+one of them in document order. In the nested layout below, "Part A" and "Part B"
+are both returned, and the HTML branch is suppressed.
+
+```text
+multipart/alternative
+|-- multipart/mixed
+|   |-- text/plain: "Part A"
+|   `-- text/plain: "Part B"
+`-- text/html: rendering of A and B
+```
+
+Every `multipart/alternative` level counts on its own. A nested alternative
+inside a branch opens one more level, so its own leaves compete with each other
+while the enclosing mixed siblings stay independent. The client suppresses a
+part when any shared alternative level already selected a different branch.
+
+```text
+multipart/alternative
+|-- multipart/mixed
+|   |-- text/plain: "Intro text"
+|   `-- multipart/alternative
+|       |-- text/plain: "bonjour"
+|       `-- text/plain: "bonjour latin1 twin"
+`-- text/html
+```
+
+The result keeps "Intro text" and the preferred inner leaf "bonjour". The
+competing inner leaf "bonjour latin1 twin" is not fetched, and neither is the
+HTML branch.
+
+A part that is malformed or too large adds `body_decode_failed` or
+`body_too_large`; the client continues with the other independent parts.
 
 The result contains selected envelope and header metadata. It also contains
 decoded plain text and attachment metadata. It never contains raw MIME, raw

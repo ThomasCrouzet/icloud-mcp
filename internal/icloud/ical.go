@@ -484,9 +484,11 @@ func setDatePropLike(prop, reference *ical.Prop, t time.Time) error {
 		if err != nil {
 			return NewError(CodeProtocolError, 0, "Calendar event uses an unknown TZID", nil)
 		}
-		wall := WallClockOf(t.In(loc))
-		if !WallClockExists(wall, loc) {
-			return NewValidationError("event time does not exist in timezone " + tzid + " because of a daylight-saving gap")
+		// A bare TZID value carries no offset, so the reader must resolve the
+		// wall clock again. Reject a gap or a second-fold instant before
+		// writing instead of coercing it silently.
+		if err := ValidateNamedTZIDRoundTrip("event time", t, loc); err != nil {
+			return err
 		}
 		// go-ical SetDateTime writes TZID from t.Location() for non-UTC.
 		prop.SetDateTime(t.In(loc))
