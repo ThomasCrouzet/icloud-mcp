@@ -205,7 +205,7 @@ func imapWireBenchmarkFixture(tb testing.TB) (*Session, *imapWireBenchmarkSessio
 
 func assertIMAPWireMetadata(tb testing.TB, session *Session) {
 	tb.Helper()
-	messages, err := session.FetchMetadata([]uint32{imapWireBenchmarkUID}, true)
+	messages, err := session.FetchMetadata([]uint32{imapWireBenchmarkUID}, ProjectionReplyHeaders)
 	if err != nil {
 		tb.Fatalf("wire metadata: %v", err)
 	}
@@ -219,8 +219,10 @@ func assertIMAPWireMetadata(tb testing.TB, session *Session) {
 	if len(message.Envelope.From) != 1 || message.Envelope.From[0].Address != "sender@example.test" {
 		tb.Fatalf("wire metadata sender = %+v", message.Envelope.From)
 	}
-	if len(message.Parts) != 1 || message.Parts[0].ContentType != "text/plain" {
-		tb.Fatalf("wire metadata parts = %+v", message.Parts)
+	// The reply projection asks for curated headers only, so the FETCH omits
+	// BODYSTRUCTURE and the message carries no parts.
+	if len(message.Parts) != 0 {
+		tb.Fatalf("wire reply metadata parts = %+v", message.Parts)
 	}
 	if message.Headers.MessageID != "<wire-benchmark@example.test>" ||
 		len(message.Headers.InReplyTo) != 1 ||
