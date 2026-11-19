@@ -27,13 +27,14 @@ type rawProtocolPeer struct {
 func newRawProtocolPeer(t *testing.T) *rawProtocolPeer {
 	t.Helper()
 	red := security.NewRedactor("synthetic-raw-protocol-secret")
-	s := newMCPServer(red)
+	plan := mcptools.NewCapabilityPlan(true, false, false, false, false)
+	s := newMCPServer(red, plan)
 	mcptools.RegisterUnified(s, mcptools.Deps{
 		Service:         &icloud.MockService{},
 		Audit:           security.NewAuditLogger(io.Discard),
 		Redactor:        red,
 		DefaultLocation: time.UTC,
-	}, mcptools.NewCapabilityPlan(true, false, false, false, false))
+	}, plan)
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()

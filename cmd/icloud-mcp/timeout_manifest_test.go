@@ -82,7 +82,7 @@ func TestProtocolTimeoutRegisteredManifest(t *testing.T) {
 	for name, plan := range plans {
 		t.Run(name, func(t *testing.T) {
 			red := security.NewRedactor("synthetic-timeout-secret")
-			s := newMCPServer(red)
+			s := newMCPServer(red, plan)
 			mcptools.RegisterUnified(s, mcptools.Deps{
 				Service: &icloud.MockService{}, ContactsService: &timeoutContacts{}, MailService: &timeoutMail{},
 				Audit: security.NewAuditLogger(io.Discard), Redactor: red,
