@@ -272,6 +272,12 @@ func TestSetupProfilesReadOperations(t *testing.T) {
 					if len(listed.Mailboxes) != 1 || listed.Mailboxes[0].Name != "INBOX" {
 						t.Fatalf("Mail profile disclosed out-of-scope mailbox: %+v", listed)
 					}
+					// The shipped Mail read-only profile grants no mutation,
+					// trash, send, or archive capability. The listing must not
+					// advertise a mode that this process did not register.
+					if modes := listed.Mailboxes[0].AccessModes; len(modes) != 1 || modes[0] != "read" {
+						t.Fatalf("Mail read-only accessModes = %v, want [read]", modes)
+					}
 					before := f.counts()
 					denied := f.call(t, "get_message", map[string]any{"mailbox": "forbidden-private", "uid_validity": 9, "uid": 2})
 					// Mail read handlers currently wrap scope errors as validation results.

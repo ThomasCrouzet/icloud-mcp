@@ -227,18 +227,22 @@ func authorizeMailbox(scopes config.ResourceScopes, action, mailbox string) erro
 }
 
 // filterMailboxes implements the documented listing policy: a mailbox is
-// listed only when at least one effective Mail capability reaches it, and
-// AccessModes states which capabilities do. A mutation or archive scope never
+// listed only when at least one granted and enabled Mail capability reaches it,
+// and AccessModes states which capabilities do. Both halves are required: the
+// plan holds the effective grants, and the scopes hold the per-destination
+// limit. A scope for a capability the plan does not grant can therefore never
+// disclose a mailbox or advertise a right. A mutation or archive scope never
 // makes a mailbox appear readable.
-func filterMailboxes(mailboxes []maildomain.Mailbox, scopes config.ResourceScopes) []maildomain.Mailbox {
+func filterMailboxes(mailboxes []maildomain.Mailbox, scopes config.ResourceScopes, plan CapabilityPlan) []maildomain.Mailbox {
 	type mailScope struct {
-		action string
-		label  string
+		action  string
+		label   string
+		enabled bool
 	}
 	capabilities := []mailScope{
-		{config.ResourceMailRead, "read"},
-		{config.ResourceMailMutate, "mutate"},
-		{config.ResourceMailArchive, "archive"},
+		{config.ResourceMailRead, "read", plan.MailReadEnabled()},
+		{config.ResourceMailMutate, "mutate", plan.MailMutationsEnabled() || plan.MailTrashEnabled()},
+		{config.ResourceMailArchive, "archive", plan.MailArchiveEnabled()},
 	}
 	allows := func(action, mailbox string) bool {
 		values, restricted := scopes.Mail(action)
@@ -256,6 +260,9 @@ func filterMailboxes(mailboxes []maildomain.Mailbox, scopes config.ResourceScope
 	for _, mailbox := range mailboxes {
 		modes := make([]string, 0, len(capabilities))
 		for _, capability := range capabilities {
+			if !capability.enabled {
+				continue
+			}
 			if allows(capability.action, mailbox.Name) {
 				modes = append(modes, capability.label)
 			}

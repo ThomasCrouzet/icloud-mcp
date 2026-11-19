@@ -257,7 +257,8 @@ python3 scripts/benchmark_baseline.py --check-manifest /absolute/path/manifest.j
 | Contacts | `BenchmarkContactsParseSearch2000` | `contacts-index-v1`, 2,000 sorted vCard 3.0 contacts with fixed REPORT bytes | One query match, no scan cap, 4 cold RPCs, and 1 warm RPC |
 | Mail sparse UID | `BenchmarkMailSearchSparseUID` | `mail-pattern-v1`, 30 candidates near UID 4,000,000,000 | 20 results, truncation, one bounded 5,000-UID window, and 3 service-session calls |
 | Mail service body | `BenchmarkMailGetNearLimitBody` | Service session with 204,800 bytes and 204,801 bytes | The exact limit is returned; one byte above it is omitted with `body_too_large` |
-| Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers |
+| Mail wire metadata | `BenchmarkIMAPWireMetadata` | `imap-wire-metadata-v1`, one synthetic FETCH over `net.Pipe` | One parsed message, one wire FETCH per operation, sparse UID, and curated threading headers. The reply projection gets no BODYSTRUCTURE |
+| Mail wire metadata page | `BenchmarkIMAPWireMetadataPage` | `imap-wire-page-v1`, 20 messages with 40-part multipart envelopes over `net.Pipe` | One bounded summary FETCH per page, no BODYSTRUCTURE, and the recorded wire bytes and allocations of the page |
 
 `BenchmarkSearchEventsCursorPagination` drives ten 400-row pages over a
 4,000-event synthetic calendar. It reports `rpc/page`: the process-local scan
