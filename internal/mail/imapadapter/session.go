@@ -36,6 +36,8 @@ const (
 type Session struct {
 	client        *imapclient.Client
 	conn          net.Conn
+	guard         *guardedConn
+	store         storeObservation
 	ctx           context.Context
 	caps          Capabilities
 	done          chan struct{}
@@ -61,7 +63,7 @@ func NewSession(ctx context.Context, conn net.Conn, address, password string) (*
 	client := imapclient.New(guarded, &imapclient.Options{
 		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
 	})
-	s := &Session{client: client, conn: guarded, ctx: ctx, done: make(chan struct{}), bounded: bounded}
+	s := &Session{client: client, conn: guarded, guard: guarded, ctx: ctx, done: make(chan struct{}), bounded: bounded}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -124,13 +126,19 @@ func loginRejection(err error) bool {
 
 func (s *Session) Capabilities() Capabilities { return s.caps }
 
-// SupportsModifiedDetection is false for beta.8: tagged MODIFIED is discarded.
-func (s *Session) SupportsModifiedDetection() bool { return false }
+// SupportsModifiedDetection reports whether the adapter can observe the tagged
+// MODIFIED response code of one guarded STORE. The guard records the tagged
+// status line of the STORE command it sent, so detection is available whenever
+// the session has a guard. It is not a per-server capability.
+func (s *Session) SupportsModifiedDetection() bool { return s != nil && s.guard != nil }
 
 // SupportsConditionalStore reports whether a single-UID conditional STORE can
-// be validated from the returned FETCH metadata. This does not require the
-// tagged MODIFIED response code.
-func (s *Session) SupportsConditionalStore() bool { return false }
+// be proven from the wire: the tagged status of that STORE command plus the
+// returned FETCH metadata. A CONDSTORE server is required because
+// UNCHANGEDSINCE is meaningless without it.
+func (s *Session) SupportsConditionalStore() bool {
+	return s != nil && s.guard != nil && s.caps.CondStore
+}
 
 func (s *Session) List() ([]Mailbox, error) {
 	var options *imap.ListOptions
@@ -687,13 +695,12 @@ func (s *Session) StoreDelta(uid uint32, add bool, flags []string) error {
 	return classify(err, true)
 }
 
-// ConditionalStoreDelta sends one UID STORE with UNCHANGEDSINCE. A failed
-// precondition is detected without the tagged MODIFIED response code: the
-// server returns no FETCH for the unchanged UID, or returns the same MODSEQ
-// without the requested delta. A single-UID operation makes this validation
-// complete and fail-closed.
+// ConditionalStoreDelta sends one UID STORE with UNCHANGEDSINCE and proves the
+// outcome from the wire. The guard records the tagged status of exactly this
+// command, so a tagged OK without MODIFIED plus the FETCH of this UID is the
+// only accepted success. An unobservable status fails closed as ambiguous.
 func (s *Session) ConditionalStoreDelta(uid uint32, add bool, flags []string, expectedModSeq uint64) (Message, error) {
-	if !s.caps.CondStore || expectedModSeq == 0 {
+	if !s.SupportsConditionalStore() || expectedModSeq == 0 {
 		return Message{}, &Error{Kind: ErrorProtocol}
 	}
 	op := imap.StoreFlagsDel
@@ -704,50 +711,42 @@ func (s *Session) ConditionalStoreDelta(uid uint32, add bool, flags []string, ex
 	for i, flag := range flags {
 		imapFlags[i] = imap.Flag(flag)
 	}
+	if expectedModSeq > maxCondStoreModSeq {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	// Scope the observation to this command. The guard is shared by every
+	// command of the session, so entry and exit bracket the only call.
+	s.beginStoreObservation()
 	buffers, err := s.client.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{
 		Op: op, Flags: imapFlags,
 	}, &imap.StoreOptions{UnchangedSince: expectedModSeq}).Collect()
+	proof := s.endStoreObservation()
 	if err != nil {
 		return Message{}, classify(err, true)
 	}
-	return validateConditionalStore(uid, add, flags, expectedModSeq, buffers)
+	return validateConditionalStore(uid, add, flags, proof, buffers)
 }
 
-func validateConditionalStore(uid uint32, add bool, flags []string, expectedModSeq uint64, buffers []*imapclient.FetchMessageBuffer) (Message, error) {
-	if len(buffers) == 0 {
-		return Message{}, &Error{Kind: ErrorConflict}
+// maxCondStoreModSeq is the largest mod-sequence RFC 7162 defines (63 bits).
+const maxCondStoreModSeq = 1<<63 - 1
+
+// beginStoreObservation arms the guard observer before the STORE command
+// reaches the wire.
+func (s *Session) beginStoreObservation() {
+	s.store.begin()
+	if s.guard != nil {
+		s.guard.watch(&s.store)
 	}
-	if len(buffers) != 1 || buffers[0].UID != imap.UID(uid) {
-		return Message{}, &Error{Kind: ErrorProtocol}
+}
+
+// endStoreObservation stops the observation and returns its evidence.
+func (s *Session) endStoreObservation() storeProof {
+	if s.guard != nil {
+		s.guard.watch(nil)
 	}
-	buffer := buffers[0]
-	message := Message{UID: uid, ModSeq: buffer.ModSeq}
-	for _, flag := range buffer.Flags {
-		message.Flags = append(message.Flags, string(flag))
-	}
-	if buffer.ModSeq == 0 {
-		return Message{}, &Error{Kind: ErrorProtocol}
-	}
-	// A MODSEQ increase does not prove that the requested delta applied:
-	// unsolicited FETCH data and racing writers can change MODSEQ alone.
-	// Validate the exact requested flag state before reporting success.
-	present := make(map[string]bool, len(message.Flags))
-	for _, flag := range message.Flags {
-		present[flag] = true
-	}
-	for _, flag := range flags {
-		if add != present[flag] {
-			return Message{}, &Error{Kind: ErrorConflict}
-		}
-	}
-	// A changed MODSEQ cannot be attributed to this guarded STORE: an
-	// unsolicited FETCH or another writer may have produced the same flags.
-	// Without the tagged MODIFIED code, fail closed instead of claiming that
-	// the UNCHANGEDSINCE precondition passed.
-	if buffer.ModSeq > expectedModSeq {
-		return Message{}, &Error{Kind: ErrorConflict}
-	}
-	return message, nil
+	proof := s.store.proof()
+	s.store.disarm()
+	return proof
 }
 
 func (s *Session) FetchFlags(uid uint32) (Message, error) {

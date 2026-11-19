@@ -534,42 +534,58 @@ func commandTag(line string) string {
 	return "T0"
 }
 
+// TestValidateConditionalStoreSingleUID covers the outcome matrix of the
+// validator. Every case carries a tagged OK without MODIFIED for this UID, so
+// only the returned FETCH state can contradict the request. Without that
+// tagged proof even a matching FETCH is never a success.
 func TestValidateConditionalStoreSingleUID(t *testing.T) {
 	flags := []string{"\\Seen"}
-	if _, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
+	verified := storeProof{observed: true, ok: true}
+	if _, err := validateConditionalStore(2, true, flags, storeProof{failed: true}, []*imapclient.FetchMessageBuffer{
 		{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}},
-	}); err == nil {
-		t.Fatal("changed MODSEQ with matching flags was accepted without tagged MODIFIED")
+	}); !isAdapterKind(err, ErrorProtocol) {
+		t.Fatalf("unprovable tagged status = %v, want protocol error", err)
+	}
+	if _, err := validateConditionalStore(2, true, flags, storeProof{observed: true, ok: true, modified: true, uids: []uidRange{{start: 2, stop: 2}}}, []*imapclient.FetchMessageBuffer{
+		{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}},
+	}); !isAdapterKind(err, ErrorConflict) {
+		t.Fatalf("MODIFIED for this UID = %v, want conflict", err)
 	}
 	for _, test := range []struct {
 		name    string
 		add     bool
 		flags   []string
+		proof   storeProof
 		buffers []*imapclient.FetchMessageBuffer
+		kind    ErrorKind
+		ambigu  bool
 	}{
-		{name: "no fetch is conflict", add: true, flags: flags},
-		{name: "unrelated uid is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 3, ModSeq: 12}}},
-		{name: "duplicate fetch is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}, {UID: 2, ModSeq: 13}}},
-		{name: "same modseq without delta is conflict", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 11}}},
-		{name: "missing modseq is protocol", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2}}},
-		{name: "increased modseq without added flag", add: true, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}}},
-		{name: "increased modseq with removed flag still present", add: false, flags: flags, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}},
-		{name: "increased modseq with only part of the delta", add: true, flags: []string{"\\Seen", "\\Flagged"}, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}},
+		{name: "no fetch is unverifiable", add: true, flags: flags, proof: verified, kind: ErrorProtocol, ambigu: true},
+		{name: "unrelated uid is ambiguous", add: true, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 3, ModSeq: 12}}, kind: ErrorProtocol, ambigu: true},
+		{name: "duplicate fetch is ambiguous", add: true, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}, {UID: 2, ModSeq: 13}}, kind: ErrorProtocol, ambigu: true},
+		{name: "same modseq without delta is conflict", add: true, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 11}}, kind: ErrorConflict},
+		{name: "missing modseq is ambiguous", add: true, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2}}, kind: ErrorProtocol, ambigu: true},
+		{name: "increased modseq without added flag", add: true, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12}}, kind: ErrorConflict},
+		{name: "increased modseq with removed flag still present", add: false, flags: flags, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}, kind: ErrorConflict},
+		{name: "increased modseq with only part of the delta", add: true, flags: []string{"\\Seen", "\\Flagged"}, proof: verified, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}, kind: ErrorConflict},
+		{name: "modified for another uid is ambiguous", add: true, flags: flags, proof: storeProof{observed: true, ok: true, modified: true, uids: []uidRange{{start: 9, stop: 9}}}, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}, kind: ErrorProtocol, ambigu: true},
+		{name: "tagged NO is ambiguous", add: true, flags: flags, proof: storeProof{observed: true}, buffers: []*imapclient.FetchMessageBuffer{{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}}}, kind: ErrorProtocol, ambigu: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := validateConditionalStore(2, test.add, test.flags, 11, test.buffers)
-			if err == nil {
-				t.Fatal("conditional STORE response was accepted")
-			}
-			if !isAdapterKind(err, ErrorConflict) && !isAdapterKind(err, ErrorProtocol) {
-				t.Fatalf("unexpected error kind: %v", err)
+			_, err := validateConditionalStore(2, test.add, test.flags, test.proof, test.buffers)
+			protocolErr, ok := err.(*Error)
+			if !ok || protocolErr.Kind != test.kind || protocolErr.Ambiguous != test.ambigu {
+				t.Fatalf("validateConditionalStore() = %v, want kind %v ambiguous %v", err, test.kind, test.ambigu)
 			}
 		})
 	}
-	noOp, err := validateConditionalStore(2, true, flags, 11, []*imapclient.FetchMessageBuffer{
-		{UID: 2, ModSeq: 11, Flags: []imap.Flag{"\\Seen"}},
+	// A higher MODSEQ is the normal result of a successful STORE: RFC 7162
+	// 3.1.3 requires the MODSEQ update. Only the tagged status decides the
+	// precondition outcome.
+	noOp, err := validateConditionalStore(2, true, flags, verified, []*imapclient.FetchMessageBuffer{
+		{UID: 2, ModSeq: 12, Flags: []imap.Flag{"\\Seen"}},
 	})
-	if err != nil || noOp.ModSeq != 11 {
-		t.Fatalf("no-op add already present = %+v, %v", noOp, err)
+	if err != nil || noOp.ModSeq != 12 {
+		t.Fatalf("bumped MODSEQ after a tagged OK = %+v, %v", noOp, err)
 	}
 }

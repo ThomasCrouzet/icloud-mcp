@@ -7,7 +7,7 @@ This distribution contains the Go modules listed below. Versions match
 
 - `github.com/emersion/go-ical` `v0.0.0-20250609112844-439c63cef608`
   - Copyright (c) 2020 Simon Ser
-- `github.com/emersion/go-imap/v2` `v2.0.0-beta.8`
+- `github.com/emersion/go-imap/v2` `v2.0.0-beta.9`
   - Copyright (c) 2013 The Go-IMAP Authors
   - Copyright (c) 2016 Proton Technologies AG
   - Copyright (c) 2023 Simon Ser

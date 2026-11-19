@@ -525,6 +525,12 @@ func TestIntegration_MailMutationAndSend(t *testing.T) {
 			}
 			unchanged := sameMailFlags(current.Flags, after.Flags) && seenState == hasMailFlag(after.Flags, maildomain.FlagSeen)
 			t.Logf("mail_flag_fail_closed=%v", unchanged)
+			if maildomain.AsError(flagErr).Code == maildomain.CodeOutcomeUnknown {
+				// A dispatched but unverifiable STORE may have applied the
+				// delta. Only the definitive refusal must leave flags intact.
+				current = after.MessageSummary
+				return
+			}
 			if !unchanged {
 				t.Fatal("CONDSTORE flag mutation fail_closed=false")
 			}
@@ -894,11 +900,18 @@ func sameMailFlags(left, right []maildomain.MessageFlag) bool {
 
 func deliberateCondStoreFailure(err error) bool {
 	mailErr := maildomain.AsError(err)
-	if mailErr == nil || mailErr.Code != maildomain.CodeProtocolError {
+	if mailErr == nil {
 		return false
 	}
-	return mailErr.Message == "conditional flag mutation is unavailable because MODIFIED cannot be safely detected" ||
-		mailErr.Message == "conditional flag mutation is not implemented by this adapter"
+	// A synthetic or live server can withhold the tagged STORE status, so a
+	// dispatched guarded STORE can stay unverifiable. A refused capability is
+	// also legitimate when the adapter has no guard.
+	if mailErr.Code == maildomain.CodeOutcomeUnknown {
+		return true
+	}
+	return mailErr.Code == maildomain.CodeProtocolError &&
+		(mailErr.Message == "conditional flag mutation is unavailable because the adapter cannot observe the tagged STORE status" ||
+			mailErr.Message == "conditional flag mutation is not implemented by this adapter")
 }
 
 func unavailableSafeMove(err error) bool {

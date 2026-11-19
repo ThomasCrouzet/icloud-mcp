@@ -446,13 +446,17 @@ Mail:
 
 - Search/get reads use read-only SELECT (EXAMINE) and PEEK.
 - Each message reference includes UIDVALIDITY. A mismatch occurs before mutation.
-- A CONDSTORE server cannot receive unconditional STORE when MODIFIED detection
-  is unavailable.
-- A fake without conditional-update support refuses before STORE. The real
-  adapter can send one conditional UID STORE with `UNCHANGEDSINCE`.
-- Conditional response validation checks the returned UID, flags, and MODSEQ.
-  A malformed FETCH can return `protocol_error` after one STORE.
+- A CONDSTORE server cannot receive unconditional STORE: the adapter sends one
+  guarded STORE with `UNCHANGEDSINCE` and no fallback.
+- A fake without conditional-update support refuses before STORE.
+- Conditional response validation needs the tagged OK without MODIFIED and the
+  returned FETCH for that UID. A tagged MODIFIED is `concurrent_modification`.
+  A malformed or missing FETCH, a missing tagged status, an unparsable tagged
+  status, or two STORE commands return `outcome_unknown` after one STORE.
   Do not describe that result as proof that STORE was never dispatched.
+- Synthetic wire fixtures prove the capability: success, RFC 7162 3.1.3
+  Example 10, stale MODSEQ, no-op, competing client, malformed FETCH, no FETCH,
+  unobservable tagged status, and MODIFIED sets that do not name this UID.
 - An SDK schema refusal with zero service calls proves neither conditional
   STORE behavior nor unsupported adapter capability.
 - Non-CONDSTORE flag writes are delta-only and cannot set Deleted or keywords.
@@ -785,8 +789,9 @@ The test polls each selectable mailbox with independent opaque subject and body
 queries. It verifies UIDVALIDITY and makes sure that Seen does not change. It
 tests flag addition and removal when safe.
 
-On a CONDSTORE server, the test permits the deliberate beta.8 `protocol_error`
-path. It first reads the flags to prove that none changed.
+On a CONDSTORE server, the guarded STORE returns either the proven outcome or a
+classified failure. The test permits the `outcome_unknown` path when the server
+status is not observable. It first reads the flags to prove that none changed.
 
 Move first selects a distinct selectable SPECIAL-USE Archive mailbox. If none is
 available, it selects another destination that is not Trash. It finds the

@@ -299,15 +299,23 @@ A Mail message uses the identity `(mailbox, UIDVALIDITY, UID)`. Search cursors
 must pair `before_uid` with UIDVALIDITY. Get and each mutation select the named
 mailbox. They reject a UIDVALIDITY mismatch before an action.
 
-Reads request MODSEQ when the IMAP server advertises CONDSTORE. Safe conditional
-STORE requires detection of the tagged MODIFIED response. The current go-imap
-beta.8 adapter cannot give this guarantee. Thus, `set_message_flags` rejects the
-request before STORE with `protocol_error`.
+Reads request MODSEQ when the IMAP server advertises CONDSTORE. A safe
+conditional STORE needs the tagged `MODIFIED` response. `go-imap` v2 discards
+that response code, so the adapter observes the tagged status line of the
+guarded STORE it sent through its inbound protocol guard. The observer binds
+the tag of that command line, so no other command response is evidence. It
+reads no MIME data and changes no wire guard.
 
-This unavailable path does not report `concurrent_modification`. Without
-CONDSTORE, the adapter uses only delta `+FLAGS.SILENT` or `-FLAGS.SILENT`. These
-commands apply to Seen, Flagged, and Answered. The result contains
-`conditionalUpdate: false`.
+`set_message_flags` reports a conditional success only when the tagged status
+carried no `MODIFIED` and the server returned the FETCH of that UID with the
+requested delta. A tagged `MODIFIED` for this UID returns
+`concurrent_modification`. A dispatched STORE whose status or FETCH is not
+verifiable returns `outcome_unknown`. Neither case is retried, and a CONDSTORE
+server never receives an unconditional STORE.
+
+Without CONDSTORE, the adapter uses only delta `+FLAGS.SILENT` or
+`-FLAGS.SILENT`. These commands apply to Seen, Flagged, and Answered. The
+result contains `conditionalUpdate: false`.
 
 Move uses native UID MOVE when available. Otherwise, it requires UIDPLUS. It
 sends UID COPY, adds Deleted, and sends UID EXPUNGE for the one UID. The server

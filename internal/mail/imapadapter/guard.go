@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -21,6 +22,11 @@ var errInboundLimit = errors.New("IMAP inbound limit exceeded")
 // guardedConn rejects oversized sessions and deeply nested protocol lists
 // before go-imap materializes recursive BODYSTRUCTURE values. Literal payloads
 // are excluded from protocol nesting checks.
+//
+// The same byte scan can report completed protocol lines to one optional
+// observation, which records the tagged status of one guarded STORE command.
+// The observation never changes a byte, a limit, or an error. It is nil for
+// every command except the guarded STORE it brackets.
 type guardedConn struct {
 	net.Conn
 	total            int
@@ -31,10 +37,24 @@ type guardedConn struct {
 	quoted           bool
 	quotedLength     int
 	escaped          bool
+	observation      atomic.Pointer[storeObservation]
 }
 
-func newGuardedConn(conn net.Conn) net.Conn {
+func newGuardedConn(conn net.Conn) *guardedConn {
 	return &guardedConn{Conn: conn, line: make([]byte, 0, 4096)}
+}
+
+// watch scopes the wire observation to one command, or to no command.
+func (c *guardedConn) watch(observation *storeObservation) {
+	c.observation.Store(observation)
+}
+
+// Write forwards one outbound chunk and reports it to the active observation.
+func (c *guardedConn) Write(p []byte) (int, error) {
+	if observation := c.observation.Load(); observation != nil {
+		observation.noteWrite(p)
+	}
+	return c.Conn.Write(p)
 }
 
 func (c *guardedConn) Read(p []byte) (int, error) {
@@ -100,6 +120,11 @@ func (c *guardedConn) scanProtocolByte(b byte) error {
 		size, err := literalSize(c.line[:len(c.line)-2])
 		if err != nil {
 			return err
+		}
+		if c.literalRemaining == 0 {
+			if observation := c.observation.Load(); observation != nil {
+				observation.noteStatus(c.line[:len(c.line)-2])
+			}
 		}
 		c.literalRemaining = size
 		c.line = c.line[:0]
