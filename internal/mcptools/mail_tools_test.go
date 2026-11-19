@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	maildomain "github.com/ThomasCrouzet/icloud-mcp/internal/mail"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
@@ -100,11 +101,17 @@ type mailToolsDiscardWriter struct{}
 
 func (mailToolsDiscardWriter) Write(data []byte) (int, error) { return len(data), nil }
 
+// mailToolsDeps grants every Mail capability so handler tests exercise their
+// own logic instead of the listing filter. The zero plan grants nothing by
+// design, and a test that needs fewer grants builds them explicitly.
 func mailToolsDeps(service maildomain.Service) MailDeps {
 	return MailDeps{
 		Service:  service,
 		Audit:    security.NewAuditLogger(mailToolsDiscardWriter{}),
 		Redactor: security.NewRedactor("mail-test-secret"),
+		Plan: NewCapabilityPlanFromConfig(false, config.CapabilitySet{
+			MailRead: true, MailMutate: true, MailTrash: true, MailSend: true, MailArchive: true,
+		}),
 	}
 }
 
