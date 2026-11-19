@@ -136,10 +136,10 @@ are both returned, and the HTML branch is suppressed.
 
 ```text
 multipart/alternative
-├── multipart/mixed
-│   ├── text/plain: "Part A"
-│   └── text/plain: "Part B"
-└── text/html: rendering of A and B
+|-- multipart/mixed
+|   |-- text/plain: "Part A"
+|   `-- text/plain: "Part B"
+`-- text/html: rendering of A and B
 ```
 
 Every `multipart/alternative` level counts on its own. A nested alternative
@@ -149,12 +149,12 @@ part when any shared alternative level already selected a different branch.
 
 ```text
 multipart/alternative
-├── multipart/mixed
-│   ├── text/plain: "Intro text"
-│   └── multipart/alternative
-│       ├── text/plain: "bonjour"
-│       └── text/plain: "bonjour latin1 twin"
-└── text/html
+|-- multipart/mixed
+|   |-- text/plain: "Intro text"
+|   `-- multipart/alternative
+|       |-- text/plain: "bonjour"
+|       `-- text/plain: "bonjour latin1 twin"
+`-- text/html
 ```
 
 The result keeps "Intro text" and the preferred inner leaf "bonjour". The
