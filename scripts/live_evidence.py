@@ -526,6 +526,7 @@ def markdown_evidence(evidence):
         "read_only",
         "contacts",
         "mail",
+        "mail_from_set",
         "mail_write",
         "mail_send",
         "integration_writes",

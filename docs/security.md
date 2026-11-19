@@ -96,9 +96,9 @@ parser errors.
 ## `file://` operator boundary
 
 `ICLOUD_EMAIL`, `ICLOUD_PASSWORD`, `ICLOUD_MAIL_ADDRESS`, `ICLOUD_MAIL_FROM`,
-and `ICLOUD_MAIL_PASSWORD` support `file://`. The server reads Mail values only when
-Mail is enabled. It accepts only a regular file of 4 KiB or less. The file mode
-must prevent group and world access, which is 0600 or stricter.
+and `ICLOUD_MAIL_PASSWORD` support `file://`. The server reads Mail values
+only when Mail is enabled. It accepts only a regular file of 4 KiB or less.
+The file mode must prevent group and world access, which is 0600 or stricter.
 
 The server reads the file once at boot. It removes surrounding whitespace and
 keeps only the value. It rejects FIFOs, devices, directories, oversized files,
