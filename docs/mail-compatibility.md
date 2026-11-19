@@ -142,6 +142,25 @@ multipart/alternative
 └── text/html: rendering of A and B
 ```
 
+Every `multipart/alternative` level counts on its own. A nested alternative
+inside a branch opens one more level, so its own leaves compete with each other
+while the enclosing mixed siblings stay independent. The client suppresses a
+part when any shared alternative level already selected a different branch.
+
+```text
+multipart/alternative
+├── multipart/mixed
+│   ├── text/plain: "Intro text"
+│   └── multipart/alternative
+│       ├── text/plain: "bonjour"
+│       └── text/plain: "bonjour latin1 twin"
+└── text/html
+```
+
+The result keeps "Intro text" and the preferred inner leaf "bonjour". The
+competing inner leaf "bonjour latin1 twin" is not fetched, and neither is the
+HTML branch.
+
 A part that is malformed or too large adds `body_decode_failed` or
 `body_too_large`; the client continues with the other independent parts.
 

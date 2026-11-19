@@ -141,16 +141,14 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 		var segments []string
 		firstRawBody := ""
 		plainFailed := false
-		// chosenBranch maps one alternative group to the branch already
-		// selected for it. Independent segments of that branch are appended.
-		// Segments of a competing branch are skipped.
-		chosenBranch := make(map[string]string)
+		// chosenScope maps one alternative group to the branch already
+		// selected for it. A part is skipped when any shared alternative level
+		// already selected a different branch. Independent segments of the
+		// chosen branch are appended.
+		chosenScope := make(map[string]string)
 		for index, part := range selectedPlain {
-			group, branch := part.AlternativeGroup, alternativeBranchID(*part)
-			if group != "" {
-				if chosen, ok := chosenBranch[group]; ok && chosen != branch {
-					continue
-				}
+			if competingAlternativeScope(chosenScope, *part) {
+				continue
 			}
 			bodyData, err := session.FetchBodyPart(input.UID, part.Path)
 			if err != nil {
@@ -182,8 +180,10 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 				continue
 			}
 			segments = append(segments, body)
-			if group != "" {
-				chosenBranch[group] = branch
+			for scope, branch := range alternativeScopes(*part) {
+				if _, chosen := chosenScope[scope]; !chosen {
+					chosenScope[scope] = branch
+				}
 			}
 		}
 
@@ -312,15 +312,42 @@ func decodePlainBody(header, body []byte, maxBytes int) (string, bool, error) {
 
 var errUnsafeMIME = &Error{Code: CodeProtocolError, Message: "selected MIME part is not plain text"}
 
-// alternativeBranchID names the competing branch of one plain part. A leaf
-// carries the branch that the adapter computed. A part without one is its own
+// alternativeScopes returns every alternative level of one plain part, keyed
+// by group, with the branch that the adapter computed for that level. A part
+// without scope data reports its AlternativeGroup with its own path as the
 // branch, which keeps the one-part-per-group rule for callers that do not
 // supply branch identity.
-func alternativeBranchID(part imapadapter.BodyPart) string {
-	if part.AlternativeBranch != "" {
-		return part.AlternativeBranch
+func alternativeScopes(part imapadapter.BodyPart) map[string]string {
+	if len(part.AlternativeScopes) > 0 {
+		out := make(map[string]string, len(part.AlternativeScopes))
+		for _, scope := range part.AlternativeScopes {
+			branch := scope.Branch
+			if branch == "" {
+				branch = partID(part.Path)
+			}
+			out[scope.Group] = branch
+		}
+		return out
 	}
-	return partID(part.Path)
+	if part.AlternativeGroup == "" {
+		return nil
+	}
+	branch := part.AlternativeBranch
+	if branch == "" {
+		branch = partID(part.Path)
+	}
+	return map[string]string{part.AlternativeGroup: branch}
+}
+
+// competingAlternativeScope reports whether an already chosen branch at any
+// shared alternative level makes this part a competing representation.
+func competingAlternativeScope(chosen map[string]string, part imapadapter.BodyPart) bool {
+	for scope, branch := range alternativeScopes(part) {
+		if selected, ok := chosen[scope]; ok && selected != branch {
+			return true
+		}
+	}
+	return false
 }
 
 func partID(path []int) string {

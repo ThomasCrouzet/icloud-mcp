@@ -438,9 +438,58 @@ func convertAddresses(in []imap.Address) ([]Address, error) {
 }
 
 // flatItem carries the alternative identity of one visited structure node.
+// scopes lists every alternative level that contains the node, outermost
+// first. pending marks an innermost level that still needs its branch.
 type flatItem struct {
-	group  string
-	branch string
+	scopes  []AlternativeScope
+	pending bool
+}
+
+// sync refreshes the outermost compatibility fields from the scope chain.
+func (i flatItem) sync() flatItem {
+	if len(i.scopes) > 0 {
+		i.scopes = append([]AlternativeScope(nil), i.scopes...)
+	}
+	return i
+}
+
+func (i flatItem) group() string {
+	if len(i.scopes) == 0 {
+		return ""
+	}
+	return i.scopes[0].Group
+}
+
+func (i flatItem) branch() string {
+	if len(i.scopes) == 0 {
+		return ""
+	}
+	return i.scopes[0].Branch
+}
+
+// withBranch assigns the branch of the innermost alternative level.
+func (i flatItem) withBranch(branch string) flatItem {
+	out := i.sync()
+	if len(out.scopes) > 0 {
+		out.scopes[len(out.scopes)-1].Branch = branch
+	}
+	out.pending = false
+	return out
+}
+
+// withScope opens one nested alternative level below the current identity.
+func (i flatItem) withScope(group string) flatItem {
+	out := i.sync()
+	out.scopes = append(out.scopes, AlternativeScope{Group: group})
+	out.pending = true
+	return out
+}
+
+func (i flatItem) parts() []AlternativeScope {
+	if len(i.scopes) == 0 {
+		return nil
+	}
+	return i.scopes
 }
 
 // flattenBodyStructure walks one BODYSTRUCTURE value and returns its parts in
@@ -452,6 +501,9 @@ type flatItem struct {
 // belongs to the branch of its top-level alternative child. Two plain leaves in
 // one branch are independent segments. Two leaves in different branches are
 // competing representations, and the reader keeps only one branch.
+//
+// A multipart/alternative below a branch opens one more nested scope, so its
+// own leaves compete even when an outer alternative already set a branch.
 func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	parts := make([]BodyPart, 0, 8)
 	var walk func(imap.BodyStructure, []int, bool, flatItem) error
@@ -492,8 +544,8 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 				Path: pathCopy, ContentType: mediaType, Disposition: disposition,
 				Filename: filename, ContentID: typed.ID, Size: typed.Size,
 				InlinePlain: mediaType == "text/plain" && !attachment,
-				Attachment:  attachment, AlternativeGroup: identity.group,
-				AlternativeBranch: identity.branch,
+				Attachment:  attachment, AlternativeGroup: identity.group(),
+				AlternativeBranch: identity.branch(), AlternativeScopes: identity.parts(),
 			})
 		case *imap.BodyStructureMultiPart:
 			parts = append(parts, BodyPart{
@@ -504,17 +556,19 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 				return nil
 			}
 			child := identity
-			if identity.group == "" && strings.EqualFold(typed.Subtype, "alternative") {
-				// Start one alternative scope with this container as the root.
-				child = flatItem{group: alternativeGroupKey(path)}
+			if strings.EqualFold(typed.Subtype, "alternative") {
+				// Every alternative opens its own level. A nested level keeps
+				// the outer levels and adds its own, so its leaves compete with
+				// each other and not with the outer mixed siblings.
+				child = identity.withScope(alternativeGroupKey(path))
 			}
 			for i, nested := range typed.Children {
 				// Each direct child of an alternative is one competing branch.
 				// Below it the branch identity stays fixed, so independent
 				// segments of a mixed child keep their own text.
 				grandchild := child
-				if child.group != "" && child.branch == "" {
-					grandchild.branch = alternativeGroupKey(append(path, i+1))
+				if child.pending {
+					grandchild = child.withBranch(alternativeGroupKey(append(path, i+1)))
 				}
 				if err := walk(nested, append(path, i+1), false, grandchild); err != nil {
 					return err

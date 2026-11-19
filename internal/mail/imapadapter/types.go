@@ -73,6 +73,15 @@ type Envelope struct {
 	InReplyTo []string
 }
 
+// AlternativeScope is one multipart/alternative level that contains a part.
+// A nested alternative adds one more level to the chain.
+type AlternativeScope struct {
+	// Group names the alternative container.
+	Group string
+	// Branch names the direct child branch of that container.
+	Branch string
+}
+
 type BodyPart struct {
 	Path        []int
 	ContentType string
@@ -89,6 +98,11 @@ type BodyPart struct {
 	// which contains this part. Parts in one group and one branch are
 	// independent segments. Parts in one group and different branches compete.
 	AlternativeBranch string
+	// AlternativeScopes lists every multipart/alternative level that contains
+	// this part, outermost first. One part competes with another when any
+	// shared level already selected a different branch. AlternativeGroup and
+	// AlternativeBranch hold the outermost scope for compatibility.
+	AlternativeScopes []AlternativeScope
 }
 
 // Projection names the FETCH data items one read needs. A reader asks for the
@@ -105,9 +119,12 @@ const (
 	ProjectionFullMessage
 )
 
-func (p Projection) valid() bool {
+// Valid reports whether the value names one supported projection.
+func (p Projection) Valid() bool {
 	return p >= ProjectionSummary && p <= ProjectionFullMessage
 }
+
+func (p Projection) valid() bool { return p.Valid() }
 
 func (p Projection) wantsHeaders() bool {
 	return p == ProjectionReplyHeaders || p == ProjectionFullMessage
