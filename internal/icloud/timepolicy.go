@@ -110,6 +110,36 @@ func WallClockExists(wall time.Time, loc *time.Location) bool {
 	return !adjusted
 }
 
+// ValidateNamedTZIDRoundTrip checks that instant survives a write as a bare
+// TZID wall time. A TZID value carries no offset, so a reader resolves the wall
+// clock again with the first-fold policy. A second-fold instant therefore
+// re-reads at a different instant, and a caller that expects the requested time
+// would be wrong by the fold offset. UTC and nil locations keep absolute
+// instants and always pass. field names the rejected input in the message.
+//
+// A nonexistent local time cannot come from a real instant: the wall clock of
+// any instant exists in its own location. Gap input is rejected earlier, when a
+// text value is parsed into an instant (ParseDateTime).
+func ValidateNamedTZIDRoundTrip(field string, instant time.Time, loc *time.Location) error {
+	if loc == nil || loc == time.UTC || instant.IsZero() {
+		return nil
+	}
+	wall := WallClockOf(instant.In(loc))
+	resolved, adjusted := ResolveWallClock(wall, loc)
+	if adjusted {
+		return NewValidationError(field + " does not exist in timezone " + loc.String() + " because of a daylight-saving gap")
+	}
+	if resolved.Equal(instant) {
+		return nil
+	}
+	err := NewValidationError(field + " " + wall.Format("2006-01-02T15:04:05") + " in timezone " + loc.String() +
+		" does not round-trip: a TZID value cannot encode the second occurrence of a daylight-saving fold")
+	err.Details = map[string]string{
+		"reconciliation": "Select an unambiguous instant, for example one outside the repeated hour, or send an offset-free local time so the first fold applies. Use get_event to confirm the stored value.",
+	}
+	return err
+}
+
 // WallClockInLocation reinterprets the wall-clock components of t in loc.
 // It is used only when a floating value must be compared with an instant in a
 // caller-selected timezone; it never changes the stored floating form.

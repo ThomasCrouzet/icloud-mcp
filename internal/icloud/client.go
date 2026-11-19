@@ -273,9 +273,18 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 		}
 	}
 	if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !ne.AllDay {
-		for _, value := range []time.Time{ne.StartTime, ne.EndTime} {
-			if !WallClockExists(WallClockOf(value.In(loc)), loc) {
-				return "", NewValidationError("event time does not exist in timezone " + loc.String() + " because of a daylight-saving gap")
+		// A TZID write stores a bare wall time, so both bounds must survive the
+		// first-fold resolution the reader applies. A second-fold instant would
+		// re-read at a different instant; reject it before any PUT.
+		for _, bound := range []struct {
+			field   string
+			instant time.Time
+		}{
+			{field: "start", instant: ne.StartTime},
+			{field: "end", instant: ne.EndTime},
+		} {
+			if err := ValidateNamedTZIDRoundTrip(bound.field, bound.instant, loc); err != nil {
+				return "", err
 			}
 		}
 	}

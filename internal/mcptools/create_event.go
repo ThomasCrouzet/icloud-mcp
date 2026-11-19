@@ -243,10 +243,23 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 			}
 		}
 		if timezone != "" {
-			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
-				resolved, _ := icloud.ResolveWallClock(icloud.WallClockOf(start.In(loc)), loc)
-				if !resolved.Equal(start) {
-					return deny("validation", fmt.Errorf("start offset selects a daylight-saving fold that cannot be represented by timezone %s; use an offset-free local time or a UTC start", timezone))
+			loc, lerr := time.LoadLocation(timezone)
+			if lerr != nil {
+				return deny("timezone parameter", fmt.Errorf("invalid timezone %q", timezone))
+			}
+			// A TZID write stores a bare wall time, so both bounds must survive
+			// the first-fold resolution the reader applies. A second-fold
+			// instant would re-read at a different instant; reject it before any
+			// PUT (create sends If-None-Match: *).
+			for _, bound := range []struct {
+				field   string
+				instant time.Time
+			}{
+				{field: "start", instant: start},
+				{field: "end", instant: end},
+			} {
+				if verr := icloud.ValidateNamedTZIDRoundTrip("the "+bound.field+" offset", bound.instant, loc); verr != nil {
+					return deny("validation", verr)
 				}
 			}
 		}

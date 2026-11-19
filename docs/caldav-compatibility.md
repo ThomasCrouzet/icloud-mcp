@@ -156,8 +156,12 @@ the complete object. Identical UIDs in different calendars stay isolated.
   strong GET ETag and returns `concurrent_modification` when they differ. This
   applies to every dry-run outcome, including an already-excluded occurrence:
   the no-op preview is not returned for a stale read. A missing caller ETag
-  keeps the point-in-time preview. A weak or absent server ETag fails closed
-  with `concurrent_modification` when the caller supplied one.
+  keeps the point-in-time preview.
+- A weak server ETag never reaches the delete preflight. The GET and REPORT
+  readers reject it one layer earlier with `protocol_error`, so the ETag in the
+  fetched object is always a strong value. A missing server ETag still fails
+  closed with `concurrent_modification` when the caller supplied one, because no
+  comparison is possible.
 - The `alreadyExcluded` result field is reported for an excluded occurrence, so
   a caller can tell a confirmed no-op from an actionable delete.
 - A DELETE dry run is a point-in-time preflight, not a lock.
@@ -188,6 +192,10 @@ the complete object. Identical UIDs in different calendars stay isolated.
   DATE values, and UTC-bound ends of a mixed-form event keep their instants.
   The rule uses the same resolver as recurrence expansion, so it matches the
   RFC 5545 section 3.3.5 first-fold interpretation that a later read applies.
+- Create applies the same round-trip rule to both `start` and `end` when it
+  writes a named TZID. A second-fold instant returns `validation` before the
+  `If-None-Match: *` PUT. An all-day create and a UTC create keep their values,
+  because they do not store a bare TZID wall time.
 - An explicit `Z` or numeric offset with an omitted `timezone` keeps the fixed
   UTC recurrence policy. `ICLOUD_MCP_DEFAULT_TZ` applies only to offset-free
   input.
