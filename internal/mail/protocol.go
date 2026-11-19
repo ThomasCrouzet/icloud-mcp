@@ -21,7 +21,7 @@ type imapSession interface {
 	List() ([]imapadapter.Mailbox, error)
 	Select(mailbox string, readOnly bool) (imapadapter.SelectedMailbox, error)
 	Search(request imapadapter.SearchRequest) ([]uint32, error)
-	FetchMetadata(uids []uint32, includeHeaders bool) ([]imapadapter.Message, error)
+	FetchMetadata(uids []uint32, projection imapadapter.Projection) ([]imapadapter.Message, error)
 	FetchBodyPart(uid uint32, path []int) (imapadapter.BodyData, error)
 	StoreDelta(uid uint32, add bool, flags []string) error
 	ConditionalStoreDelta(uid uint32, add bool, flags []string, expectedModSeq uint64) (imapadapter.Message, error)

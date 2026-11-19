@@ -87,6 +87,43 @@ type BodyPart struct {
 	AlternativeGroup string
 }
 
+// Projection names the FETCH data items one read needs. A reader asks for the
+// smallest projection it can use, so a MIME tree never blocks a metadata-only
+// read.
+type Projection uint8
+
+const (
+	// ProjectionSummary gets envelope, flag, date, size, and MODSEQ metadata.
+	ProjectionSummary Projection = iota + 1
+	// ProjectionReplyHeaders adds the four curated threading headers.
+	ProjectionReplyHeaders
+	// ProjectionFullMessage adds the MIME tree and the curated headers.
+	ProjectionFullMessage
+)
+
+func (p Projection) valid() bool {
+	return p >= ProjectionSummary && p <= ProjectionFullMessage
+}
+
+func (p Projection) wantsHeaders() bool {
+	return p == ProjectionReplyHeaders || p == ProjectionFullMessage
+}
+
+func (p Projection) wantsBodyStructure() bool { return p == ProjectionFullMessage }
+
+func (p Projection) String() string {
+	switch p {
+	case ProjectionSummary:
+		return "summary"
+	case ProjectionReplyHeaders:
+		return "reply-headers"
+	case ProjectionFullMessage:
+		return "full-message"
+	default:
+		return "invalid"
+	}
+}
+
 type CuratedHeaders struct {
 	MessageID  string
 	InReplyTo  []string

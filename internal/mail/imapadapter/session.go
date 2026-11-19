@@ -261,9 +261,15 @@ func expandUIDSet(numSet imap.NumSet, requestedMin, requestedMax uint32, maxCoun
 	return out, nil
 }
 
-func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, error) {
+// FetchMetadata gets one bounded metadata page for the requested projection.
+// Only ProjectionFullMessage asks the server for BODYSTRUCTURE, so a wide or
+// deep MIME tree cannot fail a summary or reply read.
+func (s *Session) FetchMetadata(uids []uint32, projection Projection) ([]Message, error) {
 	if len(uids) == 0 {
 		return nil, nil
+	}
+	if !projection.valid() {
+		return nil, &Error{Kind: ErrorProtocol}
 	}
 	if len(uids) > maxMetadataMessages {
 		return nil, &Error{Kind: ErrorTooLarge}
@@ -281,15 +287,17 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 		set.AddNum(imap.UID(uid))
 	}
 	options := &imap.FetchOptions{
-		UID:           true,
-		Flags:         true,
-		Envelope:      true,
-		InternalDate:  true,
-		RFC822Size:    true,
-		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
-		ModSeq:        s.caps.CondStore,
+		UID:          true,
+		Flags:        true,
+		Envelope:     true,
+		InternalDate: true,
+		RFC822Size:   true,
+		ModSeq:       s.caps.CondStore,
 	}
-	if includeHeaders {
+	if projection.wantsBodyStructure() {
+		options.BodyStructure = &imap.FetchItemBodyStructure{Extended: true}
+	}
+	if projection.wantsHeaders() {
 		options.BodySection = []*imap.FetchItemBodySection{{
 			Specifier:    imap.PartSpecifierHeader,
 			HeaderFields: []string{"Message-ID", "In-Reply-To", "References", "Reply-To"},
@@ -324,7 +332,7 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 			return nil, &Error{Kind: ErrorProtocol}
 		}
 		seen[uid] = struct{}{}
-		converted, err := convertMessage(buffer, includeHeaders)
+		converted, err := convertMessage(buffer, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -336,26 +344,32 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 	return out, nil
 }
 
-func convertMessage(buffer *imapclient.FetchMessageBuffer, includeHeaders bool) (Message, error) {
-	if buffer.UID == 0 || buffer.Envelope == nil || buffer.BodyStructure == nil {
+func convertMessage(buffer *imapclient.FetchMessageBuffer, projection Projection) (Message, error) {
+	if buffer.UID == 0 || buffer.Envelope == nil || !projection.valid() {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	if projection.wantsBodyStructure() && buffer.BodyStructure == nil {
 		return Message{}, &Error{Kind: ErrorProtocol}
 	}
 	envelope, err := convertEnvelope(buffer.Envelope)
 	if err != nil {
 		return Message{}, err
 	}
-	parts, err := flattenBodyStructure(buffer.BodyStructure)
-	if err != nil {
-		return Message{}, err
-	}
 	msg := Message{
 		UID: uint32(buffer.UID), Envelope: envelope, InternalDate: buffer.InternalDate,
-		Size: buffer.RFC822Size, ModSeq: buffer.ModSeq, Parts: parts,
+		Size: buffer.RFC822Size, ModSeq: buffer.ModSeq,
 	}
 	for _, flag := range buffer.Flags {
 		msg.Flags = append(msg.Flags, string(flag))
 	}
-	if includeHeaders {
+	if projection.wantsBodyStructure() {
+		parts, err := flattenBodyStructure(buffer.BodyStructure)
+		if err != nil {
+			return Message{}, err
+		}
+		msg.Parts = parts
+	}
+	if projection.wantsHeaders() {
 		if len(buffer.BodySection) != 1 || len(buffer.BodySection[0].Bytes) > maxHeaderBytes {
 			return Message{}, &Error{Kind: ErrorTooLarge}
 		}

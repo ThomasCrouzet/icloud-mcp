@@ -91,19 +91,33 @@ An absent cursor and `scanLimitReached: false` mean the scan reached UID 1.
 `scanLimitReached` means that the search did not read older UID space.
 `truncated` means that the count or 256 KiB output limit removed summaries.
 
-Search gets only UID, flags, envelope, internal date, RFC822 size, and
-BODYSTRUCTURE. It also gets MODSEQ when available. It gets no snippet or body
-section.
+Reads use one of three FETCH projections. Each read asks for the smallest one
+it can use, so a MIME tree never blocks a read that does not need it.
+
+| Projection | Used by | FETCH items |
+|------------|---------|-------------|
+| Summary | `search_messages` | UID, flags, envelope, internal date, RFC822 size, and MODSEQ when available |
+| Reply headers | `reply_message` | Summary items plus the header section for Message-ID, In-Reply-To, References, and Reply-To |
+| Full message | `get_message` | Reply-header items plus extended BODYSTRUCTURE |
+
+No projection requests a snippet or a whole body section.
 
 ## Message retrieval
 
 Read tools select mailboxes read-only and use PEEK. They must not set Seen.
 
-`get_message` first gets metadata, BODYSTRUCTURE, and four additional headers:
-Message-ID, In-Reply-To, References, and Reply-To. It selects inline
-`text/plain` leaves without attachment or filename semantics. Then, bounded
-partial PEEK requests get the MIME header and body. It never gets an unbounded
-`BODY.PEEK[]`.
+`get_message` gets the full-message projection: metadata, BODYSTRUCTURE, and the
+four curated headers. It selects inline `text/plain` leaves without attachment
+or filename semantics. Then, bounded partial PEEK requests get the MIME header
+and body. It never gets an unbounded `BODY.PEEK[]`.
+
+## BODYSTRUCTURE limits
+
+Search and reply reads do not request BODYSTRUCTURE, so a message with a wide
+or deep MIME tree still appears in a bounded summary page and can still be
+replied to. `get_message` keeps the tree limits: 200 flattened parts, MIME path
+depth 20, and one part per attachment. A tree above a limit fails that read with
+`payload_too_large` after `guardedConn` applied the 4 MiB inbound session cap.
 
 Parts of `multipart/mixed` are independent. The client joins each selected
 plain part in document order with a blank line, within `max_body_bytes`. When a

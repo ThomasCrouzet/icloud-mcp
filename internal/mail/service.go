@@ -397,7 +397,7 @@ func (s *Client) SearchMessages(ctx context.Context, input SearchInput) (SearchR
 		requested := append([]uint32(nil), found...)
 		result.ScanLimitReached = scanned == MaxUIDsScanned && high > 0
 		if len(found) > 0 {
-			metadata, fetchErr := session.FetchMetadata(found, false)
+			metadata, fetchErr := session.FetchMetadata(found, imapadapter.ProjectionSummary)
 			if fetchErr != nil {
 				return nil, fetchErr
 			}

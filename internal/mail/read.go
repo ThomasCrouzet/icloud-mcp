@@ -36,7 +36,7 @@ func (s *Client) getReplyMetadata(ctx context.Context, input GetMessageInput) (r
 		if selected.UIDValidity != input.UIDValidity {
 			return nil, newError(CodeConcurrentModification, "mailbox UIDVALIDITY changed; search for the message again")
 		}
-		metadata, err := session.FetchMetadata([]uint32{input.UID}, true)
+		metadata, err := session.FetchMetadata([]uint32{input.UID}, imapadapter.ProjectionReplyHeaders)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +90,7 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 		if selected.UIDValidity != input.UIDValidity {
 			return nil, newError(CodeConcurrentModification, "mailbox UIDVALIDITY changed; search for the message again")
 		}
-		metadata, err := session.FetchMetadata([]uint32{input.UID}, true)
+		metadata, err := session.FetchMetadata([]uint32{input.UID}, imapadapter.ProjectionFullMessage)
 		if err != nil {
 			return nil, err
 		}
