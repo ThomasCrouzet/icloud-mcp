@@ -7,9 +7,10 @@ Mail. Any MCP-compatible host can run it as a child process. It uses JSON-RPC on
 stdin and stdout. It reads configuration only from the process environment. The
 build produces one release artifact.
 
-The server does not embed or prefer a model vendor or agent product. Calendar
-is always enabled. Contacts, Mail read, Mail mutation, and Mail send are
-composable capabilities.
+The server does not embed or prefer a model vendor or agent product. Every
+domain capability is composable: Calendar, Contacts, Mail read, Mail mutation,
+and Mail send. A domain is registered only when the effective configuration
+grants at least one of its capabilities.
 
 The protocol boundary is narrow:
 
@@ -35,9 +36,21 @@ protocol executable, plugin, or runtime-downloaded code.
    pairs. The variants include Basic-auth and SASL PLAIN encodings.
 6. `RedactingWriter` receives all stderr and standard library logs.
 7. One immutable `CapabilityPlan` applies global read-only, the optional
-   domain gates, and `ICLOUD_MCP_PERMISSIONS`. It is the source of both tool
-   registration and `icloud_capabilities` output. `ICLOUD_MCP_RESOURCE_SCOPES`
-   is a separate immutable allowlist checked in each domain operation path.
+   domain gates, and `ICLOUD_MCP_PERMISSIONS`. It is the source of tool
+   registration, `icloud_capabilities` output, and the `initialize`
+   instructions. `ICLOUD_MCP_RESOURCE_SCOPES` is a separate immutable allowlist
+   checked in each domain operation path.
+
+   - `ICLOUD_MCP_PERMISSIONS` alone selects the domains. When it is set, only
+     the domains whose tokens appear in it are built and registered. Calendar
+     is not special: a Mail-only or Contacts-only list omits every Calendar
+     tool.
+   - The `initialize` instructions come from the same plan. They name only the
+     domain tool groups that this process registered, route the host to
+     `tools/list` and `icloud_capabilities` for the exact surface, state global
+     read-only when it applies, and keep the untrusted-content rule. They carry
+     no identity, mailbox, recipient, host, or resource path. No domain is
+     described as always available.
 8. The server builds separate Calendar, Contacts, IMAP, and SMTP transports or
    dialers only for enabled capabilities. Calendar and Contacts receive separate
    credential objects and authenticated HTTP clients.
@@ -239,10 +252,11 @@ tool -> 25s context -> Mail limiter/semaphore -> fixed IMAP dial
 ```
 
 Read operations use EXAMINE and PEEK. Search scans bounded descending UID
-windows. Message retrieval gets metadata, selected headers, BODYSTRUCTURE, and
-at most one selected plain-text MIME section. A guarded connection applies the 4 MiB
-inbound session limit. It also limits protocol nesting and lists before go-imap
-creates a recursive BODYSTRUCTURE.
+windows. Each read asks for one FETCH projection: summary for search, reply
+headers for reply, and the full message with BODYSTRUCTURE for message
+retrieval. Only the full projection processes the MIME tree. A guarded
+connection applies the 4 MiB inbound session limit. It also limits protocol
+nesting and lists before go-imap creates a recursive BODYSTRUCTURE.
 
 Mutation sessions select the source mailbox for read and write. They compare
 UIDVALIDITY before mutation. Only one mutation runs at a time. The client never

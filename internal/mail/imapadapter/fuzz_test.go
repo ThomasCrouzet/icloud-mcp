@@ -95,8 +95,9 @@ func TestAdapterConversionsAndLimits(t *testing.T) {
 	buffer := &imapclient.FetchMessageBuffer{
 		UID: 9, Flags: []imap.Flag{imap.FlagSeen}, Envelope: envelope,
 		InternalDate: envelope.Date, RFC822Size: 32, BodyStructure: root, ModSeq: 4,
+		BodySection: []imapclient.FetchBodySectionBuffer{{Bytes: []byte("Message-ID: <message@example.com>\r\n\r\n")}},
 	}
-	message, err := convertMessage(buffer, false)
+	message, err := convertMessage(buffer, ProjectionFullMessage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestAdapterConversionsAndLimits(t *testing.T) {
 		{UID: 1, Envelope: envelope},
 		{UID: 1, BodyStructure: plain},
 	} {
-		if _, err := convertMessage(invalid, false); err == nil {
+		if _, err := convertMessage(invalid, ProjectionFullMessage); err == nil {
 			t.Fatalf("invalid fetch buffer accepted: %#v", invalid)
 		}
 	}
@@ -365,8 +366,10 @@ func TestAdapterMetadataAndMutationProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := session.FetchMetadata([]uint32{2}, false)
-	if err != nil || len(messages) != 1 || messages[0].UID != 2 || messages[0].Envelope.Subject != "subject" || len(messages[0].Parts) != 1 {
+	messages, err := session.FetchMetadata([]uint32{2}, ProjectionSummary)
+	// A summary projection keeps envelope metadata only. The MIME tree arrives
+	// with ProjectionFullMessage, so a deep tree cannot fail this read.
+	if err != nil || len(messages) != 1 || messages[0].UID != 2 || messages[0].Envelope.Subject != "subject" || len(messages[0].Parts) != 0 {
 		t.Fatalf("FetchMetadata() = %#v, %v", messages, err)
 	}
 	if err := session.StoreDelta(2, true, []string{"\\Seen"}); err != nil {
@@ -401,14 +404,14 @@ func TestAdapterMetadataAndMutationProtocol(t *testing.T) {
 
 func TestAdapterRejectsUnsafeRequestsBeforeCommands(t *testing.T) {
 	session := &Session{}
-	if messages, err := session.FetchMetadata(nil, false); err != nil || messages != nil {
+	if messages, err := session.FetchMetadata(nil, ProjectionSummary); err != nil || messages != nil {
 		t.Fatalf("empty metadata request = %#v, %v", messages, err)
 	}
-	if _, err := session.FetchMetadata(make([]uint32, maxMetadataMessages+1), false); !isAdapterKind(err, ErrorTooLarge) {
+	if _, err := session.FetchMetadata(make([]uint32, maxMetadataMessages+1), ProjectionSummary); !isAdapterKind(err, ErrorTooLarge) {
 		t.Fatalf("metadata count error = %v", err)
 	}
 	for _, uids := range [][]uint32{{0}, {1, 1}} {
-		if _, err := session.FetchMetadata(uids, false); !isAdapterKind(err, ErrorProtocol) {
+		if _, err := session.FetchMetadata(uids, ProjectionSummary); !isAdapterKind(err, ErrorProtocol) {
 			t.Fatalf("metadata UIDs %v error = %v", uids, err)
 		}
 	}

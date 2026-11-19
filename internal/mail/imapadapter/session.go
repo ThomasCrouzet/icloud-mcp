@@ -261,9 +261,15 @@ func expandUIDSet(numSet imap.NumSet, requestedMin, requestedMax uint32, maxCoun
 	return out, nil
 }
 
-func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, error) {
+// FetchMetadata gets one bounded metadata page for the requested projection.
+// Only ProjectionFullMessage asks the server for BODYSTRUCTURE, so a wide or
+// deep MIME tree cannot fail a summary or reply read.
+func (s *Session) FetchMetadata(uids []uint32, projection Projection) ([]Message, error) {
 	if len(uids) == 0 {
 		return nil, nil
+	}
+	if !projection.valid() {
+		return nil, &Error{Kind: ErrorProtocol}
 	}
 	if len(uids) > maxMetadataMessages {
 		return nil, &Error{Kind: ErrorTooLarge}
@@ -281,15 +287,17 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 		set.AddNum(imap.UID(uid))
 	}
 	options := &imap.FetchOptions{
-		UID:           true,
-		Flags:         true,
-		Envelope:      true,
-		InternalDate:  true,
-		RFC822Size:    true,
-		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
-		ModSeq:        s.caps.CondStore,
+		UID:          true,
+		Flags:        true,
+		Envelope:     true,
+		InternalDate: true,
+		RFC822Size:   true,
+		ModSeq:       s.caps.CondStore,
 	}
-	if includeHeaders {
+	if projection.wantsBodyStructure() {
+		options.BodyStructure = &imap.FetchItemBodyStructure{Extended: true}
+	}
+	if projection.wantsHeaders() {
 		options.BodySection = []*imap.FetchItemBodySection{{
 			Specifier:    imap.PartSpecifierHeader,
 			HeaderFields: []string{"Message-ID", "In-Reply-To", "References", "Reply-To"},
@@ -324,7 +332,7 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 			return nil, &Error{Kind: ErrorProtocol}
 		}
 		seen[uid] = struct{}{}
-		converted, err := convertMessage(buffer, includeHeaders)
+		converted, err := convertMessage(buffer, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -336,26 +344,32 @@ func (s *Session) FetchMetadata(uids []uint32, includeHeaders bool) ([]Message, 
 	return out, nil
 }
 
-func convertMessage(buffer *imapclient.FetchMessageBuffer, includeHeaders bool) (Message, error) {
-	if buffer.UID == 0 || buffer.Envelope == nil || buffer.BodyStructure == nil {
+func convertMessage(buffer *imapclient.FetchMessageBuffer, projection Projection) (Message, error) {
+	if buffer.UID == 0 || buffer.Envelope == nil || !projection.valid() {
+		return Message{}, &Error{Kind: ErrorProtocol}
+	}
+	if projection.wantsBodyStructure() && buffer.BodyStructure == nil {
 		return Message{}, &Error{Kind: ErrorProtocol}
 	}
 	envelope, err := convertEnvelope(buffer.Envelope)
 	if err != nil {
 		return Message{}, err
 	}
-	parts, err := flattenBodyStructure(buffer.BodyStructure)
-	if err != nil {
-		return Message{}, err
-	}
 	msg := Message{
 		UID: uint32(buffer.UID), Envelope: envelope, InternalDate: buffer.InternalDate,
-		Size: buffer.RFC822Size, ModSeq: buffer.ModSeq, Parts: parts,
+		Size: buffer.RFC822Size, ModSeq: buffer.ModSeq,
 	}
 	for _, flag := range buffer.Flags {
 		msg.Flags = append(msg.Flags, string(flag))
 	}
-	if includeHeaders {
+	if projection.wantsBodyStructure() {
+		parts, err := flattenBodyStructure(buffer.BodyStructure)
+		if err != nil {
+			return Message{}, err
+		}
+		msg.Parts = parts
+	}
+	if projection.wantsHeaders() {
 		if len(buffer.BodySection) != 1 || len(buffer.BodySection[0].Bytes) > maxHeaderBytes {
 			return Message{}, &Error{Kind: ErrorTooLarge}
 		}
@@ -423,10 +437,77 @@ func convertAddresses(in []imap.Address) ([]Address, error) {
 	return out, nil
 }
 
+// flatItem carries the alternative identity of one visited structure node.
+// scopes lists every alternative level that contains the node, outermost
+// first. pending marks an innermost level that still needs its branch.
+type flatItem struct {
+	scopes  []AlternativeScope
+	pending bool
+}
+
+// sync refreshes the outermost compatibility fields from the scope chain.
+func (i flatItem) sync() flatItem {
+	if len(i.scopes) > 0 {
+		i.scopes = append([]AlternativeScope(nil), i.scopes...)
+	}
+	return i
+}
+
+func (i flatItem) group() string {
+	if len(i.scopes) == 0 {
+		return ""
+	}
+	return i.scopes[0].Group
+}
+
+func (i flatItem) branch() string {
+	if len(i.scopes) == 0 {
+		return ""
+	}
+	return i.scopes[0].Branch
+}
+
+// withBranch assigns the branch of the innermost alternative level.
+func (i flatItem) withBranch(branch string) flatItem {
+	out := i.sync()
+	if len(out.scopes) > 0 {
+		out.scopes[len(out.scopes)-1].Branch = branch
+	}
+	out.pending = false
+	return out
+}
+
+// withScope opens one nested alternative level below the current identity.
+func (i flatItem) withScope(group string) flatItem {
+	out := i.sync()
+	out.scopes = append(out.scopes, AlternativeScope{Group: group})
+	out.pending = true
+	return out
+}
+
+func (i flatItem) parts() []AlternativeScope {
+	if len(i.scopes) == 0 {
+		return nil
+	}
+	return i.scopes
+}
+
+// flattenBodyStructure walks one BODYSTRUCTURE value and returns its parts in
+// document order.
+//
+// A multipart/alternative holds competing representations of one content, so
+// its parts share a group. Its direct children are the competing branches. A
+// child multipart/mixed holds independent segments, and every leaf below it
+// belongs to the branch of its top-level alternative child. Two plain leaves in
+// one branch are independent segments. Two leaves in different branches are
+// competing representations, and the reader keeps only one branch.
+//
+// A multipart/alternative below a branch opens one more nested scope, so its
+// own leaves compete even when an outer alternative already set a branch.
 func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	parts := make([]BodyPart, 0, 8)
-	var walk func(imap.BodyStructure, []int, bool, string) error
-	walk = func(part imap.BodyStructure, path []int, excluded bool, alternativeGroup string) error {
+	var walk func(imap.BodyStructure, []int, bool, flatItem) error
+	walk = func(part imap.BodyStructure, path []int, excluded bool, identity flatItem) error {
 		if len(parts) >= maxParts || len(path) > maxDepth {
 			return &Error{Kind: ErrorTooLarge}
 		}
@@ -463,19 +544,33 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 				Path: pathCopy, ContentType: mediaType, Disposition: disposition,
 				Filename: filename, ContentID: typed.ID, Size: typed.Size,
 				InlinePlain: mediaType == "text/plain" && !attachment,
-				Attachment:  attachment, AlternativeGroup: alternativeGroup,
+				Attachment:  attachment, AlternativeGroup: identity.group(),
+				AlternativeBranch: identity.branch(), AlternativeScopes: identity.parts(),
 			})
 		case *imap.BodyStructureMultiPart:
-			parts = append(parts, BodyPart{Path: append([]int(nil), path...), ContentType: typed.MediaType(), Disposition: disposition, Attachment: excluded})
+			parts = append(parts, BodyPart{
+				Path: append([]int(nil), path...), ContentType: typed.MediaType(),
+				Disposition: disposition, Attachment: excluded,
+			})
 			if excluded {
 				return nil
 			}
-			group := alternativeGroup
-			if group == "" && strings.EqualFold(typed.Subtype, "alternative") {
-				group = alternativeGroupKey(path)
+			child := identity
+			if strings.EqualFold(typed.Subtype, "alternative") {
+				// Every alternative opens its own level. A nested level keeps
+				// the outer levels and adds its own, so its leaves compete with
+				// each other and not with the outer mixed siblings.
+				child = identity.withScope(alternativeGroupKey(path))
 			}
-			for i, child := range typed.Children {
-				if err := walk(child, append(path, i+1), false, group); err != nil {
+			for i, nested := range typed.Children {
+				// Each direct child of an alternative is one competing branch.
+				// Below it the branch identity stays fixed, so independent
+				// segments of a mixed child keep their own text.
+				grandchild := child
+				if child.pending {
+					grandchild = child.withBranch(alternativeGroupKey(append(path, i+1)))
+				}
+				if err := walk(nested, append(path, i+1), false, grandchild); err != nil {
 					return err
 				}
 			}
@@ -488,7 +583,7 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	if _, multipart := root.(*imap.BodyStructureMultiPart); multipart {
 		startPath = nil
 	}
-	if err := walk(root, startPath, false, ""); err != nil {
+	if err := walk(root, startPath, false, flatItem{}); err != nil {
 		return nil, err
 	}
 	return parts, nil
