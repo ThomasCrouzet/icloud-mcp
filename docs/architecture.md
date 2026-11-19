@@ -252,10 +252,11 @@ tool -> 25s context -> Mail limiter/semaphore -> fixed IMAP dial
 ```
 
 Read operations use EXAMINE and PEEK. Search scans bounded descending UID
-windows. Message retrieval gets metadata, selected headers, BODYSTRUCTURE, and
-at most one selected plain-text MIME section. A guarded connection applies the 4 MiB
-inbound session limit. It also limits protocol nesting and lists before go-imap
-creates a recursive BODYSTRUCTURE.
+windows. Each read asks for one FETCH projection: summary for search, reply
+headers for reply, and the full message with BODYSTRUCTURE for message
+retrieval. Only the full projection processes the MIME tree. A guarded
+connection applies the 4 MiB inbound session limit. It also limits protocol
+nesting and lists before go-imap creates a recursive BODYSTRUCTURE.
 
 Mutation sessions select the source mailbox for read and write. They compare
 UIDVALIDITY before mutation. Only one mutation runs at a time. The client never
