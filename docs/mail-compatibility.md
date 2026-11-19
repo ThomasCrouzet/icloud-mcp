@@ -122,12 +122,28 @@ depth 20, and one part per attachment. A tree above a limit fails that read with
 Parts of `multipart/mixed` are independent. The client joins each selected
 plain part in document order with a blank line, within `max_body_bytes`. When a
 later part does not fit, the result keeps the earlier bounded text, sets
-`bodyOmitted`, and adds a `body_truncated` warning. Parts of one
-`multipart/alternative` are equivalent: the client skips whitespace-only
-representatives within the group, keeps the first meaningful plain
-representation, and never concatenates the alternatives. A part that is
-malformed or too large adds `body_decode_failed` or `body_too_large`; the client
-continues with the other independent parts.
+`bodyOmitted`, and adds a `body_truncated` warning.
+
+Parts of one `multipart/alternative` are competing representations. The direct
+children of that container are the competing branches. The client skips
+whitespace-only representatives, keeps the first meaningful plain branch, and
+never appends a leaf from a competing branch.
+
+Branch identity is separate from segment identity. A child `multipart/mixed`
+branch can hold several independent plain segments, and the client keeps every
+one of them in document order. In the nested layout below, "Part A" and "Part B"
+are both returned, and the HTML branch is suppressed.
+
+```text
+multipart/alternative
+├── multipart/mixed
+│   ├── text/plain: "Part A"
+│   └── text/plain: "Part B"
+└── text/html: rendering of A and B
+```
+
+A part that is malformed or too large adds `body_decode_failed` or
+`body_too_large`; the client continues with the other independent parts.
 
 The result contains selected envelope and header metadata. It also contains
 decoded plain text and attachment metadata. It never contains raw MIME, raw

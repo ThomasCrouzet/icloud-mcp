@@ -85,6 +85,10 @@ type BodyPart struct {
 	// AlternativeGroup identifies the nearest multipart/alternative ancestor.
 	// Parts in one group are equivalent representations of the same content.
 	AlternativeGroup string
+	// AlternativeBranch identifies the direct child branch of that ancestor
+	// which contains this part. Parts in one group and one branch are
+	// independent segments. Parts in one group and different branches compete.
+	AlternativeBranch string
 }
 
 // Projection names the FETCH data items one read needs. A reader asks for the

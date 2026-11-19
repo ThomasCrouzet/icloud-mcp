@@ -141,13 +141,16 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 		var segments []string
 		firstRawBody := ""
 		plainFailed := false
-		chosenAlternative := make(map[string]bool)
+		// chosenBranch maps one alternative group to the branch already
+		// selected for it. Independent segments of that branch are appended.
+		// Segments of a competing branch are skipped.
+		chosenBranch := make(map[string]string)
 		for index, part := range selectedPlain {
-			// Parts in one multipart/alternative group are equivalent
-			// representations. Search the group until one meaningful plain
-			// alternative is found, then never concatenate another.
-			if part.AlternativeGroup != "" && chosenAlternative[part.AlternativeGroup] {
-				continue
+			group, branch := part.AlternativeGroup, alternativeBranchID(*part)
+			if group != "" {
+				if chosen, ok := chosenBranch[group]; ok && chosen != branch {
+					continue
+				}
 			}
 			bodyData, err := session.FetchBodyPart(input.UID, part.Path)
 			if err != nil {
@@ -179,8 +182,8 @@ func (s *Client) GetMessage(ctx context.Context, input GetMessageInput) (Message
 				continue
 			}
 			segments = append(segments, body)
-			if part.AlternativeGroup != "" {
-				chosenAlternative[part.AlternativeGroup] = true
+			if group != "" {
+				chosenBranch[group] = branch
 			}
 		}
 
@@ -308,6 +311,17 @@ func decodePlainBody(header, body []byte, maxBytes int) (string, bool, error) {
 }
 
 var errUnsafeMIME = &Error{Code: CodeProtocolError, Message: "selected MIME part is not plain text"}
+
+// alternativeBranchID names the competing branch of one plain part. A leaf
+// carries the branch that the adapter computed. A part without one is its own
+// branch, which keeps the one-part-per-group rule for callers that do not
+// supply branch identity.
+func alternativeBranchID(part imapadapter.BodyPart) string {
+	if part.AlternativeBranch != "" {
+		return part.AlternativeBranch
+	}
+	return partID(part.Path)
+}
 
 func partID(path []int) string {
 	if len(path) == 0 {

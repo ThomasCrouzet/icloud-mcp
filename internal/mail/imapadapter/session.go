@@ -437,10 +437,25 @@ func convertAddresses(in []imap.Address) ([]Address, error) {
 	return out, nil
 }
 
+// flatItem carries the alternative identity of one visited structure node.
+type flatItem struct {
+	group  string
+	branch string
+}
+
+// flattenBodyStructure walks one BODYSTRUCTURE value and returns its parts in
+// document order.
+//
+// A multipart/alternative holds competing representations of one content, so
+// its parts share a group. Its direct children are the competing branches. A
+// child multipart/mixed holds independent segments, and every leaf below it
+// belongs to the branch of its top-level alternative child. Two plain leaves in
+// one branch are independent segments. Two leaves in different branches are
+// competing representations, and the reader keeps only one branch.
 func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	parts := make([]BodyPart, 0, 8)
-	var walk func(imap.BodyStructure, []int, bool, string) error
-	walk = func(part imap.BodyStructure, path []int, excluded bool, alternativeGroup string) error {
+	var walk func(imap.BodyStructure, []int, bool, flatItem) error
+	walk = func(part imap.BodyStructure, path []int, excluded bool, identity flatItem) error {
 		if len(parts) >= maxParts || len(path) > maxDepth {
 			return &Error{Kind: ErrorTooLarge}
 		}
@@ -477,19 +492,31 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 				Path: pathCopy, ContentType: mediaType, Disposition: disposition,
 				Filename: filename, ContentID: typed.ID, Size: typed.Size,
 				InlinePlain: mediaType == "text/plain" && !attachment,
-				Attachment:  attachment, AlternativeGroup: alternativeGroup,
+				Attachment:  attachment, AlternativeGroup: identity.group,
+				AlternativeBranch: identity.branch,
 			})
 		case *imap.BodyStructureMultiPart:
-			parts = append(parts, BodyPart{Path: append([]int(nil), path...), ContentType: typed.MediaType(), Disposition: disposition, Attachment: excluded})
+			parts = append(parts, BodyPart{
+				Path: append([]int(nil), path...), ContentType: typed.MediaType(),
+				Disposition: disposition, Attachment: excluded,
+			})
 			if excluded {
 				return nil
 			}
-			group := alternativeGroup
-			if group == "" && strings.EqualFold(typed.Subtype, "alternative") {
-				group = alternativeGroupKey(path)
+			child := identity
+			if identity.group == "" && strings.EqualFold(typed.Subtype, "alternative") {
+				// Start one alternative scope with this container as the root.
+				child = flatItem{group: alternativeGroupKey(path)}
 			}
-			for i, child := range typed.Children {
-				if err := walk(child, append(path, i+1), false, group); err != nil {
+			for i, nested := range typed.Children {
+				// Each direct child of an alternative is one competing branch.
+				// Below it the branch identity stays fixed, so independent
+				// segments of a mixed child keep their own text.
+				grandchild := child
+				if child.group != "" && child.branch == "" {
+					grandchild.branch = alternativeGroupKey(append(path, i+1))
+				}
+				if err := walk(nested, append(path, i+1), false, grandchild); err != nil {
 					return err
 				}
 			}
@@ -502,7 +529,7 @@ func flattenBodyStructure(root imap.BodyStructure) ([]BodyPart, error) {
 	if _, multipart := root.(*imap.BodyStructureMultiPart); multipart {
 		startPath = nil
 	}
-	if err := walk(root, startPath, false, ""); err != nil {
+	if err := walk(root, startPath, false, flatItem{}); err != nil {
 		return nil, err
 	}
 	return parts, nil
