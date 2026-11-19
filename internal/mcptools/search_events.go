@@ -325,6 +325,13 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				}
 				sortSearchCursorRows(rows)
 				rows = collapseSearchCursorRows(rows)
+				// The floating/DST warning describes the whole completed
+				// scan. Add it before the snapshot is stored so every
+				// continuation page replays the same warning. A later page
+				// has no raw events to recount.
+				if warning := floatingTimeWarning(all); warning != "" {
+					warnings = append(warnings, warning)
+				}
 				// Cache only a complete multi-calendar scan. A partial failure
 				// is retried on the next page instead of freezing an incomplete
 				// snapshot.
@@ -359,9 +366,6 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 				page[i-pageStart] = rows[i].event
 			}
 			truncated := pageEnd < total || truncatedByExpansion || partialFailure
-			if warning := floatingTimeWarning(all); warning != "" {
-				warnings = append(warnings, warning)
-			}
 			resp := searchEventsResponse{
 				Count:                len(page),
 				Total:                total,
