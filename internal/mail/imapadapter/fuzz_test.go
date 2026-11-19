@@ -270,7 +270,7 @@ func TestAdapterListSelectAndSearchProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !session.Capabilities().SpecialUse || session.SupportsModifiedDetection() {
+	if !session.Capabilities().SpecialUse || !session.SupportsModifiedDetection() || session.SupportsConditionalStore() {
 		t.Fatalf("capabilities = %#v", session.Capabilities())
 	}
 	mailboxes, err := session.List()

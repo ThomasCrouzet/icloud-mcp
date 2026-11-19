@@ -81,7 +81,7 @@ type contractMailBackend struct {
 	body                                                    string
 	messageCount                                            int
 	rejectIMAP, rejectSMTPAuth                              bool
-	condstore, malformedStore                               bool
+	condstore, malformedStore, modifiedStore                bool
 	modseq                                                  uint64
 	errors                                                  []string
 }
@@ -389,6 +389,13 @@ func (b *contractMailBackend) serveIMAP(conn net.Conn) error {
 				b.flags = ""
 			}
 			if b.condstore {
+				if b.modifiedStore {
+					// RFC 7162 3.1.3: the UNCHANGEDSINCE test failed for this
+					// UID and the tagged response lists it in MODIFIED.
+					response = tag + " OK [MODIFIED " + f[3] + "] Conditional STORE failed\r\n"
+					b.mu.Unlock()
+					break
+				}
 				if b.modseq < ^uint64(0) {
 					b.modseq++
 				}

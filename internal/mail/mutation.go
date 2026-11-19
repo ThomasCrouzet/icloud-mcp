@@ -31,7 +31,7 @@ func (s *Client) SetMessageFlags(ctx context.Context, input SetFlagsInput) (SetF
 				return nil, validationError("expected_modseq is required when CONDSTORE is available")
 			}
 			if !session.SupportsConditionalStore() {
-				return nil, newError(CodeProtocolError, "conditional flag mutation is unavailable because the adapter cannot validate MODIFIED or the returned FETCH state")
+				return nil, newError(CodeProtocolError, "conditional flag mutation is unavailable because the adapter cannot observe the tagged STORE status")
 			}
 			phase.dispatched = true
 			updated, err := session.ConditionalStoreDelta(input.UID, input.Operation == FlagOperationAdd, flags, input.ExpectedModSeq)
