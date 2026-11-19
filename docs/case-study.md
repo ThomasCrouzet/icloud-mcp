@@ -13,7 +13,8 @@ out of results, and make dangerous mutations hard to trigger by accident.
 ## Shape of the server
 
 - One Go binary, one stdio process, one MCP server.
-- Calendar is always available. Contacts, Mail read, Mail mutation, and Mail
+- Calendar tools are registered when the effective capability plan grants a
+  Calendar permission. Contacts, Mail read, Mail mutation, and Mail
   send are independent capabilities with separate clients and credentials.
 - Each domain has its own transport, TLS policy, dialer, rate limiter,
   semaphore, and destination allowlist. A shared authenticated client would
