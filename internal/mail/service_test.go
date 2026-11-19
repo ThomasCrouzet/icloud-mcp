@@ -60,6 +60,7 @@ type fakeIMAP struct {
 	errors               map[string]error
 	log                  []string
 	searches             []imapadapter.SearchRequest
+	projections          []imapadapter.Projection
 	mu                   sync.Mutex
 }
 
@@ -112,8 +113,11 @@ func (f *fakeIMAP) Search(request imapadapter.SearchRequest) ([]uint32, error) {
 	}
 	return nil, f.operationError("search")
 }
-func (f *fakeIMAP) FetchMetadata(uids []uint32, _ imapadapter.Projection) ([]imapadapter.Message, error) {
+func (f *fakeIMAP) FetchMetadata(uids []uint32, projection imapadapter.Projection) ([]imapadapter.Message, error) {
 	f.record("metadata")
+	f.mu.Lock()
+	f.projections = append(f.projections, projection)
+	f.mu.Unlock()
 	if len(uids) == 0 {
 		return f.metadata, f.operationError("metadata")
 	}
