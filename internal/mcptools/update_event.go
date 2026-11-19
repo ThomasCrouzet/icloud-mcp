@@ -235,20 +235,26 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		if idemKey != "" {
 			paramsHash, err = hashIdempotencyParams(map[string]any{
-				"tool":          "update_event",
-				"uid":           uid,
-				"calendar":      calendarPath,
-				"etag":          etag,
-				"title":         update.Title,
-				"location":      update.Location,
-				"notes":         update.Notes,
-				"start":         update.StartTime,
-				"end":           update.EndTime,
-				"status":        update.Status,
-				"transparency":  update.Transparency,
-				"url":           update.URL,
-				"scope":         update.Scope,
-				"recurrence_id": update.RecurrenceID,
+				"tool":     "update_event",
+				"uid":      uid,
+				"calendar": calendarPath,
+				"etag":     etag,
+				"title":    update.Title,
+				"location": update.Location,
+				"notes":    update.Notes,
+				"start":    update.StartTime,
+				"end":      update.EndTime,
+				// A DATE-only input and a midnight DATE-TIME input can parse to
+				// the same instant but require different stored value forms.
+				// The flags are part of the request identity, so a reused key
+				// cannot replay an outcome across the two forms.
+				"start_date_only": update.StartDateOnly,
+				"end_date_only":   update.EndDateOnly,
+				"status":          update.Status,
+				"transparency":    update.Transparency,
+				"url":             update.URL,
+				"scope":           update.Scope,
+				"recurrence_id":   update.RecurrenceID,
 				// Approval inputs are part of the request identity. A key
 				// cannot replay a cached outcome after the acknowledgement or
 				// the effective operator grant changed.
