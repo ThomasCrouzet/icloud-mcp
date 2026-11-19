@@ -203,6 +203,13 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
   the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
   `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
+- A RECURRENCE-ID override is resolved before the occurrence cap applies. An
+  override moved outside the requested range therefore consumes no result
+  capacity, and an override moved into the range is still returned. The cap
+  bounds the final projected set: the results are ordered by effective start
+  and then by stable identity, and one result beyond the cap sets
+  `truncatedByExpansion`. The same master and override set always returns the
+  same page.
 - Availability interprets a floating event in the requested timezone before
   querying and filtering, so it cannot make the same wall-clock slot look free.
   A naive `start` or `end` with an explicit `timezone` is parsed in that

@@ -27,16 +27,18 @@ const maxRecurrenceSearchWork int64 = 250000
 // It applies RRULE and EXDATE exclusions. RECURRENCE-ID overrides replace
 // generated occurrences that match at UTC second precision. It also includes
 // an override moved into the range from outside the generated series.
-// maxOccurrences bounds the expansion; if <= 0, the package default is used.
-// truncated is true when the per-series cap dropped occurrences that the
-// RRULE would otherwise have produced inside the widened selection window.
+// maxOccurrences bounds the projected result set; if <= 0, the package default
+// is used. Overrides are resolved before the cap applies, so a suppressed
+// occurrence consumes no result capacity. truncated is true when the final
+// projected set holds more material occurrences than maxOccurrences.
 func ExpandOccurrences(master Event, overrides []Event, rangeStart, rangeEnd time.Time, maxOccurrences int) (events []Event, truncated bool, err error) {
 	return ExpandOccurrencesContext(context.Background(), master, overrides, rangeStart, rangeEnd, maxOccurrences)
 }
 
 // ExpandOccurrencesContext is the cancellation-aware form of
-// ExpandOccurrences. It preflights the RRULE's bounded work estimate and then
-// advances at most one occurrence at a time, retaining only cap+1 entries.
+// ExpandOccurrences. It preflights the RRULE's bounded work estimate, advances
+// one occurrence at a time, and keeps at most one material result beyond the
+// cap.
 func ExpandOccurrencesContext(ctx context.Context, master Event, overrides []Event, rangeStart, rangeEnd time.Time, maxOccurrences int) (events []Event, truncated bool, err error) {
 	remainingWork := maxRecurrenceSearchWork
 	return expandOccurrencesContext(ctx, master, overrides, rangeStart, rangeEnd, maxOccurrences, &remainingWork)
@@ -175,8 +177,23 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 	// change. The exact half-open overlap filter below restores the boundary.
 	wallLowerBound := wallRangeStart.Add(-overlapDuration - 24*time.Hour)
 	wallUpperBound := wallRangeEnd.Add(24 * time.Hour)
+
+	// Resolve detached overrides before the result cap applies. An override can
+	// suppress a slot or move its result outside the window, so the raw RRULE
+	// slot count is not the result count.
+	overrideByRecID := make(map[int64]int, len(overrides))
+	resolved := make([]Event, 0, len(overrides))
+	for _, o := range overrides {
+		ov := o
+		ov.Recurrence = "" // never present an override as a series master
+		ov.IsOverride = true
+		resolved = append(resolved, ov)
+		overrideByRecID[o.RecurrenceID.UTC().Unix()] = len(resolved) - 1
+	}
+	used := make([]bool, len(resolved))
+
 	next := rule.Iterator()
-	slots := make([]occurrenceSlot, 0, min(maxOccurrences+1, 64))
+	out := make([]Event, 0, min(maxOccurrences+1, 64))
 	var advances int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -202,74 +219,92 @@ func expandOccurrencesContext(ctx context.Context, master Event, overrides []Eve
 		if _, skip := excluded[slot.start.UTC().Unix()]; skip {
 			continue
 		}
+		// Keep only occurrences that overlap [rangeStart, rangeEnd) after the
+		// code restores their full duration. The wider lower bound
+		// intentionally includes extra occurrences. This filter restores the
+		// exact eventOverlaps behavior from the non-recurring path.
 		if !eventOverlaps(overlapView(master, slot.start, recurrenceOccurrenceEnd(master, slot.start)), rangeStart, rangeEnd) {
 			continue
 		}
-		slots = append(slots, slot)
-		if len(slots) == maxOccurrences+1 {
-			slots = slots[:maxOccurrences]
+		key := slot.start.UTC().Unix()
+		if index, ok := overrideByRecID[key]; ok {
+			used[index] = true
+			if eventOverlaps(resolved[index], rangeStart, rangeEnd) {
+				out = append(out, resolved[index])
+			}
+		} else {
+			clone := master
+			clone.StartTime = slot.start
+			clone.EndTime = recurrenceOccurrenceEnd(master, slot.start)
+			clone.DSTAdjusted = slot.adjusted
+			clone.exDates = nil
+			// Expanded row is not a master: clear RRULE and expose the
+			// original slot as recurrenceId so agents can target
+			// scope=occurrence.
+			clone.Recurrence = ""
+			clone.RecurrenceID = slot.start
+			clone.IsOverride = false
+			out = append(out, clone)
+		}
+		// One material result beyond the cap proves truncation. Iteration
+		// continues past suppressed slots, so a slot whose override moved out
+		// of the window never consumes result capacity.
+		if len(out) == maxOccurrences+1 {
 			truncated = true
 			break
 		}
 	}
 
-	overrideByRecID := make(map[int64]Event, len(overrides))
-	for _, o := range overrides {
-		ov := o
-		ov.Recurrence = "" // never present an override as a series master
-		ov.IsOverride = true
-		overrideByRecID[o.RecurrenceID.UTC().Unix()] = ov
-	}
-	used := make(map[int64]bool, len(overrideByRecID))
-
-	out := make([]Event, 0, len(slots))
-	for _, slot := range slots {
-		occ := slot.start
-		// Keep only occurrences that overlap [rangeStart, rangeEnd) after the
-		// code restores their full duration. The wider lower bound intentionally
-		// includes extra occurrences. This filter restores the exact
-		// eventOverlaps behavior from the non-recurring path.
-		if !eventOverlaps(overlapView(master, occ, recurrenceOccurrenceEnd(master, occ)), rangeStart, rangeEnd) {
-			continue
-		}
-		key := occ.UTC().Unix()
-		if ov, ok := overrideByRecID[key]; ok {
-			used[key] = true
-			if eventOverlaps(ov, rangeStart, rangeEnd) {
-				out = append(out, ov)
-			}
-			continue
-		}
-		clone := master
-		clone.StartTime = occ
-		clone.EndTime = recurrenceOccurrenceEnd(master, occ)
-		clone.DSTAdjusted = slot.adjusted
-		clone.exDates = nil
-		// Expanded row is not a master: clear RRULE and expose the original
-		// slot as recurrenceId so agents can target scope=occurrence.
-		clone.Recurrence = ""
-		clone.RecurrenceID = occ
-		clone.IsOverride = false
-		out = append(out, clone)
-	}
-
 	// Overrides may fall inside the range while their original series slot
 	// does not, for example after an occurrence is moved.
-	for key, ov := range overrideByRecID {
-		if used[key] {
+	for index := range resolved {
+		if used[index] {
 			continue
 		}
-		if eventOverlaps(ov, rangeStart, rangeEnd) {
-			out = append(out, ov)
+		if eventOverlaps(resolved[index], rangeStart, rangeEnd) {
+			out = append(out, resolved[index])
 		}
 	}
 
+	// Sort before truncation so the cap keeps the earliest projected events
+	// and repeated runs select the same rows regardless of override order.
+	sort.SliceStable(out, func(i, j int) bool {
+		return expandedOccurrenceLess(out[i], out[j])
+	})
 	if len(out) > maxOccurrences {
 		out = out[:maxOccurrences]
 		truncated = true
 	}
 
 	return out, truncated, nil
+}
+
+// expandedOccurrenceLess orders projected occurrences by effective start, then
+// by stable identity fields. Two runs over the same masters and overrides
+// therefore produce the same page of results.
+func expandedOccurrenceLess(a, b Event) bool {
+	if !a.StartTime.Equal(b.StartTime) {
+		return a.StartTime.Before(b.StartTime)
+	}
+	if !a.EndTime.Equal(b.EndTime) {
+		return a.EndTime.Before(b.EndTime)
+	}
+	if a.UID != b.UID {
+		return a.UID < b.UID
+	}
+	if !a.RecurrenceID.Equal(b.RecurrenceID) {
+		return a.RecurrenceID.Before(b.RecurrenceID)
+	}
+	if a.IsOverride != b.IsOverride {
+		return !a.IsOverride
+	}
+	if a.Title != b.Title {
+		return a.Title < b.Title
+	}
+	if a.Calendar != b.Calendar {
+		return a.Calendar < b.Calendar
+	}
+	return a.Path < b.Path
 }
 
 // overlapView keeps the source form of an expanded occurrence so VALUE=DATE
