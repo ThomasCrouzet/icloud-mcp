@@ -58,8 +58,9 @@ stronger isolation.
   records that exceed 64 KiB.
 - **Optimistic concurrency:** Calendar and Contacts update and delete operations
   require specific ETags on the wire. Mail references include UIDVALIDITY.
-  Conditional flag updates fail closed if the server cannot establish
-  MODSEQ/MODIFIED safety.
+- Conditional flag updates prove the outcome from the tagged status of the
+  guarded STORE it sent, together with the returned FETCH. A tagged `MODIFIED`
+  for that UID or an unverifiable return never reports a success.
 - **No mutation replay:** the server does not automatically replay Calendar PUT
   or DELETE, Contacts writes, IMAP mutations, or SMTP submission. Calendar
   series delete follows the same rule. The server retries only Calendar and
@@ -90,11 +91,13 @@ For target confirmation, a successful `delete_event` response can include
 `outcome_unknown`, check the source and destination state. For a send with
 `outcome_unknown`, check Sent and the recipients.
 
-When an IMAP server advertises CONDSTORE, go-imap beta.8 cannot expose the
-tagged MODIFIED response. A safe conditional STORE requires this response.
-Thus, `set_message_flags` returns `protocol_error` before STORE. It does not
-report `concurrent_modification` on that path. For SMTP, `to`, `cc`, and `bcc`
-are optional. Together, they must contain at least one recipient.
+When an IMAP server advertises CONDSTORE, the adapter sends one guarded STORE
+with `UNCHANGEDSINCE` and observes the tagged status line of that command. A
+success needs the tagged OK without `MODIFIED` and the returned FETCH of that
+UID with the requested delta. A tagged `MODIFIED` for that UID returns
+`concurrent_modification`. A dispatched but unverifiable STORE returns
+`outcome_unknown`. For SMTP, `to`, `cc`, and `bcc` are optional. Together, they
+must contain at least one recipient.
 
 Implementation details: [docs/security.md](docs/security.md).
 

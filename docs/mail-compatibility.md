@@ -227,12 +227,37 @@ The result reports `conditionalUpdate: false`. Then, it tries to get the
 resulting flags.
 
 When the IMAP server advertises CONDSTORE, `set_message_flags` requires
-`expected_modseq` but the pinned beta.8 cannot expose the tagged `MODIFIED`
-response code. A matching unsolicited FETCH, even with the requested flags and
-a higher MODSEQ, does not prove that the guarded STORE ran. The adapter
-therefore reports `protocol_error` before dispatch and does not claim a
-conditional success. A future library that exposes MODIFIED can restore the
-conditional path.
+`expected_modseq`. The adapter then sends one UID STORE with `UNCHANGEDSINCE`
+and proves the outcome from the wire. `go-imap` v2 discards a tagged OK
+response code, so the adapter reads the tagged status of exactly the STORE it
+sent through its inbound protocol guard. The tag comes from that command line,
+so a response for another command is never evidence.
+
+The adapter reports a conditional success only when both proofs hold:
+
+- The tagged OK for that command carried no `MODIFIED` code.
+- The server returned one FETCH for that UID with the requested flag delta and
+  a MODSEQ.
+
+The outcome matrix is closed:
+
+| Server response | Result |
+|---|---|
+| Tagged OK, no MODIFIED, FETCH with the exact delta | Success, `conditionalUpdate: true` |
+| Tagged OK `[MODIFIED <uid set>]` that names this UID | `concurrent_modification` |
+| Tagged OK, no MODIFIED, no FETCH for this UID | `outcome_unknown` |
+| Tagged OK, FETCH missing, duplicated, for another UID, or without MODSEQ | `outcome_unknown` |
+| Tagged OK, FETCH flags that contradict the requested delta | `concurrent_modification` |
+| Tagged NO or BAD, unparsable status, or two STORE commands | `outcome_unknown` |
+
+A MODSEQ increase alone never proves success: RFC 7162 section 3.1.3 requires
+the server to update MODSEQ after any successful guarded STORE, and a
+competing writer can change it too. The RFC 7162 section 3.1.3 Example 10
+exchange, where an unsolicited matching FETCH arrives together with
+`OK [MODIFIED uid]`, is never a success.
+
+A CONDSTORE server never receives an unconditional delta STORE. The adapter
+sends no second STORE for one request and never retries a guarded STORE.
 
 Without CONDSTORE, the adapter sends one unconditional delta STORE and fetches
 the final flags. If the fetched flags do not contain or omit exactly the
@@ -240,8 +265,7 @@ requested delta, the result is `concurrent_modification` with reconciliation
 guidance, never a definitive success. A matching fetch reports
 `conditionalUpdate: false`, which explicitly means no atomic concurrency
 guarantee.
-A stale MODSEQ changes no flags and returns `concurrent_modification`. The
-adapter never retries the conditional STORE. An ambiguous dispatched write still
+An ambiguous dispatched write still
 returns `outcome_unknown`.
 
 ## Move and trash
