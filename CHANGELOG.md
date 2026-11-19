@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-19
+
+This minor release adds an optional custom sender address for Mail and
+restores guarded `set_message_flags` on CONDSTORE servers. It also publishes
+the Calendar, Contacts, Mail, and capability corrections merged since v1.1.1.
+No default changes: Calendar reads stay the only default capability, and
+every existing profile keeps its tool set.
+
 ### Added
 - Add optional `ICLOUD_MAIL_FROM` to send from an address other than the login,
   such as an iCloud+ custom-domain address. It sets the From header, `MAIL FROM`
@@ -13,6 +21,61 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reply-all drops both identities, and the boot redactor and live-evidence
   guard mask the sender. The address must be ASCII, and an empty `file://`
   sender fails startup. Without it, behavior is unchanged.
+  Contributed by patobiskoto. (#219, #226)
+
+### Changed
+- find_free_slots collects bounded busy intervals with one final sort and
+  merge instead of a full copy and re-sort per read wave, with identical
+  results and a new 10,000-interval fail-closed budget. (#222)
+- Update `github.com/emersion/go-imap/v2` to v2.0.0-beta.9,
+  `github.com/emersion/go-smtp` to v0.26.0, and `golang.org/x/text` to
+  v0.44.0. (#230, #231)
+
+### Fixed
+- Restore `set_message_flags` on servers that advertise CONDSTORE. The IMAP
+  adapter now reads the tagged status of the guarded `UID STORE` it sent. A
+  tagged OK without `MODIFIED`, plus a FETCH of that UID with the requested
+  flags, proves the conditional success. A tagged `MODIFIED` returns
+  `concurrent_modification`. A dispatched STORE that cannot be verified
+  returns `outcome_unknown` and is never retried. No path sends an
+  unconditional STORE to a CONDSTORE server. (#216)
+- The MCP initialize instructions now come from the effective capability plan.
+  The server names only the domain tool groups it registered and points the
+  host at tools/list and icloud_capabilities. A Mail-only or Contacts-only
+  profile no longer receives the claim that Calendar is always available.
+  (#218)
+- list_mailboxes lists a mailbox only when a granted and enabled Mail
+  capability reaches it, and accessModes is the intersection of that grant and
+  the action resource scope. A stale mail.mutate or mail.archive scope no
+  longer discloses a mailbox or advertises a right under
+  ICLOUD_MCP_READ_ONLY=true, an explicit permission subset, or a Mail-send
+  profile without mail.archive. (#224)
+- search_contacts cursor pages reuse one immutable, per-registration snapshot
+  instead of repeating a full multi-book CardDAV REPORT, decode, and sort on
+  every page. Later pages issue no CardDAV request. Snapshot retention is
+  capped at 4 snapshots, 32 MiB, and 128 cursor entries; stale cursors fail
+  closed. (#215)
+- search_messages and reply metadata reads no longer request BODYSTRUCTURE.
+  Only get_message fetches and processes the MIME tree, so a wide or deep
+  structure no longer fails a metadata-only read. (#214)
+- A multipart/alternative whose child multipart/mixed branch holds several
+  plain segments keeps every segment of the chosen branch in order, and nested
+  alternative levels suppress competing branches at every level. (#213)
+- search_events cursor pages replay the floating-time and DST warning instead
+  of dropping it after the first page. (#217)
+- Recurrence overrides are resolved before the occurrence cap applies, so an
+  override moved outside the window no longer hides valid occurrences and
+  moved-in overrides are selected deterministically. (#221)
+- A supplied strong etag is enforced on every delete_event dry run, including
+  an already-excluded occurrence; a stale ETag returns concurrent_modification
+  instead of a false-positive no-op preview. (#220)
+- A DATE-TIME start or end for a VALUE=DATE event is rejected with a typed
+  validation error instead of silently discarding the clock; the inverse
+  DATE-only rejection for timed events is unchanged. (#225)
+- An update or create instant that selects the second occurrence of a DST fold
+  on a named-TZID event is rejected before any PUT instead of silently moving
+  the event by one hour. First-fold instants, normal hours, UTC events,
+  floating values, and all-day creates keep their values. (#223)
 
 ## [1.1.1] - 2026-11-15
 
