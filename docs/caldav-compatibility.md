@@ -233,6 +233,13 @@ the complete object. Identical UIDs in different calendars stay isolated.
 - A zoned recurrence expands on the wall clock. A spring-gap occurrence uses
   the pre-gap UTC offset, as RFC 5545 section 3.3.5 requires, and sets
   `dstAdjusted`. A fold uses the first occurrence. Neither case is silent.
+- A RECURRENCE-ID override is resolved before the occurrence cap applies. An
+  override moved outside the requested range therefore consumes no result
+  capacity, and an override moved into the range is still returned. The cap
+  bounds the final projected set: the results are ordered by effective start
+  and then by stable identity, and one result beyond the cap sets
+  `truncatedByExpansion`. The same master and override set always returns the
+  same page.
 - Availability interprets a floating event in the requested timezone before
   querying and filtering, so it cannot make the same wall-clock slot look free.
   A naive `start` or `end` with an explicit `timezone` is parsed in that
@@ -300,8 +307,13 @@ unreviewed mutation of an object that could produce one.
   10,000 filtered events materialize.
 - `find_free_slots` accepts at most 10,000 returned events across permitted
   calendars, for explicit and implicit selections. It counts before busy filtering.
-- Availability reads ordered waves of at most four calendars. It checks each
-  batch before accumulation and releases wave results before the next reads.
+- Availability reads ordered waves of at most four calendars. It projects each
+  batch to busy intervals and releases the wave results before the next reads.
+  It keeps no Event value between waves.
+- The collector appends intervals to one bounded slice and runs a single sort
+  and merge at the end. Earlier waves are not copied or re-sorted again.
+- A separate interval budget of 10,000 busy intervals fails closed with
+  `payload_too_large`, like the event budget.
 - Overflow returns `payload_too_large` with guidance to narrow the range or calendars.
   No partial availability is returned. Incomplete searches and truncated recurrence also fail closed.
 - Cancellation joins the active wave. Errors follow selected-calendar order,
@@ -376,6 +388,12 @@ remain or the result is incomplete. A result beyond the 256 KiB serialized
 budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
+
+The floating and daylight-saving warning describes the completed scan in cursor
+mode. The first page computes it before the snapshot is stored, and every later
+page replays the same warning once, even when that page holds no affected row.
+A direct query without a cursor keeps page-local semantics: the warning
+describes only the returned rows.
 
 `total` is the bounded snapshot count while the generation is live. A token
 whose generation expired or was evicted is stale and the caller restarts. Within

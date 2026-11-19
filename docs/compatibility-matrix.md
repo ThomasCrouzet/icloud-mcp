@@ -29,7 +29,9 @@ A `LIVE VERIFIED` row needs all of these:
 
 ## Calendar
 
-The Calendar domain is always enabled. Read-only mode removes every Calendar
+Calendar tools are registered when the effective capability plan grants a
+Calendar read, write, or delete permission. A Mail-only or Contacts-only
+profile receives no Calendar tool. Read-only mode removes every Calendar
 write tool. The checked-in live tests skip when their gates are absent.
 
 | Capability | Synthetic coverage | Live status | Prerequisites and environment gates | Exact opt-in flags | Expected result | Cleanup and rollback |

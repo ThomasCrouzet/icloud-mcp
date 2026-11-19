@@ -252,10 +252,12 @@ func (b *replyScopeBackend) serveIMAP(conn net.Conn) {
 			response = tag + " OK [CAPABILITY IMAP4rev1] authenticated\r\n"
 		case fields[1] == "EXAMINE":
 			response = "* 1 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 3] next\r\n" + tag + " OK [READ-ONLY] examined\r\n"
-		case strings.Contains(line, "UID FETCH 2 ") && strings.Contains(line, "BODYSTRUCTURE"):
+		case strings.Contains(line, "UID FETCH 2 ") && strings.Contains(line, "HEADER.FIELDS"):
+			// reply_message asks for curated headers only, so this fixture must
+			// not require BODYSTRUCTURE in the metadata command.
 			b.metadata.Add(1)
 			headers := "Message-ID: <source@example.invalid>\r\nReply-To: reply@example.invalid\r\n\r\n"
-			response = fmt.Sprintf("* 1 FETCH (UID 2 FLAGS () ENVELOPE (NIL \"source-subject\" NIL NIL NIL NIL NIL NIL NIL NIL) BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 0 0) BODY[HEADER.FIELDS (MESSAGE-ID IN-REPLY-TO REFERENCES REPLY-TO)]<0> {%d}\r\n%s)\r\n%s OK metadata\r\n", len(headers), headers, tag)
+			response = fmt.Sprintf("* 1 FETCH (UID 2 FLAGS () ENVELOPE (NIL \"source-subject\" NIL NIL NIL NIL NIL NIL NIL NIL) BODY[HEADER.FIELDS (MESSAGE-ID IN-REPLY-TO REFERENCES REPLY-TO)]<0> {%d}\r\n%s)\r\n%s OK metadata\r\n", len(headers), headers, tag)
 		case strings.Contains(line, "UID FETCH 3 "):
 			b.metadata.Add(1)
 			response = tag + " OK no matching UID\r\n"

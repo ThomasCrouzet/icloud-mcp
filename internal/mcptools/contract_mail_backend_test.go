@@ -325,7 +325,15 @@ func (b *contractMailBackend) serveIMAP(conn net.Conn) error {
 				fmt.Fprintf(&found, " %d", n)
 			}
 			response = "* SEARCH" + found.String() + "\r\n" + response
-		case strings.Contains(line, "UID FETCH") && strings.Contains(line, "BODYSTRUCTURE"):
+		case strings.Contains(line, "UID FETCH") && strings.Contains(line, "ENVELOPE"):
+			// One metadata projection per read. A summary read asks for
+			// envelope items only, a reply read adds curated headers, and a
+			// message read adds BODYSTRUCTURE. The fixture answers the items
+			// the command actually requested.
+			structure := ""
+			if strings.Contains(line, "BODYSTRUCTURE") {
+				structure = "%s"
+			}
 			headers := "Message-ID: <source@example.invalid>\r\nIn-Reply-To: <parent@example.invalid>\r\nReferences: <root@example.invalid>\r\nReply-To: reply@example.invalid\r\n\r\n"
 			headerPart := ""
 			if strings.Contains(line, "HEADER.FIELDS") {
@@ -346,7 +354,11 @@ func (b *contractMailBackend) serveIMAP(conn net.Conn) error {
 				envelope = `(NIL "Synthetic" ((NIL NIL "reply" "example.invalid")) NIL NIL NIL NIL NIL NIL "<source@example.invalid>")`
 			}
 			for _, id := range contractFixtureUIDs(f[3]) {
-				fmt.Fprintf(&rows, "* 1 FETCH (UID %s FLAGS () INTERNALDATE \"01-Jul-2026 10:00:00 +0000\" RFC822.SIZE %d ENVELOPE %s BODYSTRUCTURE (\"TEXT\" \"%s\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" %d %d)%s)\r\n", id, len(body)+len(headers)+100, envelope, subtype, len(body), strings.Count(body, "\n")+1, headerPart)
+				bodyStructure := ""
+				if structure != "" {
+					bodyStructure = fmt.Sprintf(structure, fmt.Sprintf(` BODYSTRUCTURE ("TEXT" "%s" ("CHARSET" "UTF-8") NIL NIL "7BIT" %d %d)`, subtype, len(body), strings.Count(body, "\n")+1))
+				}
+				fmt.Fprintf(&rows, "* 1 FETCH (UID %s FLAGS () INTERNALDATE \"01-Jul-2026 10:00:00 +0000\" RFC822.SIZE %d ENVELOPE %s%s%s)\r\n", id, len(body)+len(headers)+100, envelope, bodyStructure, headerPart)
 			}
 			response = rows.String() + response
 		case strings.Contains(line, "UID FETCH") && strings.Contains(line, "BODY.PEEK[1.MIME]"):
