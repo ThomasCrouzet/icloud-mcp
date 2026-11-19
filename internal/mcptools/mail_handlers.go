@@ -40,7 +40,7 @@ func listMailboxesHandler(deps MailDeps) server.ToolHandlerFunc {
 			return mailServiceErrorResult(deps, "listing mailboxes", err), nil
 		}
 		before := len(result.Mailboxes)
-		result.Mailboxes = filterMailboxes(result.Mailboxes, deps.ResourceScopes)
+		result.Mailboxes = filterMailboxes(result.Mailboxes, deps.ResourceScopes, deps.Plan)
 		if len(result.Mailboxes) < before {
 			result.Truncated = true
 		}

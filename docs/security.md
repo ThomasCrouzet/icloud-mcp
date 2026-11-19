@@ -133,14 +133,23 @@ Global read-only removes every granted write and send tool. An unset
 `ICLOUD_MCP_PERMISSIONS` grants reads only.
 Requested Mail send still requires a recipient allowlist at boot.
 
-`list_mailboxes` returns a mailbox only when at least one effective Mail
-capability reaches it. Each entry carries `accessModes` with the applicable
-subset of `read`, `mutate`, and `archive`. Scope inheritance means a mailbox
-allowed by `mail.read` is also mutable and archivable unless a narrower
-`mail.mutate` or `mail.archive` scope is set. A mailbox that is only a mutation
-or archive target is listed with those modes and never advertised as readable.
-`search_messages`, `get_message`, and `reply_message` still enforce
-`mail.read` independently.
+`list_mailboxes` returns a mailbox only when at least one granted and enabled
+Mail capability reaches it. Each entry carries `accessModes` with the applicable
+subset of `read`, `mutate`, and `archive`. The listing intersects two inputs: the
+effective capability plan, which decides whether an action is granted at all,
+and the per-destination resource scope for that action. A scope entry for an
+action that the plan does not grant can therefore never disclose a mailbox or
+advertise a right. This covers `ICLOUD_MCP_READ_ONLY=true`, an explicit
+`ICLOUD_MCP_PERMISSIONS` subset, and a Mail-send profile without
+`mail.archive`: `archive` is reported only when the Sent-copy capability is
+really enabled.
+
+Scope inheritance means a mailbox allowed by `mail.read` is also mutable and
+archivable unless a narrower `mail.mutate` or `mail.archive` scope is set. A
+mailbox that is only a mutation or archive target is listed with those modes and
+never advertised as readable. `search_messages`, `get_message`, and
+`reply_message` still enforce `mail.read` independently, so a listed destination
+is never a read grant.
 
 ### Calendar read resource scopes
 

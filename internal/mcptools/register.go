@@ -317,6 +317,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 	if plan.MailEnabled() {
 		registered = append(registered, RegisterMail(s, MailDeps{
 			Service: deps.MailService, Audit: deps.Audit, Redactor: deps.Redactor, ResourceScopes: deps.ResourceScopes,
+			Plan: plan,
 		}, plan.MailReadEnabled(), plan.MailMutationsEnabled(), plan.MailTrashEnabled(), plan.MailSendEnabled(), plan.MailReplyEnabled())...)
 	}
 	s.AddTool(newICloudCapabilitiesTool(), icloudCapabilitiesHandler(deps, plan))
