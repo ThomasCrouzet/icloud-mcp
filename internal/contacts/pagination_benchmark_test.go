@@ -240,6 +240,7 @@ func BenchmarkContactsPagination(b *testing.B) {
 		contactsPaginationBooks(b, client)
 		b.ReportAllocs()
 		b.ResetTimer()
+		var reports, bytes int64
 		for range b.N {
 			counters.resetReports()
 			for range pages {
@@ -247,9 +248,11 @@ func BenchmarkContactsPagination(b *testing.B) {
 					b.Fatalf("search: %v", err)
 				}
 			}
+			usedReports, usedBytes := counters.reportTotals()
+			reports += usedReports
+			bytes += usedBytes
 		}
 		b.StopTimer()
-		reports, bytes := counters.reportTotals()
 		if b.N > 0 {
 			b.ReportMetric(float64(reports)/float64(b.N), "report/op")
 			b.ReportMetric(float64(bytes)/float64(b.N), "report-bytes/op")
@@ -263,14 +266,17 @@ func BenchmarkContactsPagination(b *testing.B) {
 		contactsPaginationBooks(b, client)
 		b.ReportAllocs()
 		b.ResetTimer()
+		var reports, bytes int64
 		for range b.N {
 			counters.resetReports()
 			if _, err := client.SearchContacts(context.Background(), SearchOptions{Limit: limit, PageAll: true}); err != nil {
 				b.Fatalf("search: %v", err)
 			}
+			usedReports, usedBytes := counters.reportTotals()
+			reports += usedReports
+			bytes += usedBytes
 		}
 		b.StopTimer()
-		reports, bytes := counters.reportTotals()
 		if b.N > 0 {
 			b.ReportMetric(float64(reports)/float64(b.N), "report/op")
 			b.ReportMetric(float64(bytes)/float64(b.N), "report-bytes/op")
