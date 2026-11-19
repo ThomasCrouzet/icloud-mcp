@@ -347,6 +347,12 @@ budget uses only rows that fit with the token and metadata. If zero rows fit, it
 returns no cursor and asks for a narrower range, compact mode, or fewer
 calendars.
 
+The floating and daylight-saving warning describes the completed scan in cursor
+mode. The first page computes it before the snapshot is stored, and every later
+page replays the same warning once, even when that page holds no affected row.
+A direct query without a cursor keeps page-local semantics: the warning
+describes only the returned rows.
+
 `total` is the bounded snapshot count while the generation is live. A token
 whose generation expired or was evicted is stale and the caller restarts. Within
 a live generation, inserted or moved rows do not appear.
