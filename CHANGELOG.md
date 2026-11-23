@@ -6,6 +6,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add opt-in attachment support without disk access. `get_attachment` reads one
+  part with BODY.PEEK and returns images as image content, text and Word
+  `.docx` files as bounded text, and other files as an embedded resource.
+  `send_message` and `reply_message` accept `attachments` by IMAP reference.
+  `stage_attachment` and `create_draft` stage small new files in memory and
+  append a draft to the Drafts mailbox. New tokens: `mail.attachments.read`,
+  `mail.attachments.send`, and `mail.drafts`. New optional
+  `ICLOUD_MCP_DRAFTS_MAILBOX`, because iCloud marks no SPECIAL-USE Drafts
+  mailbox. Without the tokens, every profile keeps its tool set. (#243)
+
 ## [1.2.0] - 2026-11-19
 
 This minor release adds an optional custom sender address for Mail and

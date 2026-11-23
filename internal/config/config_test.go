@@ -30,6 +30,7 @@ func clearEnv(t *testing.T) {
 		"ICLOUD_MCP_ENABLE_MAIL_WRITE",
 		"ICLOUD_MCP_ENABLE_MAIL_SEND",
 		"ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS",
+		"ICLOUD_MCP_DRAFTS_MAILBOX",
 	} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
@@ -1236,5 +1237,64 @@ func TestCalendarSchedulePermissionIsSeparate(t *testing.T) {
 	t.Setenv("ICLOUD_MCP_PERMISSIONS", "calendar.read,calendar.schedule")
 	if _, err := Load(); err == nil {
 		t.Fatal("calendar.schedule without a write or delete grant was accepted")
+	}
+}
+
+func TestLoad_AttachmentAndDraftPermissions(t *testing.T) {
+	base := func(t *testing.T, permissions string) {
+		t.Helper()
+		clearEnv(t)
+		t.Setenv("ICLOUD_EMAIL", "calendar@example.com")
+		t.Setenv("ICLOUD_PASSWORD", "calendar-app-password")
+		t.Setenv("ICLOUD_MCP_ENABLE_MAIL", "true")
+		t.Setenv("ICLOUD_MAIL_ADDRESS", "mailbox@example.com")
+		t.Setenv("ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS", "to@example.com")
+		t.Setenv("ICLOUD_MCP_PERMISSIONS", permissions)
+	}
+
+	base(t, "mail.read,mail.send")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps := cfg.Capabilities(); caps.MailAttachmentsRead || caps.MailAttachmentsSend || caps.MailDrafts {
+		t.Fatalf("attachment capabilities without tokens: %+v", caps)
+	}
+
+	base(t, "mail.read,mail.send,mail.attachments.read,mail.attachments.send,mail.drafts")
+	t.Setenv("ICLOUD_MCP_DRAFTS_MAILBOX", "Drafts")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps := cfg.Capabilities(); !caps.MailAttachmentsRead || !caps.MailAttachmentsSend || !caps.MailDrafts || cfg.DraftsMailbox != "Drafts" {
+		t.Fatalf("granted capabilities = %+v, drafts mailbox %q", caps, cfg.DraftsMailbox)
+	}
+
+	// Global read-only keeps attachment reads and removes every effect.
+	t.Setenv("ICLOUD_MCP_READ_ONLY", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps := cfg.Capabilities(); !caps.MailAttachmentsRead || caps.MailAttachmentsSend || caps.MailDrafts {
+		t.Fatalf("read-only capabilities = %+v", caps)
+	}
+
+	for _, tc := range []struct{ permissions, drafts string }{
+		{"mail.attachments.read", ""},
+		{"mail.read,mail.attachments.send", ""},
+		{"mail.send,mail.attachments.send", ""},
+		{"mail.drafts", ""},
+		{"mail.read", "Drafts"},
+		{"mail.read,mail.drafts", "INBOX"},
+		{"mail.read,mail.drafts", " Drafts"},
+		{"mail.read,mail.drafts", "Dra\x01fts"},
+	} {
+		base(t, tc.permissions)
+		t.Setenv("ICLOUD_MCP_DRAFTS_MAILBOX", tc.drafts)
+		if _, err := Load(); err == nil {
+			t.Errorf("Load() accepted permissions %q with drafts mailbox %q", tc.permissions, tc.drafts)
+		}
 	}
 }

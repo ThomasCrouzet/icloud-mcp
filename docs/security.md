@@ -250,6 +250,14 @@ The implementation therefore restricts data shape and size:
 - Message get returns selected headers and at most one bounded, decoded
   plain-text part. It also returns attachment metadata.
 - Message get excludes raw headers, raw MIME, HTML, and attachment payloads.
+- `get_attachment` needs the explicit `mail.attachments.read` token. It returns
+  one part of at most 3 MiB encoded, as image, text, or resource content below
+  960 KiB. Binary content is not redacted, because redaction would corrupt it.
+  Metadata and extracted text are redacted. Attachment content is untrusted
+  remote data. The server never executes or unpacks it.
+- Attachments by reference need `mail.attachments.send` and `mail.send`. The
+  recipient allowlist still applies. Staged files from `mail.drafts` stay in
+  process memory only. Audit records name no filename or content.
 - IMAP input has a 4 MiB limit for each session and 1 MiB for each protocol line.
 - Before recursive decoding, IMAP limits protocol depth to 24 and protocol lists
   to 512.

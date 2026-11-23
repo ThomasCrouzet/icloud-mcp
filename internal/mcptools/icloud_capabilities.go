@@ -35,6 +35,11 @@ type icloudCapabilityGroups struct {
 	MailTrash      bool `json:"mailTrash"`
 	MailSend       bool `json:"mailSend"`
 	MailReply      bool `json:"mailReply"`
+	// Attachment and draft groups appear only when granted, so the default
+	// capability output is unchanged.
+	MailAttachmentsRead bool `json:"mailAttachmentsRead,omitempty"`
+	MailAttachmentsSend bool `json:"mailAttachmentsSend,omitempty"`
+	MailDrafts          bool `json:"mailDrafts,omitempty"`
 }
 
 type icloudCapabilitiesResponse struct {
@@ -66,17 +71,20 @@ func icloudCapabilitiesHandler(deps Deps, plan CapabilityPlan) server.ToolHandle
 				Mail:     plan.MailEnabled(),
 			},
 			CapabilityGroups: icloudCapabilityGroups{
-				CalendarRead:   plan.CalendarReadEnabled(),
-				CalendarWrite:  plan.CalendarCreateUpdateEnabled(),
-				CalendarDelete: plan.CalendarDeleteEnabled(),
-				ContactsRead:   plan.ContactsReadEnabled(),
-				ContactsWrite:  plan.ContactsCreateUpdateEnabled(),
-				ContactsDelete: plan.ContactsDeleteEnabled(),
-				MailRead:       plan.MailReadEnabled(),
-				MailMutation:   plan.MailMutationsEnabled(),
-				MailTrash:      plan.MailTrashEnabled(),
-				MailSend:       plan.MailSendEnabled(),
-				MailReply:      plan.MailReplyEnabled(),
+				CalendarRead:        plan.CalendarReadEnabled(),
+				CalendarWrite:       plan.CalendarCreateUpdateEnabled(),
+				CalendarDelete:      plan.CalendarDeleteEnabled(),
+				ContactsRead:        plan.ContactsReadEnabled(),
+				ContactsWrite:       plan.ContactsCreateUpdateEnabled(),
+				ContactsDelete:      plan.ContactsDeleteEnabled(),
+				MailRead:            plan.MailReadEnabled(),
+				MailMutation:        plan.MailMutationsEnabled(),
+				MailTrash:           plan.MailTrashEnabled(),
+				MailSend:            plan.MailSendEnabled(),
+				MailReply:           plan.MailReplyEnabled(),
+				MailAttachmentsRead: plan.MailAttachmentsReadEnabled(),
+				MailAttachmentsSend: plan.MailAttachmentsSendEnabled(),
+				MailDrafts:          plan.MailDraftsEnabled(),
 			},
 			Tools:     tools,
 			ToolCount: len(tools),

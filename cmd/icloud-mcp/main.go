@@ -413,13 +413,20 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 			}
 		}
 		archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
+		// A draft must stay readable, so the Drafts mailbox uses the read scope.
+		draftsScope, _ := cfg.ResourceScopes.Mail("mail.read")
 		mailService, err = maildomain.NewService(maildomain.Config{
-			Address:         strings.Clone(cfg.MailAddress),
-			From:            strings.Clone(cfg.MailFrom),
-			Password:        strings.Clone(cfg.MailPassword),
-			RecipientPolicy: recipientPolicy,
-			EnableSentCopy:  capabilities.MailArchive,
-			ArchiveScope:    archiveScope,
+			Address:              strings.Clone(cfg.MailAddress),
+			From:                 strings.Clone(cfg.MailFrom),
+			Password:             strings.Clone(cfg.MailPassword),
+			RecipientPolicy:      recipientPolicy,
+			EnableSentCopy:       capabilities.MailArchive,
+			ArchiveScope:         archiveScope,
+			EnableAttachmentRead: capabilities.MailAttachmentsRead,
+			EnableAttachmentSend: capabilities.MailAttachmentsSend && cfg.EffectiveMailSend(),
+			EnableDrafts:         capabilities.MailDrafts,
+			DraftsScope:          draftsScope,
+			DraftsMailbox:        strings.Clone(cfg.DraftsMailbox),
 		}, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
 		if err != nil {
 			return nil, nil, fmt.Errorf("mail service initialization failed: %w", err)

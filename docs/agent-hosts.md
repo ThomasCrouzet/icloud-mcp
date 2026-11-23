@@ -24,7 +24,7 @@ against that host or model. Review those policies before any account read.
 
 ## Configuration reference
 
-Exactly **15** product environment variables:
+Exactly **16** product environment variables:
 
 | Variable | Default | Contract |
 |----------|---------|----------|
@@ -43,6 +43,7 @@ Exactly **15** product environment variables:
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | `false` | Compatibility gate. Mutation tools require `mail.mutate` or `mail.trash`. |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | `false` | Compatibility gate. Send tools require `mail.send`. |
 | `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | none | Required if send is on. Use exact addresses or literal `*`. Literal `*` causes a boot warning. Use exact addresses when possible. |
+| `ICLOUD_MCP_DRAFTS_MAILBOX` | none | Drafts mailbox for `create_draft`. The server uses it only when no mailbox has SPECIAL-USE `\Drafts`. Set `Drafts` for iCloud. Requires `mail.drafts`. |
 
 Booleans accept only unset, `0`, `false`, `1`, or `true`. Invalid values cause a
 boot failure. The server validates the configuration **before** network access.
@@ -69,8 +70,10 @@ before network access.
 `ICLOUD_MCP_PERMISSIONS` accepts `calendar.read`, `calendar.write`,
 `calendar.delete`, `calendar.schedule`, `contacts.read`, `contacts.write`,
 `contacts.delete`,
-`mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, and `mail.archive`.
-Unknown, duplicate, or empty tokens cause a boot error. A Contacts or Mail token
+`mail.read`, `mail.mutate`, `mail.trash`, `mail.send`, `mail.archive`,
+`mail.attachments.read`, `mail.attachments.send`, and `mail.drafts`.
+The attachment and draft tokens need `mail.read`. `mail.attachments.send` also
+needs `mail.send`. Unknown, duplicate, or empty tokens cause a boot error. A Contacts or Mail token
 needs its domain switch. An unset or empty value grants reads only for the
 enabled domains. Name every effect. The Mail write and send flags do not add
 one. Global read-only still removes every mutation and send tool.
@@ -301,7 +304,7 @@ ICLOUD_MCP_ENABLE_CONTACTS: "false"
 
 An unquoted YAML boolean becomes a host-side boolean. Some hosts reject it
 before the server starts. See the [configuration reference](#configuration-reference)
-for all 15 product variables.
+for all 16 product variables.
 
 ## Logs and health
 

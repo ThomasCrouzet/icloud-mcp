@@ -261,10 +261,15 @@ func trashMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 	}
 }
 
-func sendMessageHandler(deps MailDeps) server.ToolHandlerFunc {
+func sendMessageHandler(deps MailDeps, withAttachments bool) server.ToolHandlerFunc {
+	keys := []string{"to", "cc", "bcc", "subject", "body", "idempotency_key", "archive_sent"}
+	if withAttachments {
+		keys = append(keys, "attachments")
+	}
+	allowed := mailKeySet(keys...)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		const tool = "send_message"
-		args, err := mailArguments(req, mailKeySet("to", "cc", "bcc", "subject", "body", "idempotency_key", "archive_sent"))
+		args, err := mailArguments(req, allowed)
 		if err != nil {
 			mailAudit(deps, tool, "submission", "invalid", "denied")
 			return mailSendValidationResult(deps, err), nil
@@ -273,6 +278,16 @@ func sendMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 		if err != nil {
 			mailAudit(deps, tool, "submission", "invalid", "denied")
 			return mailSendValidationResult(deps, err), nil
+		}
+		if withAttachments {
+			input.Attachments, err = mailAttachmentRefs(args)
+			if err == nil {
+				err = mailAuthorizeAttachmentRefs(deps, input.Attachments)
+			}
+			if err != nil {
+				mailAudit(deps, tool, "submission", "invalid", "denied")
+				return mailSendValidationResult(deps, err), nil
+			}
 		}
 		result, err := deps.Service.SendMessage(ctx, input)
 		resource := result.MessageID
@@ -841,8 +856,8 @@ func mailOptionalDate(args map[string]any, name string) (time.Time, bool, error)
 	return parsed, true, nil
 }
 
-func newReplyMessageTool() mcp.Tool {
-	return mcp.NewTool("reply_message",
+func newReplyMessageTool(withAttachments bool) mcp.Tool {
+	options := []mcp.ToolOption{
 		mcp.WithDescription("Replies to one validated source message through iCloud SMTP. The default mode replies to Reply-To or From; reply_all adds To and Cc but never Bcc. In-Reply-To and References come only from the source, with bounded validation. Recipients use the same exact policy as send_message. It does not mark the source Answered, move it, or append a Sent copy. Submission is never automatically retried. An optional idempotency_key follows the same 15-minute definitive and process-local retention rules as send_message; after expiry or restart, the same key can submit again."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -854,13 +869,22 @@ func newReplyMessageTool() mcp.Tool {
 		mcp.WithString("mode", mcp.Enum("sender", "reply_all"), mcp.Description("sender (default) or reply_all; Bcc is never copied")),
 		mcp.WithString("body", mcp.Required(), mcp.MaxLength(maildomain.MaxSendBodyBytes), mcp.Description("UTF-8 plain-text reply body, at most 102400 bytes; NUL is rejected")),
 		mcp.WithString("idempotency_key", mcp.MaxLength(255), mcp.Description("Optional process-local key. Identical replies reuse one submission and Message-ID for 15 minutes after a definitive outcome; changed content conflicts. Pending or uncertain outcomes stay until process exit. After expiry or restart, the same key can submit again.")),
-	)
+	}
+	if withAttachments {
+		options = append(options, mailAttachmentRefsProperty("Optional parts already on the mail server, attached by reference, such as the source attachments"))
+	}
+	return mcp.NewTool("reply_message", options...)
 }
 
-func replyMessageHandler(deps MailDeps) server.ToolHandlerFunc {
+func replyMessageHandler(deps MailDeps, withAttachments bool) server.ToolHandlerFunc {
+	keys := []string{"mailbox", "uid_validity", "uid", "mode", "body", "idempotency_key"}
+	if withAttachments {
+		keys = append(keys, "attachments")
+	}
+	allowed := mailKeySet(keys...)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		const tool = "reply_message"
-		args, err := mailArguments(req, mailKeySet("mailbox", "uid_validity", "uid", "mode", "body", "idempotency_key"))
+		args, err := mailArguments(req, allowed)
 		if err != nil {
 			mailAudit(deps, tool, "submission", "invalid", "denied")
 			return mailSendValidationResult(deps, err), nil
@@ -895,9 +919,20 @@ func replyMessageHandler(deps MailDeps) server.ToolHandlerFunc {
 			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
 			return mailSendValidationResult(deps, err), nil
 		}
+		var attachments []maildomain.AttachmentRef
+		if withAttachments {
+			attachments, err = mailAttachmentRefs(args)
+			if err == nil {
+				err = mailAuthorizeAttachmentRefs(deps, attachments)
+			}
+			if err != nil {
+				mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
+				return mailSendValidationResult(deps, err), nil
+			}
+		}
 		result, err := deps.Service.ReplyMessage(ctx, maildomain.ReplyInput{
 			Mailbox: identity.Mailbox, UIDValidity: identity.UIDValidity, UID: identity.UID,
-			Mode: mode, Body: body, IdempotencyKey: key,
+			Mode: mode, Body: body, IdempotencyKey: key, Attachments: attachments,
 		})
 		resource := result.MessageID
 		if resource == "" {

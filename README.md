@@ -88,19 +88,22 @@ Calendar path is malformed.
 `ICLOUD_MCP_PERMISSIONS` names every capability. It takes a comma-separated
 list: `calendar.read`, `calendar.write`, `calendar.delete`, `calendar.schedule`,
 `contacts.read`, `contacts.write`, `contacts.delete`, `mail.read`, `mail.mutate`,
-`mail.trash`, `mail.send`, and `mail.archive`. `calendar.schedule` is a separate
+`mail.trash`, `mail.send`, `mail.archive`, `mail.attachments.read`,
+`mail.attachments.send`, and `mail.drafts`. `calendar.schedule` is a separate
 operator grant for group-scheduled Calendar mutations and requires
 `calendar.write` or `calendar.delete`. Domain switches still enable a domain. Global
 read-only still removes every mutation and send. With no value, enabled
 domains are read-only. No switch, flag, or omission implies an effect. For
 example, `calendar.read,mail.read,mail.send` gives Calendar reads and Mail send
-without Calendar, Contacts, or Mail mutation tools.
+without Calendar, Contacts, or Mail mutation tools. The three attachment and
+draft tokens need `mail.read`, and `mail.attachments.send` also needs
+`mail.send`. See [Mail attachments](docs/mail-compatibility.md#attachments).
 
 <!-- readme:section interface -->
 ## MCP tools
 
 The server registers **7 tools with the default read-only profile**, including
-the global capability tool, and **24 when explicit permissions and domain gates enable every capability**.
+the global capability tool, and **27 when explicit permissions and domain gates enable every capability**.
 Disabled tools are absent from discovery. The MCP interface provides tools over
 **stdio**.
 
@@ -111,7 +114,10 @@ Disabled tools are absent from discovery. The MCP interface provides tools over
 | `search_events` | `start`, `end`; optional calendar, filters, and cursor | Sorted event page with `calendar`, recurrence occurrences, truncation or failure warnings, and optional `nextCursor` | None |
 | `update_event` | `calendar`, `uid`, changed fields; optional `etag`, `idempotency_key`, occurrence scope | Updated event or a structured error | Conditional Calendar write |
 | `get_message` | `mailbox`, `uid_validity`, `uid`; optional body limit and HTML fallback | Message metadata and bounded plain text | None; EXAMINE and PEEK preserve read state |
-| `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc` | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |
+| `get_attachment` | `mailbox`, `uid_validity`, `uid`, `part_id`; optional `format` and text limit | Attachment metadata with SHA-256, plus image, text, or resource content | None; PEEK preserves read state and the server keeps no copy |
+| `send_message` | `body`, optional `subject`, `idempotency_key`, and at least one recipient across `to`, `cc`, `bcc`; optional `attachments` by IMAP reference | Submission status or a structured error | Sends mail to allowed recipients; identical keyed calls reuse one submission |
+| `stage_attachment` | base64 `data`; `filename` and `content_type` on the first chunk, then `handle` | Staged file handle, size, and SHA-256 | None; bytes stay in server memory for 30 minutes |
+| `create_draft` | `body`; optional `to`, `cc`, `subject`, `staged` handles, and `attachments` | Draft identity and attachment part IDs | Appends one draft to the Drafts mailbox; never sends |
 | `reply_message` | source `mailbox`, `uid_validity`, `uid`; `body`; optional `mode` and `idempotency_key` | Submission status or a structured error | Replies to the resolved sender or reply-all recipients; never marks Answered or appends Sent |
 
 The [complete inventory](docs/architecture.md#tool-inventory) lists all tools.
@@ -342,7 +348,7 @@ environment; its configuration format can differ. See
 <!-- readme:section configuration -->
 ## Configuration
 
-The binary reads exactly **15 product environment variables** from its process
+The binary reads exactly **16 product environment variables** from its process
 environment. It does not load `.env` files or host configuration files.
 [`.env.example`](.env.example) lists the supported keys. The host or launching
 shell must supply them; restart the process after a change.
@@ -364,6 +370,7 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No | `false` | Compatibility gate only; Mail mutation requires `mail.mutate` or `mail.trash` |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | No | `false` | Compatibility gate only; send requires `mail.send` and a recipient policy |
 | `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | When send is requested | None | Comma-separated exact addresses, or literal `*` |
+| `ICLOUD_MCP_DRAFTS_MAILBOX` | No | None | Drafts mailbox name for `create_draft` when no mailbox has SPECIAL-USE `\Drafts`; set `Drafts` for iCloud; requires `mail.drafts` |
 
 Boolean values accept unset, `0`, `false`, `1`, and `true`; the parser trims
 whitespace and ignores case. Invalid values fail before network access. Pass

@@ -74,6 +74,10 @@ type CapabilityPlan struct {
 	mailSend    bool
 	mailReply   bool
 	mailArchive bool
+
+	mailAttachmentsRead bool
+	mailAttachmentsSend bool
+	mailDrafts          bool
 }
 
 // NewCapabilityPlan applies the global read-only and domain enable gates to
@@ -105,6 +109,7 @@ func NewCapabilityPlanFromConfig(readOnly bool, set config.CapabilitySet) Capabi
 		set.CalendarWrite, set.CalendarDelete = false, false
 		set.ContactsWrite, set.ContactsDelete = false, false
 		set.MailMutate, set.MailTrash, set.MailSend = false, false, false
+		set.MailAttachmentsSend, set.MailDrafts = false, false
 	}
 	return CapabilityPlan{
 		readOnly:       readOnly,
@@ -120,6 +125,10 @@ func NewCapabilityPlanFromConfig(readOnly bool, set config.CapabilitySet) Capabi
 		mailSend:       set.MailSend,
 		mailReply:      set.MailRead && set.MailSend,
 		mailArchive:    set.MailArchive,
+
+		mailAttachmentsRead: set.MailRead && set.MailAttachmentsRead,
+		mailAttachmentsSend: set.MailRead && set.MailSend && set.MailAttachmentsSend,
+		mailDrafts:          set.MailRead && set.MailDrafts,
 	}
 }
 
@@ -189,6 +198,17 @@ func (p CapabilityPlan) MailReplyEnabled() bool { return p.mailReply }
 // in every profile without an explicit mail.archive grant.
 func (p CapabilityPlan) MailArchiveEnabled() bool { return p.mailArchive }
 
+// MailAttachmentsReadEnabled reports whether get_attachment is effective.
+func (p CapabilityPlan) MailAttachmentsReadEnabled() bool { return p.mailAttachmentsRead }
+
+// MailAttachmentsSendEnabled reports whether send_message and reply_message
+// accept attachment references.
+func (p CapabilityPlan) MailAttachmentsSendEnabled() bool { return p.mailAttachmentsSend }
+
+// MailDraftsEnabled reports whether stage_attachment and create_draft are
+// effective. Both are absent under global read-only.
+func (p CapabilityPlan) MailDraftsEnabled() bool { return p.mailDrafts }
+
 // RegisteredTools returns a sorted copy of the exact registration manifest.
 func (p CapabilityPlan) RegisteredTools() []string {
 	var names []string
@@ -224,6 +244,12 @@ func (p CapabilityPlan) RegisteredTools() []string {
 	}
 	if p.mailReply {
 		names = append(names, "reply_message")
+	}
+	if p.mailAttachmentsRead {
+		names = append(names, "get_attachment")
+	}
+	if p.mailDrafts {
+		names = append(names, "stage_attachment", "create_draft")
 	}
 	names = append(names, "icloud_capabilities")
 	sort.Strings(names)
@@ -299,7 +325,7 @@ func RegisterUnified(s *server.MCPServer, deps Deps, plan CapabilityPlan) []stri
 		panic("mcptools: Mail tools are enabled but Mail service is nil")
 	}
 	mutationsEnabled := plan.CalendarWritesEnabled() || plan.ContactsWritesEnabled() ||
-		plan.MailMutationsEnabled() || plan.MailTrashEnabled() || plan.MailSendEnabled()
+		plan.MailMutationsEnabled() || plan.MailTrashEnabled() || plan.MailSendEnabled() || plan.MailDraftsEnabled()
 	if mutationsEnabled && deps.Audit == nil {
 		panic("mcptools: enabled mutation tools require a non-nil audit logger")
 	}

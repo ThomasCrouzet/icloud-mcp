@@ -433,6 +433,94 @@ Inspect the authorized Sent mailbox before any manual recovery of unknown archiv
 It is omitted after `stored`. The provider might independently create a copy;
 the client does not assume this behavior. A stored copy does not prove recipient delivery.
 
+## Attachments
+
+Three explicit permission tokens control attachments. No domain switch, legacy
+flag, or omission grants them. Each token needs `mail.read`.
+
+| Token | Tools | Effect |
+|-------|-------|--------|
+| `mail.attachments.read` | `get_attachment` | Reads one attachment part. Global read-only keeps it. |
+| `mail.attachments.send` | `attachments` on `send_message` and `reply_message` | Attaches parts that are already on the server. It also needs `mail.send`. |
+| `mail.drafts` | `stage_attachment`, `create_draft` | Stages new files in memory and appends a draft. |
+
+The server keeps the rule that it does not access the disk after boot. iCloud
+stays the only source of mail data. The server keeps no copy of a part after a
+call. Staged files exist only in process memory.
+
+### Reading one part
+
+`get_attachment` takes the `partId` that `get_message` returns. The server
+selects the mailbox with EXAMINE and checks UIDVALIDITY. It reads
+BODYSTRUCTURE to confirm that the part is a leaf. A container part,
+`message/rfc822`, or an unknown `part_id` fails before content retrieval.
+The server then fetches the MIME header and the body with BODY.PEEK, so the
+Seen flag does not change.
+
+The encoded part must not exceed 3 MiB. The server removes only the
+Content-Transfer-Encoding. It never converts the charset of the returned
+bytes, so `size` and `sha256` describe the original file.
+
+With `format: "auto"`, the result depends on the type:
+
+- PNG, JPEG, GIF, and WebP up to 600 KiB return as MCP image content.
+- A larger PNG, JPEG, or GIF returns as a resized JPEG below 600 KiB. Decode
+  starts only after a check of 12,000 pixels per edge and 25 megapixels.
+- `text/*`, JSON, and XML return as bounded text after charset decoding.
+  HTML uses the same converter as the HTML body fallback.
+- A Word `.docx` returns its paragraph text. The reader accepts at most 5,000
+  archive entries, 16 MiB of document XML, and 4,000,000 XML tokens. It reads
+  only `word/document.xml` and never unpacks other entries.
+- Other files up to 600 KiB return as an MCP embedded resource blob.
+
+With `format: "original"`, the bytes return unchanged as image or resource
+content up to 600 KiB. A larger part fails with `payload_too_large`. The whole
+result stays below 960 KiB, so it fits the 1 MiB stdio frame. Long extracted
+text is shortened to fit and sets `textTruncated`.
+
+### Attaching by reference
+
+With `mail.attachments.send`, `send_message` and `reply_message` accept up to
+10 `attachments`. Each item names `mailbox`, `uid_validity`, `uid`, and
+`part_id`. Each mailbox must be allowed by the `mail.read` resource scope.
+
+The server first validates the recipients and the text. It then fetches every
+part over IMAP before any SMTP connection. It uses one read session for each
+mailbox. The decoded parts must not exceed 2 MiB in total. The message becomes
+`multipart/mixed`: the plain-text body first, then one base64 part for each
+file. A non-ASCII filename uses RFC 2231 encoding. The encoded message must not
+exceed 3.5 MiB. A message without attachments keeps its existing encoding and
+its 256 KiB limit.
+
+The idempotency fingerprint includes the attachment references. A message
+without attachments keeps its existing fingerprint. The same key with other
+attachments returns `conflict`.
+
+### Staging and drafts
+
+`stage_attachment` takes standard padded base64 chunks of at most 524,288
+characters. The first chunk sets `filename` and `content_type`. A filename must
+be one name without a path separator or control character. A content type must
+be a plain lowercase `type/subtype`. A staged file holds at most 2 MiB. The
+process holds at most 8 files and 4 MiB. A file expires 30 minutes after its
+last chunk. The bytes pass through the model, so staging suits small files only.
+
+`create_draft` appends one plain-text message with staged files and referenced
+parts. It sets the `\Draft` and `\Seen` flags and never contacts SMTP. A draft
+does not use the send allowlist, because it sends nothing. The result returns
+the draft identity and the `partId` of each attachment. `send_message` can then
+attach those parts by reference. The user can also open the draft in Mail.
+
+The destination is the one selectable SPECIAL-USE `\Drafts` mailbox. iCloud
+marks no mailbox `\Drafts`, and the server never infers a purpose from a name.
+Set `ICLOUD_MCP_DRAFTS_MAILBOX=Drafts` for iCloud. The server uses that name only
+when no `\Drafts` mailbox exists. It rejects INBOX and a mailbox with another
+SPECIAL-USE role. The Drafts mailbox must be allowed by the `mail.read` scope.
+
+APPEND is never retried. An ambiguous result reports `outcome_unknown` with the
+Message-ID for reconciliation. Staged files are released only after a stored
+draft.
+
 ## Rates and concurrency
 
 | Path | Rate and burst | Concurrent sessions | Retry |

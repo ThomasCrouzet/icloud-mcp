@@ -224,7 +224,7 @@ func TestMailToolSchemas(t *testing.T) {
 	if _, exists := trash.InputSchema.Properties["permanent_delete"]; exists || !strings.Contains(strings.ToLower(trash.Description), "no permanent-delete") {
 		t.Errorf("trash_message does not make permanent deletion unavailable: %#v", trash)
 	}
-	send := newSendMessageTool()
+	send := newSendMessageTool(false)
 	var sendSchema struct {
 		Properties map[string]any   `json:"properties"`
 		Required   []string         `json:"required"`
@@ -288,14 +288,14 @@ func TestMailStrictNumbersDatesAndArrays(t *testing.T) {
 	if !result.IsError || service.searchCalls != 0 {
 		t.Fatal("non-boolean unseen_only reached service")
 	}
-	result, _ = sendMessageHandler(deps)(t.Context(), mailToolsRequest(map[string]any{"to": []any{"a@example.com", 7}, "body": "hello"}))
+	result, _ = sendMessageHandler(deps, false)(t.Context(), mailToolsRequest(map[string]any{"to": []any{"a@example.com", 7}, "body": "hello"}))
 	if !result.IsError || service.sendCalls != 0 {
 		t.Fatal("mixed recipient array reached service")
 	}
 	if payload := mailToolsJSON(t, result); payload["status"] != string(maildomain.SendRejected) {
 		t.Fatalf("local send validation status = %#v", payload)
 	}
-	result, _ = sendMessageHandler(deps)(t.Context(), mailToolsRequest(map[string]any{"body": "hello"}))
+	result, _ = sendMessageHandler(deps, false)(t.Context(), mailToolsRequest(map[string]any{"body": "hello"}))
 	if !result.IsError || service.sendCalls != 0 || mailToolsJSON(t, result)["status"] != string(maildomain.SendRejected) {
 		t.Fatal("empty aggregate recipient set was not rejected locally")
 	}
@@ -381,7 +381,7 @@ func TestMailMutationIdentityAndSendArrays(t *testing.T) {
 		"to": []any{"to@example.com"}, "cc": []any{"cc@example.com"}, "bcc": []any{"bcc@example.com"},
 		"subject": "subject", "body": "plain body",
 	}
-	result, _ = sendMessageHandler(deps)(t.Context(), mailToolsRequest(sendArgs))
+	result, _ = sendMessageHandler(deps, false)(t.Context(), mailToolsRequest(sendArgs))
 	if result.IsError {
 		t.Fatalf("send failed: %s", mailToolsText(t, result))
 	}
@@ -410,7 +410,7 @@ func TestSendMessageAcceptsCcOrBccOnly(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := &mailToolsFakeService{sendResult: maildomain.SendResult{Status: maildomain.SendAccepted, MessageID: "message-id"}}
-			result, err := sendMessageHandler(mailToolsDeps(service))(t.Context(), mailToolsRequest(test.args))
+			result, err := sendMessageHandler(mailToolsDeps(service), false)(t.Context(), mailToolsRequest(test.args))
 			if err != nil || result.IsError {
 				t.Fatalf("send returned err=%v result=%s", err, mailToolsText(t, result))
 			}
@@ -433,7 +433,7 @@ func TestSendMessageDefinitiveErrorPreservesSafeResult(t *testing.T) {
 		},
 		sendErr: &maildomain.Error{Code: maildomain.CodeAuthorization, Message: "recipient command was rejected"},
 	}
-	result, err := sendMessageHandler(mailToolsDeps(service))(t.Context(), mailToolsRequest(map[string]any{
+	result, err := sendMessageHandler(mailToolsDeps(service), false)(t.Context(), mailToolsRequest(map[string]any{
 		"to":   []any{"first@example.com", "second@example.com"},
 		"body": "plain body",
 	}))
@@ -470,7 +470,7 @@ func TestSendMessageOutcomeUnknownRemainsUnknown(t *testing.T) {
 			Reconciliation: "Check Sent before retrying.",
 		},
 	}
-	result, err := sendMessageHandler(mailToolsDeps(service))(t.Context(), mailToolsRequest(map[string]any{
+	result, err := sendMessageHandler(mailToolsDeps(service), false)(t.Context(), mailToolsRequest(map[string]any{
 		"bcc":  []any{"recipient@example.com"},
 		"body": "plain body",
 	}))
@@ -543,7 +543,7 @@ func TestMailAuditContainsNoMailContent(t *testing.T) {
 	_, _ = trashMessageHandler(deps)(t.Context(), mailToolsRequest(map[string]any{
 		"mailbox": mailbox, "uid_validity": 1, "uid": 2,
 	}))
-	_, _ = sendMessageHandler(deps)(t.Context(), mailToolsRequest(map[string]any{
+	_, _ = sendMessageHandler(deps, false)(t.Context(), mailToolsRequest(map[string]any{
 		"to": []any{recipient}, "subject": subject, "body": "private-body-sentinel",
 	}))
 

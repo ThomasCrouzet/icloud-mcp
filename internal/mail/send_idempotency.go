@@ -77,6 +77,14 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	} else {
 		write("archive_sent=false")
 	}
+	// Attachment references are written only when present, so a message
+	// without attachments keeps its existing fingerprint.
+	if len(input.Attachments) > 0 {
+		write("attachments")
+		for _, reference := range attachmentFingerprint(input.Attachments) {
+			write(reference)
+		}
+	}
 	var result sendFingerprint
 	copy(result[:], hash.Sum(nil))
 	return result

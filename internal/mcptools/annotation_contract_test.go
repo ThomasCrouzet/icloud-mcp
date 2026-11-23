@@ -24,8 +24,8 @@ func TestMutationAnnotationsAreConservative(t *testing.T) {
 		newSetMessageFlagsTool(),
 		newMoveMessageTool(),
 		newTrashMessageTool(),
-		newSendMessageTool(),
-		newReplyMessageTool(),
+		newSendMessageTool(false),
+		newReplyMessageTool(false),
 	}
 	want := map[string]struct {
 		destructive bool

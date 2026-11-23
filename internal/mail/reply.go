@@ -112,7 +112,7 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 	}
 	return s.SendMessage(ctx, SendInput{
 		To: recipients, Subject: subject, Body: input.Body, IdempotencyKey: input.IdempotencyKey,
-		InReplyTo: source.MessageID, References: references,
+		InReplyTo: source.MessageID, References: references, Attachments: input.Attachments,
 	})
 }
 

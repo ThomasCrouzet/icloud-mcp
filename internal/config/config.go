@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // icloudTimeout is the fixed HTTP timeout for all CalDAV requests.
@@ -45,6 +46,7 @@ const (
 	enableMailSendEnvVar        = "ICLOUD_MCP_ENABLE_MAIL_SEND"
 	mailAddressEnvVar           = "ICLOUD_MAIL_ADDRESS"
 	mailFromEnvVar              = "ICLOUD_MAIL_FROM"
+	draftsMailboxEnvVar         = "ICLOUD_MCP_DRAFTS_MAILBOX"
 	mailPasswordEnvVar          = "ICLOUD_MAIL_PASSWORD"
 	smtpAllowedRecipientsEnvVar = "ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS"
 )
@@ -68,6 +70,10 @@ type Permissions struct {
 	mailTrash   bool
 	mailSend    bool
 	mailArchive bool
+
+	mailAttachmentsRead bool
+	mailAttachmentsSend bool
+	mailDrafts          bool
 }
 
 // ParsePermissions parses ICLOUD_MCP_PERMISSIONS. The value is a comma
@@ -114,6 +120,12 @@ func ParsePermissions(value string) (Permissions, error) {
 			permissions.mailSend = true
 		case "mail.archive":
 			permissions.mailArchive = true
+		case "mail.attachments.read":
+			permissions.mailAttachmentsRead = true
+		case "mail.attachments.send":
+			permissions.mailAttachmentsSend = true
+		case "mail.drafts":
+			permissions.mailDrafts = true
 		default:
 			return Permissions{}, fmt.Errorf("invalid %s: unknown capability", permissionsEnvVar)
 		}
@@ -150,6 +162,8 @@ func (p Permissions) Effective(readOnly bool) Permissions {
 		p.mailTrash = false
 		p.mailSend = false
 		p.mailArchive = false
+		p.mailAttachmentsSend = false
+		p.mailDrafts = false
 	}
 	return p
 }
@@ -183,6 +197,12 @@ type CapabilitySet struct {
 	MailTrash   bool
 	MailSend    bool
 	MailArchive bool
+
+	// Attachment and draft capabilities are explicit tokens only. No domain
+	// switch or legacy setting grants them.
+	MailAttachmentsRead bool
+	MailAttachmentsSend bool
+	MailDrafts          bool
 }
 
 // Capabilities resolves the effective permissions.
@@ -192,11 +212,15 @@ func (p Permissions) Capabilities(readOnly bool) CapabilitySet {
 		CalendarRead: effective.calendarRead, CalendarWrite: effective.calendarWrite, CalendarDelete: effective.calendarDelete,
 		ContactsRead: effective.contactsRead, ContactsWrite: effective.contactsWrite, ContactsDelete: effective.contactsDelete,
 		MailRead: effective.mailRead, MailMutate: effective.mailMutate, MailTrash: effective.mailTrash, MailSend: effective.mailSend, MailArchive: effective.mailArchive,
+		MailAttachmentsRead: effective.mailAttachmentsRead && effective.mailRead,
+		MailAttachmentsSend: effective.mailAttachmentsSend && effective.mailSend && effective.mailRead,
+		MailDrafts:          effective.mailDrafts && effective.mailRead,
 	}
 	if readOnly {
 		set.CalendarWrite, set.CalendarDelete = false, false
 		set.ContactsWrite, set.ContactsDelete = false, false
 		set.MailMutate, set.MailTrash, set.MailSend, set.MailArchive = false, false, false, false
+		set.MailAttachmentsSend, set.MailDrafts = false, false
 	}
 	return set
 }
@@ -218,6 +242,12 @@ func (p Permissions) RequestsMail() bool {
 
 // RequestsMailArchive reports whether the explicit Sent-copy capability is requested.
 func (p Permissions) RequestsMailArchive() bool { return p.mailArchive }
+
+// RequestsMailAttachments reports whether any attachment or draft capability
+// is requested.
+func (p Permissions) RequestsMailAttachments() bool {
+	return p.mailAttachmentsRead || p.mailAttachmentsSend || p.mailDrafts
+}
 
 // RequestedMailSend reports whether the configuration requests SMTP send
 // before the global read-only switch is applied.
@@ -363,6 +393,7 @@ type Config struct {
 	MailAddress           string          // ICLOUD_MAIL_ADDRESS (file:// supported)
 	MailFrom              string          // ICLOUD_MAIL_FROM: optional sender (From and MAIL FROM), e.g. a custom-domain alias; ASCII only; empty means MailAddress
 	MailPassword          string          // ICLOUD_MAIL_PASSWORD (file:// supported), NEVER log it
+	DraftsMailbox         string          // ICLOUD_MCP_DRAFTS_MAILBOX: Drafts mailbox name used only when no SPECIAL-USE \Drafts mailbox exists
 	SMTPAllowedRecipients []string        // normalized exact addresses, or a single literal "*"
 	SMTPRecipientPolicy   RecipientPolicy // immutable exact-match policy for SMTP authorization
 	Timeout               time.Duration   // 30s constant
@@ -485,6 +516,7 @@ func Load() (*Config, error) {
 		MailAddress:           mailAddress,
 		MailFrom:              mailFrom,
 		MailPassword:          mailPassword,
+		DraftsMailbox:         os.Getenv(draftsMailboxEnvVar),
 		SMTPAllowedRecipients: recipientPolicy.Recipients(),
 		SMTPRecipientPolicy:   recipientPolicy,
 		Timeout:               icloudTimeout,
@@ -549,13 +581,30 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%s requires %s=true for Contacts capabilities", permissionsEnvVar, enableContactsEnvVar)
 			}
 		}
-		if c.Permissions.RequestedMailRead() || c.Permissions.RequestedMailMutation() || c.Permissions.RequestedMailSend() || c.Permissions.RequestsMailArchive() {
+		if c.Permissions.RequestedMailRead() || c.Permissions.RequestedMailMutation() || c.Permissions.RequestedMailSend() || c.Permissions.RequestsMailArchive() || c.Permissions.RequestsMailAttachments() {
 			if !c.EnableMail {
 				return fmt.Errorf("%s requires %s=true for Mail capabilities", permissionsEnvVar, enableMailEnvVar)
 			}
 		}
 		if c.Permissions.RequestsMailArchive() && !c.Permissions.RequestedMailSend() {
 			return fmt.Errorf("%s requires mail.send for mail.archive", permissionsEnvVar)
+		}
+		if c.Permissions.mailAttachmentsRead && !c.Permissions.mailRead {
+			return fmt.Errorf("%s requires mail.read for mail.attachments.read", permissionsEnvVar)
+		}
+		if c.Permissions.mailAttachmentsSend && (!c.Permissions.mailSend || !c.Permissions.mailRead) {
+			return fmt.Errorf("%s requires mail.read and mail.send for mail.attachments.send", permissionsEnvVar)
+		}
+		if c.Permissions.mailDrafts && !c.Permissions.mailRead {
+			return fmt.Errorf("%s requires mail.read for mail.drafts", permissionsEnvVar)
+		}
+	}
+	if c.DraftsMailbox != "" {
+		if !c.Permissions.mailDrafts {
+			return fmt.Errorf("%s requires the mail.drafts permission", draftsMailboxEnvVar)
+		}
+		if err := validateDraftsMailboxName(c.DraftsMailbox); err != nil {
+			return err
 		}
 	}
 	if c.requestsMail() {
@@ -819,4 +868,22 @@ func parseLogLevel(v string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// validateDraftsMailboxName accepts one plain mailbox name. It rejects INBOX,
+// controls, and oversized values. The Mail service also rejects a SPECIAL-USE
+// Sent, Trash, or Junk mailbox at runtime.
+func validateDraftsMailboxName(value string) error {
+	if strings.TrimSpace(value) != value || len(value) > 4096 || !utf8.ValidString(value) {
+		return fmt.Errorf("invalid %s: must be one plain mailbox name", draftsMailboxEnvVar)
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid %s: must be one plain mailbox name", draftsMailboxEnvVar)
+		}
+	}
+	if strings.EqualFold(value, "INBOX") {
+		return fmt.Errorf("invalid %s: INBOX cannot hold drafts", draftsMailboxEnvVar)
+	}
+	return nil
 }
