@@ -214,7 +214,7 @@ func TestSetupProfiles(t *testing.T) {
 					res := f.call(t, "icloud_capabilities", map[string]any{})
 					var got icloudCapabilitiesResponse
 					decodeResult(t, res, &got)
-					groups := icloudCapabilityGroups{want.calendarRead, want.calendarWrite, want.calendarDelete, want.contactsRead, want.contactsWrite, want.contactsDelete, want.mailRead, want.mailMutate, want.mailTrash, want.mailSend, want.mailReply}
+					groups := icloudCapabilityGroups{want.calendarRead, want.calendarWrite, want.calendarDelete, want.contactsRead, want.contactsWrite, want.contactsDelete, want.mailRead, want.mailMutate, want.mailTrash, want.mailSend, want.mailReply, want.mailAttachmentsRead, want.mailAttachmentsSend, want.mailDrafts}
 					if res.IsError || !slices.Equal(got.Tools, names) || got.ToolCount != len(names) || got.ReadOnly != p.readOnly || got.CapabilityGroups != groups || got.Domains != (icloudDomains{want.CalendarReadEnabled() || want.CalendarWritesEnabled(), want.ContactsEnabled(), want.MailEnabled()}) {
 						t.Fatalf("capabilities disagree: %+v", got)
 					}

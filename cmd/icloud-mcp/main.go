@@ -393,16 +393,10 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 
 	var mailService maildomain.Service
 	if capabilities.MailRead || capabilities.MailMutate || capabilities.MailTrash || capabilities.MailSend {
-		// Use the boot-validated recipient list only; do not re-parse the raw env.
-		var recipientPolicy maildomain.RecipientPolicy
-		var err error
-		if cfg.EffectiveMailSend() {
-			recipientPolicy, err = maildomain.RecipientPolicyFromExact(cfg.SMTPAllowedRecipients)
-			if err != nil {
-				return nil, nil, fmt.Errorf("mail recipient policy initialization failed: %w", err)
-			}
+		mailConfig, err := mailServiceConfig(cfg)
+		if err != nil {
+			return nil, nil, err
 		}
-
 		imapDial := func(ctx context.Context) (net.Conn, error) {
 			return security.DialIMAPContext(ctx, "tcp", security.IMAPAddress)
 		}
@@ -412,18 +406,46 @@ func newOptionalServices(cfg *config.Config) (contacts.Service, maildomain.Servi
 				return security.DialSMTPContext(ctx, "tcp", security.SMTPAddress)
 			}
 		}
-		archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
-		mailService, err = maildomain.NewService(maildomain.Config{
-			Address:         strings.Clone(cfg.MailAddress),
-			From:            strings.Clone(cfg.MailFrom),
-			Password:        strings.Clone(cfg.MailPassword),
-			RecipientPolicy: recipientPolicy,
-			EnableSentCopy:  capabilities.MailArchive,
-			ArchiveScope:    archiveScope,
-		}, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
+		mailService, err = maildomain.NewService(mailConfig, imapDial, smtpDial, cfg.EffectiveMailWrite(), cfg.EffectiveMailSend())
 		if err != nil {
 			return nil, nil, fmt.Errorf("mail service initialization failed: %w", err)
 		}
 	}
 	return contactsService, mailService, nil
+}
+
+// mailServiceConfig derives the Mail service configuration from the
+// boot-validated configuration.
+func mailServiceConfig(cfg *config.Config) (maildomain.Config, error) {
+	capabilities := cfg.Capabilities()
+	// Use the boot-validated recipient list only; do not re-parse the raw env.
+	// A configured list also applies to create_draft when send is off.
+	var recipientPolicy maildomain.RecipientPolicy
+	if cfg.EffectiveMailSend() || len(cfg.SMTPAllowedRecipients) > 0 {
+		var err error
+		recipientPolicy, err = maildomain.RecipientPolicyFromExact(cfg.SMTPAllowedRecipients)
+		if err != nil {
+			return maildomain.Config{}, fmt.Errorf("mail recipient policy initialization failed: %w", err)
+		}
+	}
+	archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
+	// APPEND to Drafts is a write. As for other Mail writes, the mail.mutate
+	// scope applies and falls back to mail.read when it is not set.
+	draftsScope, _ := cfg.ResourceScopes.Mail("mail.mutate")
+	// A draft must stay readable, so the mail.read scope also applies.
+	draftsReadScope, _ := cfg.ResourceScopes.Mail("mail.read")
+	return maildomain.Config{
+		Address:              strings.Clone(cfg.MailAddress),
+		From:                 strings.Clone(cfg.MailFrom),
+		Password:             strings.Clone(cfg.MailPassword),
+		RecipientPolicy:      recipientPolicy,
+		EnableSentCopy:       capabilities.MailArchive,
+		ArchiveScope:         archiveScope,
+		EnableAttachmentRead: capabilities.MailAttachmentsRead,
+		EnableAttachmentSend: capabilities.MailAttachmentsSend && cfg.EffectiveMailSend(),
+		EnableDrafts:         capabilities.MailDrafts,
+		DraftsScope:          draftsScope,
+		DraftsReadScope:      draftsReadScope,
+		DraftsMailbox:        strings.Clone(cfg.DraftsMailbox),
+	}, nil
 }

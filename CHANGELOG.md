@@ -6,6 +6,24 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Add opt-in attachment support without disk access. `get_attachment` reads one
+  part with BODY.PEEK and returns images as image content, text and Word
+  `.docx` files as bounded text, and other files as an embedded resource.
+  `send_message` and `reply_message` accept `attachments` by IMAP reference.
+  `stage_attachment` and `create_draft` stage small new files in memory and
+  append a draft to the Drafts mailbox. New tokens: `mail.attachments.read`,
+  `mail.attachments.send`, and `mail.drafts`. New optional
+  `ICLOUD_MCP_DRAFTS_MAILBOX`, because iCloud marks no SPECIAL-USE Drafts
+  mailbox. Without the tokens, every profile keeps its tool set. Word text
+  extraction accepts at most 4 MiB of document XML, a compression ratio of 100,
+  a nesting depth of 128 elements, and 256 attributes for each element. The
+  server rejects an image resize when its estimated decode memory is more than
+  96 MiB. One image decode or Word text extraction runs at a time. When
+  `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set, `create_draft` recipients must
+  pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
+  the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
+
 ### Fixed
 - Calendar reads retain historical events with empty or non-URI scheduling
   addresses. Search and availability keep their busy intervals, and

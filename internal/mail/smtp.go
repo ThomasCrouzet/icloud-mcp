@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"strings"
 	"sync"
@@ -283,7 +284,21 @@ func (s *Client) sendOnce(ctx context.Context, input SendInput) (result SendResu
 	if input.ArchiveSent && !s.config.EnableSentCopy {
 		return SendResult{}, validationError("Sent-copy archival is not enabled")
 	}
-	prepared, err := s.buildMessage(input)
+	var attachments []outboundAttachment
+	if len(input.Attachments) > 0 {
+		if !s.config.EnableAttachmentSend {
+			return SendResult{Status: SendRejected}, newError(CodeAuthorization, "mail attachment sending is disabled")
+		}
+		// Validate recipients and text before any attachment read.
+		if _, err := s.buildMessage(input, nil); err != nil {
+			return SendResult{Status: SendRejected}, err
+		}
+		attachments, err = s.fetchOutbound(ctx, input.Attachments)
+		if err != nil {
+			return SendResult{Status: SendRejected}, err
+		}
+	}
+	prepared, err := s.buildMessage(input, attachments)
 	if err != nil {
 		return SendResult{Status: SendRejected}, err
 	}
@@ -392,20 +407,43 @@ func safeCloseSMTPSession(session smtpSession, conn net.Conn) {
 	}
 }
 
-func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
-	to, recipients, seen, err := s.validateRecipientGroup("to", input.To, nil, nil)
+func (s *Client) buildMessage(input SendInput, attachments []outboundAttachment) (preparedMessage, error) {
+	return s.composeMessage(composeInput{
+		To: input.To, Cc: input.Cc, Bcc: input.Bcc, Subject: input.Subject, Body: input.Body,
+		InReplyTo: input.InReplyTo, References: input.References, Attachments: attachments,
+	}, true)
+}
+
+// composeInput is the shared input for a submitted message and a draft.
+type composeInput struct {
+	To, Cc, Bcc []string
+	Subject     string
+	Body        string
+	InReplyTo   string
+	References  []string
+	Attachments []outboundAttachment
+}
+
+// composeMessage validates and encodes one message. A submission enforces the
+// recipient allowlist and requires a recipient. A draft requires no
+// recipient, because APPEND to Drafts sends nothing. It enforces the
+// allowlist only when one is configured, so a draft cannot prepare a message
+// to an address that send would reject.
+func (s *Client) composeMessage(input composeInput, submission bool) (preparedMessage, error) {
+	enforcePolicy := submission || s.config.RecipientPolicy.valid()
+	to, recipients, seen, err := s.validateRecipientGroup("to", input.To, nil, nil, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}
-	cc, recipients, seen, err := s.validateRecipientGroup("cc", input.Cc, recipients, seen)
+	cc, recipients, seen, err := s.validateRecipientGroup("cc", input.Cc, recipients, seen, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}
-	_, recipients, _, err = s.validateRecipientGroup("bcc", input.Bcc, recipients, seen)
+	_, recipients, _, err = s.validateRecipientGroup("bcc", input.Bcc, recipients, seen, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}
-	if len(recipients) == 0 {
+	if submission && len(recipients) == 0 {
 		return preparedMessage{}, validationError("at least one recipient is required")
 	}
 	if len(recipients) > MaxRecipients {
@@ -419,6 +457,9 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 	}
 	if err := validateReplyHeaders(input.InReplyTo, input.References); err != nil {
 		return preparedMessage{}, err
+	}
+	if len(input.Attachments) > MaxOutboundAttachments {
+		return preparedMessage{}, validationError("at most 10 attachments are allowed")
 	}
 	messageID, err := generateMessageID(s.config.From)
 	if err != nil {
@@ -441,27 +482,96 @@ func (s *Client) buildMessage(input SendInput) (preparedMessage, error) {
 		}
 		header.SetMsgIDList("References", references)
 	}
-	header.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 	var buffer bytes.Buffer
-	writer, err := msgmail.CreateSingleInlineWriter(&buffer, header)
-	if err != nil {
-		return preparedMessage{}, newError(CodeInternalError, "could not encode the message")
+	limit := MaxEncodedMessage
+	if len(input.Attachments) == 0 {
+		header.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
+		if err := writeSinglePart(&buffer, header, input.Body); err != nil {
+			return preparedMessage{}, err
+		}
+	} else {
+		limit = MaxEncodedWithAttachments
+		if err := writeMixedParts(&buffer, header, input.Body, input.Attachments); err != nil {
+			return preparedMessage{}, err
+		}
 	}
-	if _, err := io.WriteString(writer, input.Body); err != nil {
-		_ = writer.Close()
-		return preparedMessage{}, newError(CodeInternalError, "could not encode the message")
-	}
-	if err := writer.Close(); err != nil {
-		return preparedMessage{}, newError(CodeInternalError, "could not encode the message")
-	}
-	if buffer.Len() > MaxEncodedMessage {
-		return preparedMessage{}, newError(CodePayloadTooLarge, "encoded message exceeds 256 KiB")
+	if buffer.Len() > limit {
+		if limit == MaxEncodedMessage {
+			return preparedMessage{}, newError(CodePayloadTooLarge, "encoded message exceeds 256 KiB")
+		}
+		return preparedMessage{}, newError(CodePayloadTooLarge, "encoded message with attachments exceeds 3.5 MiB")
 	}
 	smtpUTF8 := containsNonASCII(s.config.From)
 	for _, recipient := range recipients {
 		smtpUTF8 = smtpUTF8 || containsNonASCII(recipient)
 	}
 	return preparedMessage{bytes: append([]byte(nil), buffer.Bytes()...), messageID: messageID, recipients: recipients, smtpUTF8: smtpUTF8}, nil
+}
+
+func writeSinglePart(buffer *bytes.Buffer, header msgmail.Header, body string) error {
+	writer, err := msgmail.CreateSingleInlineWriter(buffer, header)
+	if err != nil {
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	if _, err := io.WriteString(writer, body); err != nil {
+		_ = writer.Close()
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	if err := writer.Close(); err != nil {
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	return nil
+}
+
+// writeMixedParts writes multipart/mixed: the plain-text body first, then one
+// base64 attachment part per file. The Content-Disposition filename uses an
+// RFC 2231 extended value when it is not ASCII. The Content-Type name
+// parameter keeps an RFC 2047 encoded word for older clients.
+func writeMixedParts(buffer *bytes.Buffer, header msgmail.Header, body string, attachments []outboundAttachment) error {
+	writer, err := msgmail.CreateWriter(buffer, header)
+	if err != nil {
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	var inline msgmail.InlineHeader
+	inline.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
+	part, err := writer.CreateSingleInline(inline)
+	if err != nil {
+		_ = writer.Close()
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	if _, err := io.WriteString(part, body); err != nil {
+		_ = part.Close()
+		_ = writer.Close()
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	if err := part.Close(); err != nil {
+		_ = writer.Close()
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	for _, attachment := range attachments {
+		var attachmentHeader msgmail.AttachmentHeader
+		attachmentHeader.SetContentType(attachment.ContentType, map[string]string{"name": attachment.Filename})
+		attachmentHeader.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Filename}))
+		attachmentHeader.Set("Content-Transfer-Encoding", "base64")
+		file, err := writer.CreateAttachment(attachmentHeader)
+		if err != nil {
+			_ = writer.Close()
+			return newError(CodeInternalError, "could not encode an attachment")
+		}
+		if _, err := file.Write(attachment.Data); err != nil {
+			_ = file.Close()
+			_ = writer.Close()
+			return newError(CodeInternalError, "could not encode an attachment")
+		}
+		if err := file.Close(); err != nil {
+			_ = writer.Close()
+			return newError(CodeInternalError, "could not encode an attachment")
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return newError(CodeInternalError, "could not encode the message")
+	}
+	return nil
 }
 
 func containsNonASCII(value string) bool {
@@ -473,7 +583,7 @@ func containsNonASCII(value string) bool {
 	return false
 }
 
-func (s *Client) validateRecipientGroup(name string, values []string, recipients []string, seen map[string]struct{}) ([]*msgmail.Address, []string, map[string]struct{}, error) {
+func (s *Client) validateRecipientGroup(name string, values []string, recipients []string, seen map[string]struct{}, enforcePolicy bool) ([]*msgmail.Address, []string, map[string]struct{}, error) {
 	if seen == nil {
 		seen = make(map[string]struct{})
 	}
@@ -487,7 +597,7 @@ func (s *Client) validateRecipientGroup(name string, values []string, recipients
 		if _, duplicate := seen[key]; duplicate {
 			return nil, nil, nil, validationError("recipient addresses must be unique")
 		}
-		if !s.config.RecipientPolicy.allows(address) {
+		if enforcePolicy && !s.config.RecipientPolicy.allows(address) {
 			return nil, nil, nil, newError(CodeAuthorization, "recipient is not permitted by the configured allowlist")
 		}
 		seen[key] = struct{}{}

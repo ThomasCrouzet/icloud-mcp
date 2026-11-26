@@ -87,7 +87,7 @@ func TestProtocolMailArchiveMalformed(t *testing.T) {
 			if err == nil && (res == nil || !res.IsError) {
 				t.Fatalf("strict MCP accepted %v", value)
 			}
-			res, err = sendMessageHandler(MailDeps{Service: svc, Redactor: security.NewRedactor("synthetic-secret")})(t.Context(), req)
+			res, err = sendMessageHandler(MailDeps{Service: svc, Redactor: security.NewRedactor("synthetic-secret")}, false)(t.Context(), req)
 			if err != nil || !res.IsError || !strings.Contains(mailToolsText(t, res), "must be a boolean") {
 				t.Fatalf("handler accepted/coerced invalid boolean: %v %v", res, err)
 			}

@@ -239,7 +239,8 @@ func TestContractManifestProfiles(t *testing.T) {
 			wantDomains := icloudDomains{p.plan.CalendarReadEnabled() || p.plan.CalendarWritesEnabled(), p.plan.ContactsEnabled(), p.plan.MailEnabled()}
 			wantGroups := icloudCapabilityGroups{p.plan.calendarRead, p.plan.calendarWrite, p.plan.calendarDelete,
 				p.plan.contactsRead, p.plan.contactsWrite, p.plan.contactsDelete, p.plan.mailRead, p.plan.mailMutate,
-				p.plan.mailTrash, p.plan.mailSend, p.plan.mailReply}
+				p.plan.mailTrash, p.plan.mailSend, p.plan.mailReply,
+				p.plan.mailAttachmentsRead, p.plan.mailAttachmentsSend, p.plan.mailDrafts}
 			if !slices.Equal(got.Tools, names) || got.ToolCount != len(names) || got.ReadOnly != p.plan.ReadOnly() ||
 				!reflect.DeepEqual(got.Domains, wantDomains) || !reflect.DeepEqual(got.CapabilityGroups, wantGroups) {
 				t.Fatalf("capabilities disagree with actual manifest: %+v", got)

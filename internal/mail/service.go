@@ -32,6 +32,7 @@ type Client struct {
 	sendSem         chan struct{}
 	now             func() time.Time
 	sendCache       *sendIdempotencyCache
+	staging         *stagingStore
 }
 
 var _ Service = (*Client)(nil)
@@ -65,6 +66,11 @@ func newService(config Config, imapDial IMAPDialFunc, smtpDial SMTPDialFunc, ena
 		return nil, validationError("mail sender must be a plain ASCII addr-spec")
 	}
 	config.RecipientPolicy = config.RecipientPolicy.clone()
+	config.DraftsScope = append([]string(nil), config.DraftsScope...)
+	config.DraftsReadScope = append([]string(nil), config.DraftsReadScope...)
+	if config.EnableAttachmentSend && !enableSend {
+		return nil, validationError("mail attachment sending requires mail send")
+	}
 	return &Client{
 		config: config, imapDial: imapDial, smtpDial: smtpDial,
 		imapFactory: imapFactory, smtpFactory: smtpFactory,
@@ -73,7 +79,7 @@ func newService(config Config, imapDial IMAPDialFunc, smtpDial SMTPDialFunc, ena
 		mutationLimiter: rate.NewLimiter(rate.Every(time.Minute/20), 3),
 		sendLimiter:     rate.NewLimiter(rate.Every(time.Minute/20), 3),
 		readSem:         make(chan struct{}, 2), mutationSem: make(chan struct{}, 1), sendSem: make(chan struct{}, 1),
-		now: time.Now, sendCache: newSendIdempotencyCache(),
+		now: time.Now, sendCache: newSendIdempotencyCache(), staging: newStagingStore(),
 	}, nil
 }
 

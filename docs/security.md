@@ -149,7 +149,9 @@ archivable unless a narrower `mail.mutate` or `mail.archive` scope is set. A
 mailbox that is only a mutation or archive target is listed with those modes and
 never advertised as readable. `search_messages`, `get_message`, and
 `reply_message` still enforce `mail.read` independently, so a listed destination
-is never a read grant.
+is never a read grant. `create_draft` treats APPEND to Drafts as a write and
+applies the `mail.mutate` scope, with the same fallback to `mail.read`. It also
+requires the `mail.read` scope, so a draft never goes to an unreadable mailbox.
 
 ### Calendar read resource scopes
 
@@ -250,6 +252,20 @@ The implementation therefore restricts data shape and size:
 - Message get returns selected headers and at most one bounded, decoded
   plain-text part. It also returns attachment metadata.
 - Message get excludes raw headers, raw MIME, HTML, and attachment payloads.
+- `get_attachment` needs the explicit `mail.attachments.read` token. It returns
+  one part of at most 3 MiB encoded, as image, text, or resource content below
+  960 KiB. Binary content is not redacted, because redaction would corrupt it.
+  Metadata, extracted text, and the filename in the resource URI are redacted.
+  Attachment content is untrusted remote data. The server never executes or
+  unpacks it.
+- Attachments by reference need `mail.attachments.send` and `mail.send`. The
+  recipient allowlist still applies. Staged files from `mail.drafts` stay in
+  process memory only. Audit records name no filename or content.
+- `create_draft` sends nothing, but a draft with in-scope attachments is one
+  tap from a send in Mail. When `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set,
+  draft recipients must pass it. Without it, a prompt-injected model can
+  prepare a draft to any address. Set the allowlist with `mail.drafts`, and
+  review each draft before you send it.
 - IMAP input has a 4 MiB limit for each session and 1 MiB for each protocol line.
 - Before recursive decoding, IMAP limits protocol depth to 24 and protocol lists
   to 512.

@@ -36,6 +36,17 @@ type Config struct {
 	RecipientPolicy RecipientPolicy `json:"-"`
 	EnableSentCopy  bool            `json:"-"`
 	ArchiveScope    []string        `json:"-"`
+	// Attachment and draft capabilities. Each is off unless granted.
+	EnableAttachmentRead bool     `json:"-"`
+	EnableAttachmentSend bool     `json:"-"`
+	EnableDrafts         bool     `json:"-"`
+	DraftsScope          []string `json:"-"`
+	// DraftsReadScope is the mail.read scope. A draft must stay readable, so
+	// the Drafts mailbox must pass both scopes.
+	DraftsReadScope []string `json:"-"`
+	// DraftsMailbox names the Drafts mailbox only when the server marks no
+	// mailbox with SPECIAL-USE \Drafts. iCloud does not mark it.
+	DraftsMailbox string `json:"-"`
 }
 
 // Mailbox is one bounded LIST response item. Delimiter is empty when the
@@ -201,6 +212,9 @@ type SendInput struct {
 	// accepts caller-supplied header values.
 	InReplyTo  string   `json:"-"`
 	References []string `json:"-"`
+	// Attachments name existing IMAP parts. They require the separate
+	// attachment-send capability.
+	Attachments []AttachmentRef `json:"-"`
 }
 
 type SendStatus string
@@ -251,4 +265,6 @@ type ReplyInput struct {
 	Subject        string `json:"subject,omitempty"`
 	Body           string `json:"body"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Attachments name existing IMAP parts, as for SendInput.
+	Attachments []AttachmentRef `json:"-"`
 }

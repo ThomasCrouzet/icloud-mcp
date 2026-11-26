@@ -77,6 +77,14 @@ func sendRequestFingerprint(sender string, input SendInput) sendFingerprint {
 	} else {
 		write("archive_sent=false")
 	}
+	// Attachment references are written only when present, so a message
+	// without attachments keeps its existing fingerprint.
+	if len(input.Attachments) > 0 {
+		write("attachments")
+		for _, reference := range attachmentFingerprint(input.Attachments) {
+			write(reference)
+		}
+	}
 	var result sendFingerprint
 	copy(result[:], hash.Sum(nil))
 	return result
@@ -179,11 +187,14 @@ func sendClaimIsDefinitive(result SendResult, err error) bool {
 	}
 }
 
+// definitiveSendErrorCode lists the codes of a rejected outcome that may
+// expire. An attachment read before SMTP can also fail with
+// concurrent_modification, and it dispatches nothing.
 func definitiveSendErrorCode(code Code) bool {
 	switch code {
 	case CodeValidation, CodeAuthorization, CodeRateLimited, CodeTimeout,
 		CodeUnavailable, CodeAuthentication, CodeProtocolError, CodePayloadTooLarge,
-		CodeNotFound, CodeInternalError:
+		CodeNotFound, CodeInternalError, CodeConcurrentModification:
 		return true
 	}
 	return false

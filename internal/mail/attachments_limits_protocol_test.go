@@ -1,0 +1,480 @@
+package mail
+
+import (
+	"archive/zip"
+	"bytes"
+	"compress/zlib"
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
+	"image"
+	"io"
+	"math/rand"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// These protocol tests send hostile attachments through the production IMAP
+// adapter and the in-memory server. Each decode limit must stop the work with
+// payload_too_large and keep the allocation of the call bounded.
+
+// allocatedDuring returns the bytes that the process allocated while fn ran.
+// The total includes garbage, so it is an upper bound of the peak increase.
+func allocatedDuring(fn func()) uint64 {
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// fixtureDocxXML deflates the bytes from write as word/document.xml.
+func fixtureDocxXML(t *testing.T, write func(io.Writer) error) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	file, err := archive.Create("word/document.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := write(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+// getHostileAttachment stages one part and reads it with get_attachment. It
+// returns the result, the bytes allocated by the call, and the error.
+func getHostileAttachment(t *testing.T, name, contentType string, data []byte) (AttachmentResult, uint64, error) {
+	t.Helper()
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: name, contentType: contentType, data: data}}})
+	ref := f.ref(f.partFor(t, name))
+	var result AttachmentResult
+	var err error
+	allocated := allocatedDuring(func() {
+		result, err = f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	})
+	t.Logf("%s: %d bytes on the wire, %d KiB allocated, error %v", name, len(data), allocated>>10, err)
+	return result, allocated, err
+}
+
+const hostileAllocationBudget = 48 << 20
+
+func TestProtocolDocxNestingBombIsBounded(t *testing.T) {
+	// 16 MiB of nested elements deflate to about 17 KB on the wire.
+	bomb := fixtureDocxXML(t, func(w io.Writer) error {
+		chunk := []byte(strings.Repeat("<a>", 1<<16))
+		for written := 0; written < 16<<20-len(chunk); written += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	_, allocated, err := getHostileAttachment(t, "bomb.docx", docxMediaType, bomb)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("docx bomb of %d bytes allocated %d MiB, want at most %d MiB", len(bomb), allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+func TestProtocolDocxDepthLimit(t *testing.T) {
+	// Random element names keep the compression ratio and the size inside
+	// the other limits, so only the depth limit can stop this document.
+	random := rand.New(rand.NewSource(11))
+	nested := fixtureDocxXML(t, func(w io.Writer) error {
+		var builder strings.Builder
+		builder.WriteString(`<w:document xmlns:w="w"><w:body>`)
+		name := make([]byte, 8)
+		for i := 0; i < 150_000; i++ {
+			for j := range name {
+				name[j] = byte('a' + random.Intn(26))
+			}
+			builder.WriteString("<" + string(name) + ">")
+		}
+		_, err := io.WriteString(w, builder.String())
+		return err
+	})
+	_, allocated, err := getHostileAttachment(t, "nested.docx", docxMediaType, nested)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("nested docx allocated %d MiB, want at most %d MiB", allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+func TestProtocolDocxCompressionRatioLimit(t *testing.T) {
+	// One long run of a single letter is valid text with a ratio near 1000.
+	flat := fixtureDocxXML(t, func(w io.Writer) error {
+		_, err := io.WriteString(w, `<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>`+strings.Repeat("A", 3<<20)+`</w:t></w:r></w:p></w:body></w:document>`)
+		return err
+	})
+	_, _, err := getHostileAttachment(t, "flat.docx", docxMediaType, flat)
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+func TestProtocolDocxDocumentSizeLimit(t *testing.T) {
+	// Words from a small set give a ratio near 5, so only the size of the
+	// document XML exceeds a limit.
+	random := rand.New(rand.NewSource(5))
+	words := []string{"offerte ", "levering ", "klant ", "prijs ", "datum ", "regel ", "totaal ", "bedrag "}
+	large := fixtureDocxXML(t, func(w io.Writer) error {
+		var builder strings.Builder
+		builder.WriteString(`<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>`)
+		for builder.Len() < 5<<20 {
+			builder.WriteString(words[random.Intn(len(words))])
+		}
+		builder.WriteString(`</w:t></w:r></w:p></w:body></w:document>`)
+		_, err := io.WriteString(w, builder.String())
+		return err
+	})
+	if len(large) > MaxAttachmentWireBytes*3/4 {
+		t.Fatalf("fixture docx is %d bytes, want it inside the wire limit", len(large))
+	}
+	_, _, err := getHostileAttachment(t, "large.docx", docxMediaType, large)
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+// fixtureRawPNG writes a PNG without filters. The first noiseRows rows are
+// random and the rest are zero, so the file size stays controllable while the
+// declared dimensions stay large. plte is the palette for color type 3.
+func fixtureRawPNG(t *testing.T, width, height int, colorType, bitDepth byte, plte []byte, noiseRows int) []byte {
+	t.Helper()
+	channels := map[byte]int{0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colorType]
+	rowBytes := (width*channels*int(bitDepth) + 7) / 8
+	var out bytes.Buffer
+	out.WriteString("\x89PNG\r\n\x1a\n")
+	chunk := func(kind string, data []byte) {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(data)))
+		out.Write(length[:])
+		sum := crc32.NewIEEE()
+		_, _ = io.WriteString(sum, kind)
+		_, _ = sum.Write(data)
+		out.WriteString(kind)
+		out.Write(data)
+		var crc [4]byte
+		binary.BigEndian.PutUint32(crc[:], sum.Sum32())
+		out.Write(crc[:])
+	}
+	header := make([]byte, 13)
+	binary.BigEndian.PutUint32(header[0:], uint32(width))
+	binary.BigEndian.PutUint32(header[4:], uint32(height))
+	header[8], header[9] = bitDepth, colorType
+	chunk("IHDR", header)
+	if plte != nil {
+		chunk("PLTE", plte)
+	}
+	var compressed bytes.Buffer
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	random := rand.New(rand.NewSource(3))
+	row := make([]byte, rowBytes+1)
+	for y := 0; y < height; y++ {
+		clear(row)
+		if y < noiseRows {
+			_, _ = random.Read(row[1:])
+		}
+		if _, err := writer.Write(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	chunk("IDAT", compressed.Bytes())
+	chunk("IEND", nil)
+	return out.Bytes()
+}
+
+func inResizeWindow(t *testing.T, data []byte) {
+	t.Helper()
+	if len(data) <= MaxAttachmentInlineBytes || len(data) > MaxAttachmentWireBytes*3/4 {
+		t.Fatalf("fixture image is %d bytes, want it between the inline and the wire limits", len(data))
+	}
+}
+
+func TestProtocolImageDecodeBudget(t *testing.T) {
+	// 4000 x 3500 pixels at 16 bits per channel pass the edge and pixel
+	// limits but decode into about 107 MiB.
+	deep := fixtureRawPNG(t, 4000, 3500, 6, 16, nil, 30)
+	inResizeWindow(t, deep)
+	_, allocated, err := getHostileAttachment(t, "deep.png", "image/png", deep)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("16-bit PNG allocated %d MiB, want at most %d MiB", allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+// fixtureJPEGHeader writes a JFIF marker, a frame header, and comment
+// padding, which is enough for DecodeConfig. marker selects baseline (0xc0)
+// or progressive (0xc2).
+func fixtureJPEGHeader(width, height int, marker byte, size int) []byte {
+	out := []byte{0xff, 0xd8, 0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+		0xff, marker, 0, 17, 8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 3,
+		1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0}
+	for len(out) < size {
+		out = append(out, 0xff, 0xfe, 0xff, 0xff)
+		out = append(out, make([]byte, 0xfffd)...)
+	}
+	return out
+}
+
+func TestProtocolImageDecodeBudgetCountsProgressiveJPEG(t *testing.T) {
+	// A progressive decode keeps one coefficient for each sample, so the
+	// same dimensions cost more than a baseline decode.
+	progressive := fixtureJPEGHeader(3000, 2500, 0xc2, 700<<10)
+	inResizeWindow(t, progressive)
+	_, _, err := getHostileAttachment(t, "progressive.jpg", "image/jpeg", progressive)
+	wantCode(t, err, CodePayloadTooLarge)
+	// The baseline control passes the budget and fails only in the decoder.
+	baseline := fixtureJPEGHeader(3000, 2500, 0xc0, 700<<10)
+	_, _, err = getHostileAttachment(t, "baseline.jpg", "image/jpeg", baseline)
+	wantCode(t, err, CodeProtocolError)
+}
+
+func TestProtocolImageDimensionLimits(t *testing.T) {
+	// An edge above 12,000 pixels, with few decoded bytes.
+	wide := fixtureRawPNG(t, 13_000, 64, 0, 8, nil, 64)
+	inResizeWindow(t, wide)
+	_, _, err := getHostileAttachment(t, "wide.png", "image/png", wide)
+	wantCode(t, err, CodePayloadTooLarge)
+	// More than 25 megapixels at one bit per pixel, inside the byte budget.
+	many := fixtureRawPNG(t, 5_100, 5_000, 3, 1, []byte{0, 0, 0, 255, 255, 255}, 1_000)
+	inResizeWindow(t, many)
+	_, _, err = getHostileAttachment(t, "many.png", "image/png", many)
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+func TestProtocolImageDecodeIsSerialized(t *testing.T) {
+	large := fixturePNG(t, 700, 500, true)
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: "noise.png", contentType: "image/png", data: large}}})
+	ref := f.ref(f.partFor(t, "noise.png"))
+	// Another call holds the one decode slot, so this call must wait and
+	// reach its deadline instead of decoding in parallel.
+	renderSlot <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	_, err := f.client.GetAttachment(ctx, GetAttachmentInput{AttachmentRef: ref})
+	cancel()
+	<-renderSlot
+	wantCode(t, err, CodeTimeout)
+	resized, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	if err != nil || resized.Delivery != DeliveryImageResized {
+		t.Fatalf("resize after the slot is free = %s, %v", resized.Delivery, err)
+	}
+}
+
+func TestStageAttachmentFileCountLimit(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{drafts: true, draftsMailbox: "Drafts"})
+	for i := 0; i < MaxStagedFiles; i++ {
+		if _, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "AAAA"}); err != nil {
+			t.Fatalf("file %d: %v", i, err)
+		}
+	}
+	_, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "AAAA"})
+	wantCode(t, err, CodeRateLimited)
+	if len(f.client.staging.files) != MaxStagedFiles {
+		t.Fatalf("staged files = %d, want %d", len(f.client.staging.files), MaxStagedFiles)
+	}
+}
+
+func TestStageAttachmentTotalMemoryLimit(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{drafts: true, draftsMailbox: "Drafts"})
+	chunk := base64.StdEncoding.EncodeToString(make([]byte, 384*1024))
+	// Two files of 1,920 KiB each stay below the 2 MiB file limit and fill
+	// 3,840 KiB of the 4 MiB staging memory.
+	for file := 0; file < 2; file++ {
+		staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "big.bin", ContentType: "application/octet-stream", Data: chunk})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 4; i++ {
+			if _, err := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: chunk}); err != nil {
+				t.Fatalf("file %d chunk %d: %v", file, i, err)
+			}
+		}
+	}
+	_, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "third.bin", ContentType: "application/octet-stream", Data: chunk})
+	wantCode(t, err, CodeRateLimited)
+	if f.client.staging.total > MaxStagedTotalBytes {
+		t.Fatalf("staging memory = %d bytes, want at most %d", f.client.staging.total, MaxStagedTotalBytes)
+	}
+}
+
+func TestProtocolDraftsMailboxOutsideScope(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true, draftsMailbox: "Drafts"})
+	f.client.config.DraftsScope = []string{"INBOX"}
+	_, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"})
+	wantCode(t, err, CodeAuthorization)
+	drafts, err := f.client.SearchMessages(t.Context(), SearchInput{Mailbox: "Drafts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts.Messages) != 0 {
+		t.Fatalf("a draft outside the scope was appended: %d messages", len(drafts.Messages))
+	}
+	// A mutation scope alone is not enough: the draft must stay readable.
+	f.client.config.DraftsScope = []string{"Drafts"}
+	f.client.config.DraftsReadScope = []string{"INBOX"}
+	_, err = f.client.CreateDraft(t.Context(), DraftInput{Body: "x"})
+	wantCode(t, err, CodeAuthorization)
+	if drafts, err := f.client.SearchMessages(t.Context(), SearchInput{Mailbox: "Drafts"}); err != nil || len(drafts.Messages) != 0 {
+		t.Fatalf("a draft outside the read scope was appended: %+v, %v", drafts, err)
+	}
+	f.client.config.DraftsReadScope = []string{"INBOX", "Drafts"}
+	if draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"}); err != nil || draft.Status != "stored" {
+		t.Fatalf("draft inside the scope = %+v, %v", draft, err)
+	}
+}
+
+func TestProtocolStagedFilesAreReservedDuringCreateDraft(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true, draftsMailbox: "Drafts"})
+	staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "YWJj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first draft holds its staged file while it waits in the IMAP dial.
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	hook := func() { once.Do(func() { close(entered); <-release }) }
+	f.dialHook.Store(&hook)
+	input := DraftInput{Body: "x", Staged: []string{staged.Handle}}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := f.client.CreateDraft(t.Context(), input)
+		first <- err
+	}()
+	<-entered
+	go func() {
+		_, err := f.client.CreateDraft(t.Context(), input)
+		second <- err
+	}()
+	_, chunkErr := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: "ZGVm"})
+	// Without a reservation, the second call waits for the mutation slot.
+	// Release the first call after a short pause, so both outcomes appear.
+	select {
+	case err := <-second:
+		second <- err
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first draft: %v", err)
+	}
+	wantCode(t, <-second, CodeConflict)
+	wantCode(t, chunkErr, CodeConflict)
+	if count := f.draftCount(t); count != 1 {
+		t.Fatalf("drafts stored from one staged file = %d, want 1", count)
+	}
+}
+
+func TestProtocolStagedFilesStayAfterFailedDraft(t *testing.T) {
+	// Without a Drafts mailbox the draft fails, and the staged file stays
+	// usable for a later chunk and a later draft.
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true})
+	staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "YWJj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.client.CreateDraft(t.Context(), DraftInput{Body: "x", Staged: []string{staged.Handle}})
+	wantCode(t, err, CodeProtocolError)
+	if _, err := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: "ZGVm"}); err != nil {
+		t.Fatalf("chunk after a failed draft: %v", err)
+	}
+	f.client.config.DraftsMailbox = "Drafts"
+	draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x", Staged: []string{staged.Handle}})
+	if err != nil || draft.Status != "stored" || len(draft.Attachments) != 1 || draft.Attachments[0].Size != 6 {
+		t.Fatalf("draft after a failed draft = %+v, %v", draft, err)
+	}
+}
+
+// interlacedPNG sets the Adam7 interlace flag in the IHDR of a PNG fixture and
+// updates the IHDR checksum. The image data stays non-interlaced, so only the
+// header-based checks can accept or reject the result.
+func interlacedPNG(t *testing.T, data []byte) []byte {
+	t.Helper()
+	out := bytes.Clone(data)
+	if len(out) < 33 || string(out[12:16]) != "IHDR" {
+		t.Fatal("fixture has no leading IHDR chunk")
+	}
+	out[28] = 1
+	binary.BigEndian.PutUint32(out[29:33], crc32.ChecksumIEEE(out[12:29]))
+	return out
+}
+
+func TestProtocolImageDecodeBudgetCountsInterlacedPNG(t *testing.T) {
+	// 3540 x 3540 pixels at 16 bits per channel need about 95.6 MiB for the
+	// full image. An Adam7 decode also keeps one pass image of up to half
+	// that size, so the interlaced copy must exceed the budget.
+	plain := fixtureRawPNG(t, 3540, 3540, 6, 16, nil, 30)
+	interlaced := interlacedPNG(t, plain)
+	inResizeWindow(t, interlaced)
+	for _, tc := range []struct {
+		name string
+		data []byte
+		over bool
+	}{{"plain", plain, false}, {"interlaced", interlaced, true}} {
+		config, format, err := image.DecodeConfig(bytes.NewReader(tc.data))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := imageDecodeBytes(config, format, tc.data) > maxImageDecodeBytes; got != tc.over {
+			t.Fatalf("%s: estimate %d MiB over the budget = %v, want %v", tc.name, imageDecodeBytes(config, format, tc.data)>>20, got, tc.over)
+		}
+	}
+	_, allocated, err := getHostileAttachment(t, "interlaced.png", "image/png", interlaced)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("interlaced PNG allocated %d MiB, want at most %d MiB", allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+func TestProtocolDocxAttributeLimit(t *testing.T) {
+	element := func(count int) []byte {
+		return fixtureDocxXML(t, func(w io.Writer) error {
+			var builder strings.Builder
+			builder.WriteString(`<w:document xmlns:w="w"`)
+			for i := 0; i < count; i++ {
+				fmt.Fprintf(&builder, ` xmlns:n%d="u%d"`, i, i)
+			}
+			builder.WriteString(`><w:body><w:p><w:r><w:t>kept</w:t></w:r></w:p></w:body></w:document>`)
+			_, err := io.WriteString(w, builder.String())
+			return err
+		})
+	}
+	// A Word root element declares a few dozen namespaces.
+	result, _, err := getHostileAttachment(t, "namespaces.docx", docxMediaType, element(64))
+	if err != nil || result.Text != "kept" {
+		t.Fatalf("docx with 64 namespaces = %q, %v", result.Text, err)
+	}
+	_, _, err = getHostileAttachment(t, "attributes.docx", docxMediaType, element(maxDocxAttributes+1))
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+func TestProtocolDocxTextIsSerialized(t *testing.T) {
+	document := fixtureDocx(t, "serialized")
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: "letter.docx", contentType: docxMediaType, data: document}}})
+	ref := f.ref(f.partFor(t, "letter.docx"))
+	// Another call holds the one render slot, so this call must wait and
+	// reach its deadline instead of parsing in parallel.
+	renderSlot <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	_, err := f.client.GetAttachment(ctx, GetAttachmentInput{AttachmentRef: ref})
+	cancel()
+	<-renderSlot
+	wantCode(t, err, CodeTimeout)
+	text, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	if err != nil || !strings.Contains(text.Text, "serialized") {
+		t.Fatalf("docx after the slot is free = %q, %v", text.Text, err)
+	}
+}

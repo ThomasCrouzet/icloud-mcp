@@ -682,6 +682,56 @@ func (s *Session) FetchBodyPart(uid uint32, path []int) (BodyData, error) {
 	return BodyData{MIMEHeader: mimeBytes, Body: bodyBytes}, nil
 }
 
+// FetchAttachmentPart reads the MIME header and the encoded body of one part
+// with BODY.PEEK, so the Seen flag does not change. maxWire bounds the encoded
+// body. It must stay below the session inbound limit, which still applies.
+func (s *Session) FetchAttachmentPart(uid uint32, path []int, maxWire int) (BodyData, error) {
+	if len(path) == 0 || maxWire <= 0 || maxWire >= maxSessionBytes {
+		return BodyData{}, &Error{Kind: ErrorProtocol}
+	}
+	mimeSection := &imap.FetchItemBodySection{Part: path, Specifier: imap.PartSpecifierMIME, Partial: &imap.SectionPartial{Size: maxHeaderBytes + 1}, Peek: true}
+	bodySection := &imap.FetchItemBodySection{Part: path, Partial: &imap.SectionPartial{Size: int64(maxWire) + 1}, Peek: true}
+	buffers, err := s.client.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{
+		UID: true, BodySection: []*imap.FetchItemBodySection{mimeSection, bodySection},
+	}).Collect()
+	if err != nil {
+		return BodyData{}, classify(err, false)
+	}
+	if len(buffers) != 1 || buffers[0].UID != imap.UID(uid) {
+		return BodyData{}, &Error{Kind: ErrorNotFound}
+	}
+	mimeBytes := buffers[0].FindBodySection(mimeSection)
+	bodyBytes := buffers[0].FindBodySection(bodySection)
+	if len(mimeBytes) > maxHeaderBytes || len(bodyBytes) > maxWire {
+		return BodyData{TooLarge: true}, nil
+	}
+	if mimeBytes == nil || bodyBytes == nil {
+		return BodyData{}, &Error{Kind: ErrorProtocol}
+	}
+	return BodyData{MIMEHeader: mimeBytes, Body: bodyBytes}, nil
+}
+
+// AppendDraft appends one message to a Drafts mailbox with the Draft and Seen
+// flags. As with AppendSent, an unverifiable outcome is ambiguous.
+func (s *Session) AppendDraft(mailbox string, message []byte) (AppendData, error) {
+	command := s.client.Append(mailbox, int64(len(message)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagDraft, imap.FlagSeen}})
+	if _, err := command.Write(message); err != nil {
+		_ = command.Close()
+		return AppendData{}, classify(err, true)
+	}
+	if err := command.Close(); err != nil {
+		return AppendData{}, classify(err, true)
+	}
+	data, err := command.Wait()
+	if err != nil {
+		return AppendData{}, classify(err, true)
+	}
+	if data == nil || data.UID == 0 || data.UIDValidity == 0 {
+		return AppendData{}, &Error{Kind: ErrorProtocol, Ambiguous: true}
+	}
+	return AppendData{UIDValidity: data.UIDValidity, UID: uint32(data.UID)}, nil
+}
+
 func (s *Session) StoreDelta(uid uint32, add bool, flags []string) error {
 	op := imap.StoreFlagsDel
 	if add {

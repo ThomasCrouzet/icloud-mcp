@@ -51,11 +51,21 @@ func RegisterMail(s *server.MCPServer, deps MailDeps, allowRead, allowMutations,
 	if allowTrash {
 		registrations = append(registrations, registration{newTrashMessageTool(), trashMessageHandler(deps)})
 	}
+	withAttachments := deps.Plan.MailAttachmentsSendEnabled()
 	if allowSend {
-		registrations = append(registrations, registration{newSendMessageTool(), sendMessageHandler(deps)})
+		registrations = append(registrations, registration{newSendMessageTool(withAttachments), sendMessageHandler(deps, withAttachments)})
 	}
 	if allowReply {
-		registrations = append(registrations, registration{newReplyMessageTool(), replyMessageHandler(deps)})
+		registrations = append(registrations, registration{newReplyMessageTool(withAttachments), replyMessageHandler(deps, withAttachments)})
+	}
+	if allowRead && deps.Plan.MailAttachmentsReadEnabled() {
+		registrations = append(registrations, registration{newGetAttachmentTool(), getAttachmentHandler(deps)})
+	}
+	if allowRead && deps.Plan.MailDraftsEnabled() {
+		registrations = append(registrations,
+			registration{newStageAttachmentTool(), stageAttachmentHandler(deps)},
+			registration{newCreateDraftTool(), createDraftHandler(deps)},
+		)
 	}
 
 	names := make([]string, 0, len(registrations))
@@ -159,9 +169,13 @@ func newTrashMessageTool() mcp.Tool {
 	)
 }
 
-func newSendMessageTool() mcp.Tool {
-	tool := mcp.NewTool("send_message",
-		mcp.WithDescription("Sends one bounded UTF-8 plain-text message through iCloud SMTP. At least one address across to, cc, and bcc is required, with at most 50 unique recipients total. Every recipient is enforced against the service's configured exact-address allowlist before connecting. HTML, attachments, raw MIME, custom headers, and caller-supplied From are not supported. Submission is never automatically retried, especially after outcome_unknown. An optional idempotency_key reuses one in-process submission for identical content for 15 minutes after a definitive result. Pending or uncertain results stay until process exit. After expiry or restart, the same key can submit again; this is not exactly-once delivery."),
+func newSendMessageTool(withAttachments bool) mcp.Tool {
+	attachmentText := "HTML, attachments, raw MIME, custom headers, and caller-supplied From are not supported."
+	if withAttachments {
+		attachmentText = "Optional attachments name parts already on the mail server, such as get_message attachments or create_draft parts; the server fetches them over IMAP before connecting to SMTP, and the bytes never pass through the model. HTML, raw MIME, custom headers, and caller-supplied From are not supported."
+	}
+	options := []mcp.ToolOption{
+		mcp.WithDescription("Sends one bounded UTF-8 plain-text message through iCloud SMTP. At least one address across to, cc, and bcc is required, with at most 50 unique recipients total. Every recipient is enforced against the service's configured exact-address allowlist before connecting. " + attachmentText + " Submission is never automatically retried, especially after outcome_unknown. An optional idempotency_key reuses one in-process submission for identical content for 15 minutes after a definitive result. Pending or uncertain results stay until process exit. After expiry or restart, the same key can submit again; this is not exactly-once delivery."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
@@ -173,7 +187,11 @@ func newSendMessageTool() mcp.Tool {
 		mcp.WithString("body", mcp.Required(), mcp.MaxLength(maildomain.MaxSendBodyBytes), mcp.Description("UTF-8 plain-text body, at most 102400 bytes; NUL is rejected")),
 		mcp.WithString("idempotency_key", mcp.MaxLength(255), mcp.Description("Optional process-local key. Identical calls reuse one submission and Message-ID for 15 minutes after a definitive outcome; changed content conflicts. Pending or uncertain outcomes stay until process exit; at most 128 keys. After expiry or restart, the same key can submit again.")),
 		mcp.WithBoolean("archive_sent", mcp.DefaultBool(false), mcp.Description("Append the exact accepted message to the unique SPECIAL-USE Sent mailbox. Requires the mail.archive permission; archival has a separate outcome and never resubmits mail")),
-	)
+	}
+	if withAttachments {
+		options = append(options, mailAttachmentRefsProperty("Optional parts already on the mail server, attached by reference"))
+	}
+	tool := mcp.NewTool("send_message", options...)
 	schema, err := json.Marshal(map[string]any{
 		"type":                 tool.InputSchema.Type,
 		"properties":           tool.InputSchema.Properties,
