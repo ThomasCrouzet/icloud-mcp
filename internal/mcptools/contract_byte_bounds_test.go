@@ -52,7 +52,7 @@ func TestContractUTF8TextByteBounds(t *testing.T) {
 							if !res.IsError && payload["ok"] != false {
 								t.Fatal("UTF-8 byte limit was not enforced")
 							}
-							if strings.Contains(resultText(t, res), "input schema validation failed") {
+							if contractSchemaRefusal(resultText(t, res)) {
 								t.Fatal("byte policy was misclassified as JSON character-length schema refusal")
 							}
 							if !reflect.DeepEqual(before, f.counts()) {

@@ -80,7 +80,7 @@ func TestCalendarValidationErrorsDoNotRepeatInput(t *testing.T) {
 			before := f.counts()
 			result := f.call(t, test.tool, test.args)
 			text := resultText(t, result)
-			if strings.Contains(text, "input schema validation failed") {
+			if contractSchemaRefusal(text) {
 				t.Fatalf("case must pass the input schema and reach the handler: %s", text)
 			}
 			rejection := text

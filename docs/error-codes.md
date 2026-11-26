@@ -38,8 +38,8 @@ Contacts, and Mail use the same public codes.
 Each argument check that a tool makes before a request returns `validation`
 with `retryable: false`. The message names the field. A failure after a
 request, such as a failed calendar listing, keeps its own code. The MCP input
-schema check runs before the tool. Its refusal is plain text without a `code`;
-fix the arguments as for `validation`.
+schema check runs before the tool and returns the same payload. Its message
+names only declared arguments and says `unknown argument` for an undeclared key.
 
 `search_events` cursor failures use `validation` with a bounded
 `details.cursor` reason. The reasons are `malformed`, `signature`, `expired`,

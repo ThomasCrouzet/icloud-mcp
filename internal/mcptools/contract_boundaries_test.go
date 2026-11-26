@@ -166,7 +166,7 @@ func TestContractExactPublishedBoundaries(t *testing.T) {
 						if semantic {
 							text := resultText(t, res)
 							payload := contractPayload(t, res)
-							if strings.Contains(text, "input schema validation failed") || strings.Contains(text, "unsupported argument") {
+							if contractSchemaRefusal(text) || strings.Contains(text, "unsupported argument") {
 								t.Fatalf("semantic refusal was actually schema/handler drift: %s", text)
 							}
 							if !res.IsError && payload["ok"] != false {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
+
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
 
@@ -161,7 +163,7 @@ func TestArgumentErrorsUseValidationCode(t *testing.T) {
 					if !result.IsError {
 						t.Fatalf("argument was accepted: %s", text)
 					}
-					if strings.Contains(text, "input schema validation failed") {
+					if contractSchemaRefusal(text) {
 						t.Fatalf("case must pass the input schema and reach the handler: %s", text)
 					}
 					payload := contractPayload(t, result)
@@ -229,5 +231,95 @@ func TestCalendarSelectionFailureIsNotValidation(t *testing.T) {
 				t.Fatalf("listing failure was reported as validation: %s", text)
 			}
 		})
+	}
+}
+
+// contractSchemaRefusal reports whether text is the project error payload for
+// an input schema refusal.
+func contractSchemaRefusal(text string) bool {
+	return strings.Contains(text, `"code":"validation"`) && strings.Contains(text, schemaRefusalSummary)
+}
+
+// TestSchemaRefusalsUseValidationCode sends arguments that the input schema
+// refuses before any handler. The refusal must use the project payload, name
+// only declared properties, repeat no caller value or key, and send no request.
+func TestSchemaRefusalsUseValidationCode(t *testing.T) {
+	set := func(tool string, values map[string]any) map[string]any {
+		return contractMerge(contractBusinessFixtures()[tool].base, values)
+	}
+	for _, test := range []struct {
+		name, tool string
+		args       map[string]any
+		want       []string
+	}{
+		{"wrong type", "create_event", set("create_event", map[string]any{"title": 123}), []string{"invalid value for title"}},
+		{"wrong item type", "send_message", set("send_message", map[string]any{"to": []any{7}}), []string{"invalid value for to"}},
+		{"pattern mismatch", "get_contact", map[string]any{"address_book": echoMarker, "uid": "contact"}, []string{"invalid value for address_book"}},
+		{"date pattern", "search_messages", set("search_messages", map[string]any{"since": echoMarker + "1"}), []string{"invalid value for since"}},
+		{"enum", "create_event", set("create_event", map[string]any{"status": echoMarker}), []string{"invalid value for status"}},
+		{"bound", "find_free_slots", set("find_free_slots", map[string]any{"duration_minutes": 98765}), []string{"invalid value for duration_minutes"}},
+		{"length", "search_events", set("search_events", map[string]any{"query": strings.Repeat(echoMarker, 30)}), []string{"invalid value for query"}},
+		{"unknown key", "search_events", set("search_events", map[string]any{echoMarker: true}), []string{"unknown argument"}},
+		{"unknown nested key", "create_contact", set("create_contact", map[string]any{"name": map[string]any{echoMarker: "x"}}), []string{"invalid value for name", "unknown argument"}},
+		{"missing required", "get_event", map[string]any{"calendar": contractCalendar}, []string{"missing required argument uid"}},
+		{"missing all required", "search_events", map[string]any{}, []string{"missing required argument end, start"}},
+		{"mixed", "create_event", map[string]any{"title": 5, "start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z", echoMarker: 1}, []string{"missing required argument calendar", "invalid value for title", "unknown argument"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newContractRuntime(t, contractProfile{plan: NewCapabilityPlan(false, true, true, true, true)})
+			args := contractClone(test.args)
+			for key, value := range args {
+				if text, ok := value.(string); ok && text == "$book" {
+					args[key] = f.book
+				}
+			}
+			before := f.counts()
+			result := f.call(t, test.tool, args)
+			text := resultText(t, result)
+			if !result.IsError || result.StructuredContent != nil || len(result.Content) != 1 {
+				t.Fatalf("schema refusal shape: isError=%v structured=%v content=%d", result.IsError, result.StructuredContent, len(result.Content))
+			}
+			if !contractSchemaRefusal(text) {
+				t.Fatalf("schema refusal is not the project payload: %s", text)
+			}
+			payload := contractPayload(t, result)
+			if retryable, present := payload["retryable"]; present && retryable != false {
+				t.Fatalf("schema refusal is retryable: %s", text)
+			}
+			message, _ := payload["message"].(string)
+			for _, want := range test.want {
+				if !strings.Contains(message, want) {
+					t.Fatalf("message lacks %q: %q", want, message)
+				}
+			}
+			if strings.Contains(strings.ToUpper(text), echoMarker) || strings.Contains(text, "98765") {
+				t.Fatalf("schema refusal repeats caller input: %s", text)
+			}
+			if !reflect.DeepEqual(before, f.counts()) {
+				t.Fatalf("schema refusal reached a backend: before=%v after=%v", before, f.counts())
+			}
+		})
+	}
+}
+
+// TestSchemaRefusalDetectorKeepsOtherResults pins the exact SDK refusal shape.
+// A handler never returns these other shapes, so no protocol case reaches them.
+func TestSchemaRefusalDetectorKeepsOtherResults(t *testing.T) {
+	sdk := mcp.NewToolResultError("input schema validation failed: /title: got number, want string")
+	if !isSDKSchemaRefusal(sdk) {
+		t.Fatal("SDK refusal was not detected")
+	}
+	payload := errResult(nil, "title parameter", errors.New("input schema validation failed: x"))
+	notError := mcp.NewToolResultText("input schema validation failed: x")
+	twoItems := mcp.NewToolResultError("invalid arguments: x")
+	twoItems.Content = append(twoItems.Content, mcp.NewTextContent("second"))
+	structured := mcp.NewToolResultError("invalid arguments: x")
+	structured.StructuredContent = map[string]any{"code": "validation"}
+	for name, result := range map[string]*mcp.CallToolResult{
+		"handler payload": payload, "success": notError, "two items": twoItems, "structured": structured, "nil": nil,
+	} {
+		if isSDKSchemaRefusal(result) {
+			t.Errorf("%s was treated as an SDK refusal", name)
+		}
 	}
 }

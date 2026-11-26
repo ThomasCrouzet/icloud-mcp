@@ -259,7 +259,7 @@ func (f *contractRuntime) refuseSDK(t *testing.T, name string, args map[string]a
 	t.Helper()
 	before := f.counts()
 	res := f.call(t, name, args)
-	if !res.IsError || !strings.Contains(resultText(t, res), "input schema validation failed") {
+	if !res.IsError || !contractSchemaRefusal(resultText(t, res)) {
 		t.Fatalf("expected SDK refusal, not domain/business failure: %s", resultText(t, res))
 	}
 	if !reflect.DeepEqual(before, f.counts()) {

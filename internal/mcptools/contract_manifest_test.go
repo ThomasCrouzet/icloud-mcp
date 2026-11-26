@@ -82,6 +82,7 @@ func contractManifestClient(t *testing.T, p contractProfile) (*client.Client, *c
 		server.WithInputSchemaValidation(), server.WithStrictInputSchemaDefault(), server.WithRecovery(),
 		server.WithToolHandlerMiddleware(RecoverRedactMiddleware(red)))
 	ConfigureMailNumberValidation(s)
+	ConfigureSchemaRefusals(s, red)
 	RegisterUnified(s, Deps{
 		Service:         icloud.NewClient(b, "https://caldav.icloud.com", func(h string) bool { return h == "caldav.icloud.com" }),
 		ContactsService: contacts.NewClient(b, "https://contacts.icloud.com", func(h string) bool { return h == "contacts.icloud.com" }),
@@ -272,7 +273,7 @@ func TestContractManifestProfiles(t *testing.T) {
 					if invalid != nil {
 						public += resultText(t, invalid)
 					}
-					if !strings.Contains(public, "input schema validation failed") {
+					if !contractSchemaRefusal(public) {
 						t.Fatalf("unknown local argument was not refused by the production-equivalent SDK validator: %s", public)
 					}
 					t.Logf("contract_unknown=%s", contractReplayJSON(t, map[string]any{"profile": p.name, "tool": tool.Name, "result": invalid, "error": fmtContractError(err)}))

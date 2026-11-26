@@ -22,16 +22,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selection error in `search_events` now starts with `calendars:`, as in
   `find_free_slots`. A failed calendar listing keeps its own code.
   `search_events` and `find_free_slots` now check every argument before they
-  list or search calendars. Before, a check of `query`, `uid`, working hours,
-  `days_of_week`, or a duration longer than the range could follow a calendar
-  listing or search. (#247)
+  list or search calendars. Before,
+  a check of `query`, `uid`, working hours, `days_of_week`, or a duration longer
+  than the range could follow a calendar listing or search. An MCP input schema
+  refusal now returns the same `validation` payload for every tool. Before, it
+  was plain text without a code. (#247)
 - Calendar validation errors name the field and the accepted form, and repeat
   no rejected value. Examples are `by_day must be one of MO, TU, WE, TH, FR,
   SA, SU` and `working hours must use HH:MM`. Before, some errors repeated a
   value: `recurrence_by_day`, an `rrule` part, working hours, an
   `alarms_minutes` entry, a time in a daylight-saving gap or a second fold, and
   the bounds of a reversed range. The Contacts unknown parameter check, which
-  runs when no input schema refused the key, also repeats no key now. (#248)
+  runs when no input schema refused the key, also repeats no key now. An MCP
+  input schema refusal names only declared arguments and says `unknown
+  argument` for an undeclared key. Before, it could repeat a rejected value or
+  an unknown key. (#248)
 
 ## [1.3.0] - 2026-11-26
 
