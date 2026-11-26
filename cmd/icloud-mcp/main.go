@@ -432,6 +432,8 @@ func mailServiceConfig(cfg *config.Config) (maildomain.Config, error) {
 	// APPEND to Drafts is a write. As for other Mail writes, the mail.mutate
 	// scope applies and falls back to mail.read when it is not set.
 	draftsScope, _ := cfg.ResourceScopes.Mail("mail.mutate")
+	// A draft must stay readable, so the mail.read scope also applies.
+	draftsReadScope, _ := cfg.ResourceScopes.Mail("mail.read")
 	return maildomain.Config{
 		Address:              strings.Clone(cfg.MailAddress),
 		From:                 strings.Clone(cfg.MailFrom),
@@ -443,6 +445,7 @@ func mailServiceConfig(cfg *config.Config) (maildomain.Config, error) {
 		EnableAttachmentSend: capabilities.MailAttachmentsSend && cfg.EffectiveMailSend(),
 		EnableDrafts:         capabilities.MailDrafts,
 		DraftsScope:          draftsScope,
+		DraftsReadScope:      draftsReadScope,
 		DraftsMailbox:        strings.Clone(cfg.DraftsMailbox),
 	}, nil
 }

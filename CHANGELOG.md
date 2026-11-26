@@ -20,8 +20,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a nesting depth of 128 elements. An image resize needs at most 96 MiB of
   decode memory, and one image decode runs at a time. When
   `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set, `create_draft` recipients must
-  pass it. The Drafts mailbox follows the `mail.mutate` resource scope, with
-  the usual fallback to `mail.read`. (#243)
+  pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
+  the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
 
 ## [1.2.0] - 2026-11-19
 

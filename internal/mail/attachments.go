@@ -712,7 +712,8 @@ func (s *Client) resolveDraftsDestination(session imapSession) (string, error) {
 	if err := validateMailbox(drafts[0]); err != nil {
 		return "", newError(CodeProtocolError, "Drafts mailbox name is invalid")
 	}
-	if len(s.config.DraftsScope) > 0 && !scopeAllows(s.config.DraftsScope, drafts[0]) {
+	if len(s.config.DraftsScope) > 0 && !scopeAllows(s.config.DraftsScope, drafts[0]) ||
+		len(s.config.DraftsReadScope) > 0 && !scopeAllows(s.config.DraftsReadScope, drafts[0]) {
 		return "", newError(CodeAuthorization, "Drafts mailbox is outside the configured resource scope")
 	}
 	return drafts[0], nil

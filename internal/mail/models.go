@@ -41,6 +41,9 @@ type Config struct {
 	EnableAttachmentSend bool     `json:"-"`
 	EnableDrafts         bool     `json:"-"`
 	DraftsScope          []string `json:"-"`
+	// DraftsReadScope is the mail.read scope. A draft must stay readable, so
+	// the Drafts mailbox must pass both scopes.
+	DraftsReadScope []string `json:"-"`
 	// DraftsMailbox names the Drafts mailbox only when the server marks no
 	// mailbox with SPECIAL-USE \Drafts. iCloud does not mark it.
 	DraftsMailbox string `json:"-"`

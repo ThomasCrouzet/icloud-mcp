@@ -150,7 +150,8 @@ mailbox that is only a mutation or archive target is listed with those modes and
 never advertised as readable. `search_messages`, `get_message`, and
 `reply_message` still enforce `mail.read` independently, so a listed destination
 is never a read grant. `create_draft` treats APPEND to Drafts as a write and
-applies the `mail.mutate` scope, with the same fallback to `mail.read`.
+applies the `mail.mutate` scope, with the same fallback to `mail.read`. It also
+requires the `mail.read` scope, so a draft never goes to an unreadable mailbox.
 
 ### Calendar read resource scopes
 

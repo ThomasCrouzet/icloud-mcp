@@ -531,8 +531,9 @@ Set `ICLOUD_MCP_DRAFTS_MAILBOX=Drafts` for iCloud. The server uses that name onl
 when no `\Drafts` mailbox exists. It rejects INBOX and a mailbox with another
 SPECIAL-USE role. APPEND to Drafts is a write, so the `mail.mutate` resource
 scope must allow the Drafts mailbox. Without a `mail.mutate` entry, the
-`mail.read` scope applies, as for other Mail writes. To attach a draft part by
-reference later, the `mail.read` scope must also allow the Drafts mailbox.
+`mail.read` scope applies, as for other Mail writes. A draft must also stay
+readable, so the `mail.read` scope must allow the Drafts mailbox too. The server
+never appends a draft to a mailbox that the agent cannot read.
 
 APPEND is never retried. An ambiguous result reports `outcome_unknown` with the
 Message-ID for reconciliation. Staged files are released only after a stored

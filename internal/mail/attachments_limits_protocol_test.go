@@ -321,7 +321,15 @@ func TestProtocolDraftsMailboxOutsideScope(t *testing.T) {
 	if len(drafts.Messages) != 0 {
 		t.Fatalf("a draft outside the scope was appended: %d messages", len(drafts.Messages))
 	}
+	// A mutation scope alone is not enough: the draft must stay readable.
 	f.client.config.DraftsScope = []string{"Drafts"}
+	f.client.config.DraftsReadScope = []string{"INBOX"}
+	_, err = f.client.CreateDraft(t.Context(), DraftInput{Body: "x"})
+	wantCode(t, err, CodeAuthorization)
+	if drafts, err := f.client.SearchMessages(t.Context(), SearchInput{Mailbox: "Drafts"}); err != nil || len(drafts.Messages) != 0 {
+		t.Fatalf("a draft outside the read scope was appended: %+v, %v", drafts, err)
+	}
+	f.client.config.DraftsReadScope = []string{"INBOX", "Drafts"}
 	if draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"}); err != nil || draft.Status != "stored" {
 		t.Fatalf("draft inside the scope = %+v, %v", draft, err)
 	}

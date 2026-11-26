@@ -57,15 +57,18 @@ func TestMailServiceConfigAppliesAllowlistToDrafts(t *testing.T) {
 
 func TestMailServiceConfigScopesDraftsAsMutation(t *testing.T) {
 	for _, tc := range []struct {
-		scopes string
-		want   []string
+		scopes   string
+		want     []string
+		wantRead []string
 	}{
-		// APPEND to Drafts is a write, so a mail.mutate scope wins.
-		{"mail.read=INBOX,Drafts;mail.mutate=Archive", []string{"Archive"}},
+		// APPEND to Drafts is a write, so a mail.mutate scope applies. The
+		// draft must also stay readable, so the mail.read scope applies too.
+		{"mail.read=INBOX,Drafts;mail.mutate=Archive", []string{"Archive"}, []string{"INBOX", "Drafts"}},
 		// Without a mail.mutate entry, the read scope applies.
-		{"mail.read=INBOX,Drafts", []string{"INBOX", "Drafts"}},
-		{"mail.read=INBOX;mail.mutate=*", nil},
-		{"", nil},
+		{"mail.read=INBOX,Drafts", []string{"INBOX", "Drafts"}, []string{"INBOX", "Drafts"}},
+		{"mail.read=INBOX;mail.mutate=*", nil, []string{"INBOX"}},
+		{"mail.mutate=Drafts", []string{"Drafts"}, nil},
+		{"", nil, nil},
 	} {
 		got, err := mailServiceConfig(draftsTestConfig(t, "mail.read,mail.drafts", tc.scopes, nil))
 		if err != nil {
@@ -73,6 +76,9 @@ func TestMailServiceConfigScopesDraftsAsMutation(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got.DraftsScope, tc.want) {
 			t.Errorf("scopes %q: Drafts scope = %q, want %q", tc.scopes, got.DraftsScope, tc.want)
+		}
+		if !reflect.DeepEqual(got.DraftsReadScope, tc.wantRead) {
+			t.Errorf("scopes %q: Drafts read scope = %q, want %q", tc.scopes, got.DraftsReadScope, tc.wantRead)
 		}
 	}
 }

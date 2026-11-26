@@ -67,6 +67,7 @@ func newService(config Config, imapDial IMAPDialFunc, smtpDial SMTPDialFunc, ena
 	}
 	config.RecipientPolicy = config.RecipientPolicy.clone()
 	config.DraftsScope = append([]string(nil), config.DraftsScope...)
+	config.DraftsReadScope = append([]string(nil), config.DraftsReadScope...)
 	if config.EnableAttachmentSend && !enableSend {
 		return nil, validationError("mail attachment sending requires mail send")
 	}
