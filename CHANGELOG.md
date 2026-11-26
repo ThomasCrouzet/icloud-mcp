@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-26
+
+This minor release adds opt-in Mail attachment support without disk access:
+read an attachment, attach a message part by reference, and create a draft.
+It also keeps historical Calendar events readable when their scheduling
+metadata is malformed, and updates go-webdav, go-ical, and mcp-go. No default
+changes: Calendar reads stay the only default capability, and every existing
+profile keeps its tool set.
+
 ### Added
 - Add opt-in attachment support without disk access. `get_attachment` reads one
   part with BODY.PEEK and returns images as image content, text and Word
@@ -22,9 +31,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   96 MiB. One image decode or Word text extraction runs at a time. When
   `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set, `create_draft` recipients must
   pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
-  the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
+  the usual fallback to `mail.read`, and the `mail.read` scope. Contributed by
+  stonosbv. (#243, #244)
 
 ### Changed
+- Update mcp-go to v1.6.0. (#240)
 - Update `github.com/emersion/go-webdav` to v0.8.0 and `github.com/emersion/go-ical`
   to v0.0.0-20261112170022-46c5b53a1723. The server uses only the go-webdav
   Basic authentication client and CalendarObject type, and they did not change.
@@ -54,7 +65,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Calendar reads retain historical events with empty or non-URI scheduling
   addresses. Search and availability keep their busy intervals, and
   `isGroupScheduled` remains set without exposing identities. Update and delete
-  still reject malformed scheduling metadata before any write.
+  still reject malformed scheduling metadata before any write. Contributed by
+  MaximeGrn. (#242)
 
 ## [1.2.0] - 2026-11-19
 
