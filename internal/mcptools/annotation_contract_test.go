@@ -26,6 +26,10 @@ func TestMutationAnnotationsAreConservative(t *testing.T) {
 		newTrashMessageTool(),
 		newSendMessageTool(false),
 		newReplyMessageTool(false),
+		newSendMessageTool(true),
+		newReplyMessageTool(true),
+		newStageAttachmentTool(),
+		newCreateDraftTool(),
 	}
 	want := map[string]struct {
 		destructive bool
@@ -42,9 +46,15 @@ func TestMutationAnnotationsAreConservative(t *testing.T) {
 		"trash_message":     {true, false},
 		"send_message":      {true, false},
 		"reply_message":     {true, false},
+		"stage_attachment":  {false, false},
+		"create_draft":      {false, false},
 	}
-	if len(tools) != len(want) {
-		t.Fatalf("mutation tool count = %d, want %d", len(tools), len(want))
+	names := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		names[tool.Name] = true
+	}
+	if len(names) != len(want) {
+		t.Fatalf("mutation tool count = %d, want %d", len(names), len(want))
 	}
 	for _, tool := range tools {
 		expected, ok := want[tool.Name]
@@ -60,5 +70,20 @@ func TestMutationAnnotationsAreConservative(t *testing.T) {
 		if tool.Annotations.IdempotentHint == nil || *tool.Annotations.IdempotentHint != expected.idempotent {
 			t.Errorf("%s idempotentHint = %v, want %v", tool.Name, tool.Annotations.IdempotentHint, expected.idempotent)
 		}
+	}
+}
+
+// TestAttachmentReadAnnotations keeps get_attachment a read: it uses PEEK and
+// keeps no copy, so a repeated call has the same effect.
+func TestAttachmentReadAnnotations(t *testing.T) {
+	tool := newGetAttachmentTool()
+	if tool.Annotations.ReadOnlyHint == nil || !*tool.Annotations.ReadOnlyHint {
+		t.Errorf("%s must declare readOnlyHint=true", tool.Name)
+	}
+	if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+		t.Errorf("%s must declare destructiveHint=false", tool.Name)
+	}
+	if tool.Annotations.IdempotentHint == nil || !*tool.Annotations.IdempotentHint {
+		t.Errorf("%s must declare idempotentHint=true", tool.Name)
 	}
 }

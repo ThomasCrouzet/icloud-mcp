@@ -54,3 +54,25 @@ func TestMailServiceConfigAppliesAllowlistToDrafts(t *testing.T) {
 		t.Fatalf("drafts without an allowlist have a policy: %+v", got.RecipientPolicy)
 	}
 }
+
+func TestMailServiceConfigScopesDraftsAsMutation(t *testing.T) {
+	for _, tc := range []struct {
+		scopes string
+		want   []string
+	}{
+		// APPEND to Drafts is a write, so a mail.mutate scope wins.
+		{"mail.read=INBOX,Drafts;mail.mutate=Archive", []string{"Archive"}},
+		// Without a mail.mutate entry, the read scope applies.
+		{"mail.read=INBOX,Drafts", []string{"INBOX", "Drafts"}},
+		{"mail.read=INBOX;mail.mutate=*", nil},
+		{"", nil},
+	} {
+		got, err := mailServiceConfig(draftsTestConfig(t, "mail.read,mail.drafts", tc.scopes, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.DraftsScope, tc.want) {
+			t.Errorf("scopes %q: Drafts scope = %q, want %q", tc.scopes, got.DraftsScope, tc.want)
+		}
+	}
+}

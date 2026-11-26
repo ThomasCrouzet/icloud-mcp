@@ -429,8 +429,9 @@ func mailServiceConfig(cfg *config.Config) (maildomain.Config, error) {
 		}
 	}
 	archiveScope, _ := cfg.ResourceScopes.Mail("mail.archive")
-	// A draft must stay readable, so the Drafts mailbox uses the read scope.
-	draftsScope, _ := cfg.ResourceScopes.Mail("mail.read")
+	// APPEND to Drafts is a write. As for other Mail writes, the mail.mutate
+	// scope applies and falls back to mail.read when it is not set.
+	draftsScope, _ := cfg.ResourceScopes.Mail("mail.mutate")
 	return maildomain.Config{
 		Address:              strings.Clone(cfg.MailAddress),
 		From:                 strings.Clone(cfg.MailFrom),
