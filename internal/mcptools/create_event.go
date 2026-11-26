@@ -147,16 +147,16 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if err := authorizeCalendarWrite(deps.ResourceScopes, calendarPath); err != nil {
 			return deny("authorization", err)
 		}
-		if err := icloud.ValidateTextField("title", title, icloud.MaxTitleLen); err != nil {
+		if err := icloud.ValidateWriteTextField("title", title, icloud.MaxTitleLen); err != nil {
 			return deny("title parameter", err)
 		}
 		if title == "" {
 			return deny("title parameter", fmt.Errorf("title cannot be empty"))
 		}
-		if err := icloud.ValidateTextField("location", location, icloud.MaxLocationLen); err != nil {
+		if err := icloud.ValidateWriteTextField("location", location, icloud.MaxLocationLen); err != nil {
 			return deny("location parameter", err)
 		}
-		if err := icloud.ValidateTextField("notes", notes, icloud.MaxNotesLen); err != nil {
+		if err := icloud.ValidateWriteTextField("notes", notes, icloud.MaxNotesLen); err != nil {
 			return deny("notes parameter", err)
 		}
 		if alarm < 0 || alarm > maxAlarmMinutesBefore {

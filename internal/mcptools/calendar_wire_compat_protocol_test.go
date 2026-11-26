@@ -376,57 +376,66 @@ func TestProtocolCalendarCollectionHrefForms(t *testing.T) {
 	})
 }
 
-// A write must not dispatch a line break inside a content line. MCP input has
-// no path to a parameter value: the only written parameter is TZID, and it
-// comes from a loaded time zone. A CR in a text value stops before PUT with a
-// stable validation error that repeats no input or encoder text. The
-// idempotency cache keeps it as a known outcome, so it expires after its TTL.
+// A CR in a title, location, or notes cannot be encoded as iCalendar TEXT, and
+// a RRULE value cannot hold a line break. create_event, update_event, and
+// validate_event reject them before any network call with validation. The
+// message names the field and repeats no input. A LF in notes stays writable
+// because the encoder escapes it.
 func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 	const calendarPath = "/wire/calendars/home/"
-	for _, test := range []struct {
-		name, tool string
-		args       map[string]any
-	}{
-		{"update title with CR", "update_event", map[string]any{"title": "private\rX-INJECTED:1"}},
-		{"update location with CR LF", "update_event", map[string]any{"location": "private\r\nX-INJECTED:1"}},
-		{"create notes with CR", "create_event", map[string]any{"title": "New", "notes": "private\rX-INJECTED:1",
-			"start": "2026-11-08T10:00:00Z", "end": "2026-11-08T11:00:00Z"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
-			args := map[string]any{"calendar": calendarPath, "idempotency_key": "wire-key"}
-			if test.tool == "update_event" {
-				args["uid"], args["etag"] = wireUID, wireETag
+	for _, tool := range []string{"create_event", "update_event"} {
+		for _, test := range []struct{ name, field, value, want string }{
+			{"title CR", "title", "private\rX-INJECTED:1", "title contains a forbidden character (CR)"},
+			{"location CR LF", "location", "private\r\nX-INJECTED:1", "location contains a forbidden character (CR)"},
+			{"notes CR", "notes", "private\rX-INJECTED:1", "notes contains a forbidden character (CR)"},
+			{"rrule CR", "rrule", "FREQ=DAILY;COUNT=2\r", "RRULE contains a forbidden character (CR or LF)"},
+			{"rrule LF", "rrule", "FREQ=DAILY;COUNT=2\n", "RRULE contains a forbidden character (CR or LF)"},
+		} {
+			if tool == "update_event" && test.field == "rrule" {
+				continue // update_event has no rrule argument
 			}
-			for key, value := range test.args {
-				args[key] = value
-			}
-			for attempt := range 2 {
-				var got toolErrorPayload
-				if !f.call(t, test.tool, args, &got) {
-					t.Fatalf("%s accepted a CR in a text value: %+v", test.tool, got)
+			t.Run(tool+" "+test.name, func(t *testing.T) {
+				f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
+				args := map[string]any{"calendar": calendarPath, "idempotency_key": "wire-key", test.field: test.value}
+				if tool == "create_event" {
+					args["start"], args["end"] = "2026-11-08T10:00:00Z", "2026-11-08T11:00:00Z"
+					if test.field != "title" {
+						args["title"] = "New"
+					}
+				} else {
+					args["uid"], args["etag"] = wireUID, wireETag
 				}
-				if got.Code != "validation" || !strings.Contains(got.Message, "Calendar event cannot be encoded") {
-					t.Errorf("attempt %d: %s error = %+v, want the stable encode validation error", attempt, test.tool, got)
+				for attempt := range 2 {
+					var got toolErrorPayload
+					if !f.call(t, tool, args, &got) {
+						t.Fatalf("%s accepted a line break in %s: %+v", tool, test.field, got)
+					}
+					if got.Code != "validation" || !strings.Contains(got.Message, test.want) {
+						t.Errorf("attempt %d: %s error = %+v, want validation that names %s", attempt, tool, got, test.field)
+					}
+					assertWirePrivate(t, got, "private", "X-INJECTED", "ical:", "encoded")
 				}
-				assertWirePrivate(t, got, "private", "X-INJECTED", "ical:", "SUMMARY", "LOCATION", "DESCRIPTION")
-			}
-			if test.tool == "update_event" {
-				gets := f.requested(http.MethodGet, wireResource(calendarPath))
-				f.clock.Store(int64(idempotencyTTL + time.Minute))
-				var got toolErrorPayload
-				if !f.call(t, test.tool, args, &got) || got.Code != "validation" {
-					t.Fatalf("replay after the TTL = %+v, want validation", got)
+				if requests := f.requestLog(); len(requests) != 0 {
+					t.Fatalf("a line break in %s reached the server: %v", test.field, requests)
 				}
-				if f.requested(http.MethodGet, wireResource(calendarPath)) != gets+1 {
-					t.Errorf("the encode failure stayed cached as an uncertain outcome: %v", f.requestLog())
-				}
-			}
-			if f.puts.Load() != 0 {
-				t.Fatalf("a CR in a text value dispatched %d PUT requests", f.puts.Load())
-			}
-		})
+			})
+		}
 	}
+	t.Run("validate_event title", func(t *testing.T) {
+		f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
+		var got icloud.ValidationResult
+		if f.call(t, "validate_event", map[string]any{"title": "private\rX-INJECTED:1",
+			"start": "2026-11-08T10:00:00Z", "end": "2026-11-08T11:00:00Z"}, &got) || got.OK {
+			t.Fatalf("validate_event accepted a CR in title: %+v", got)
+		}
+		if !strings.Contains(strings.Join(got.Errors, "\n"), "title contains a forbidden character (CR)") {
+			t.Errorf("validate_event errors = %q, want the title CR error", got.Errors)
+		}
+		assertWirePrivate(t, got.Errors, "private", "X-INJECTED")
+		if requests := f.requestLog(); len(requests) != 0 {
+			t.Fatalf("validate_event reached the server: %v", requests)
+		}
+	})
 	t.Run("notes with LF stay writable", func(t *testing.T) {
 		f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
 		var got updateEventResponse

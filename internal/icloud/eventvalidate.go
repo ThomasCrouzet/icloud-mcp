@@ -98,16 +98,16 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	if in == nil {
 		return ValidationResult{OK: false, Errors: []string{"event cannot be nil"}}
 	}
-	if err := ValidateTextField("title", in.Title, MaxTitleLen); err != nil {
+	if err := ValidateWriteTextField("title", in.Title, MaxTitleLen); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if strings.TrimSpace(in.Title) == "" {
 		errs = append(errs, "title cannot be empty")
 	}
-	if err := ValidateTextField("location", in.Location, MaxLocationLen); err != nil {
+	if err := ValidateWriteTextField("location", in.Location, MaxLocationLen); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := ValidateTextField("notes", in.Notes, MaxNotesLen); err != nil {
+	if err := ValidateWriteTextField("notes", in.Notes, MaxNotesLen); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if in.StartTime.IsZero() || in.EndTime.IsZero() {

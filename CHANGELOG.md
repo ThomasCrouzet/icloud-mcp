@@ -37,10 +37,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the PUT sent the bare CR. Reads still return the event.
 
 ### Fixed
-- Calendar writes that iCalendar cannot encode, such as a CR in a title,
-  location, or notes, return `validation` before any PUT. The message does not
-  repeat the input or the go-ical error. Before, the error had no code, and the
-  `update_event` idempotency cache kept it as an uncertain outcome.
+- `create_event`, `update_event`, and `validate_event` reject a CR in a title,
+  location, or notes, and a CR or LF in `rrule`, with `validation` before any
+  request. The message names the field and repeats no input. Notes keep LF.
+  Before, the encoder rejected the value after discovery and GET. The error had
+  no code, and the `update_event` idempotency cache kept it as an uncertain
+  outcome.
 - Calendar reads retain historical events with empty or non-URI scheduling
   addresses. Search and availability keep their busy intervals, and
   `isGroupScheduled` remains set without exposing identities. Update and delete

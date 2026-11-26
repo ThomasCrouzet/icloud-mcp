@@ -116,7 +116,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if s, ok, err := optionalString("title"); err != nil {
 			return deny("title parameter", err)
 		} else if ok {
-			if err := icloud.ValidateTextField("title", s, icloud.MaxTitleLen); err != nil {
+			if err := icloud.ValidateWriteTextField("title", s, icloud.MaxTitleLen); err != nil {
 				return deny("title parameter", err)
 			}
 			update.Title = &s
@@ -124,7 +124,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if s, ok, err := optionalString("location"); err != nil {
 			return deny("location parameter", err)
 		} else if ok {
-			if err := icloud.ValidateTextField("location", s, icloud.MaxLocationLen); err != nil {
+			if err := icloud.ValidateWriteTextField("location", s, icloud.MaxLocationLen); err != nil {
 				return deny("location parameter", err)
 			}
 			update.Location = &s
@@ -132,7 +132,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 		if s, ok, err := optionalString("notes"); err != nil {
 			return deny("notes parameter", err)
 		} else if ok {
-			if err := icloud.ValidateTextField("notes", s, icloud.MaxNotesLen); err != nil {
+			if err := icloud.ValidateWriteTextField("notes", s, icloud.MaxNotesLen); err != nil {
 				return deny("notes parameter", err)
 			}
 			update.Notes = &s
