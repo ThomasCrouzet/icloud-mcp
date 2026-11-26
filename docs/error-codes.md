@@ -30,7 +30,7 @@ Contacts, and Mail use the same public codes.
 | `timeout` | no (tool deadline) | A mutation can still finish after the caller times out. Read the resource again. A waiting duplicate does not release the original claim. |
 | `unavailable` | yes | For reads, wait `retry_after_seconds` (default 2) before retry. For keyed updates, use the recovery rules below. |
 | `partial_failure` | no | Inspect warnings; do not assume full success. |
-| `protocol_error` | no | The library or server has a protocol gap. CONDSTORE flags are one example. |
+| `protocol_error` | no | The library or server has a protocol gap. CONDSTORE flags are one example. Stored Calendar event data that iCalendar cannot encode for a write is another. |
 | `payload_too_large` | no | Narrow read queries, ranges, or calendar selections. For a write result that exceeds the limit, read the resource before another update. |
 | `outcome_unknown` | no | The mutation might already have succeeded. Follow `reconciliation`. Read the resource before choosing a new update key. |
 | `internal_error` | no | Report the failure with redacted logs. If a mutation was possible, read the resource before another update. |

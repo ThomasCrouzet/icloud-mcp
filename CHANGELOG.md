@@ -24,7 +24,33 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
   the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
 
+### Changed
+- Update `github.com/emersion/go-webdav` to v0.8.0 and `github.com/emersion/go-ical`
+  to v0.0.0-20261112170022-46c5b53a1723. The server uses only the go-webdav
+  Basic authentication client and CalendarObject type, and they did not change.
+  Collection hrefs keep their exact form.
+- The go-ical decoder now reports text after a quoted parameter value and a
+  parameter list without a colon. The earlier decoder stopped on them with a
+  recovered panic, so reads still return `protocol_error` without remote text.
+- The go-ical encoder now rejects a CR or LF in a parameter value. A stored
+  value of this type blocks `update_event`, for a series or one occurrence, and
+  `delete_event` with `scope=occurrence`. They return `protocol_error` before
+  any PUT. Before, the PUT sent the bare CR. Reads and a series `delete_event`
+  still work.
+
 ### Fixed
+- `create_event`, `update_event`, and `validate_event` reject a CR in a title,
+  location, or notes with `validation` before any request. `create_event` and
+  `validate_event` also reject a CR or LF in `rrule`. The message names the
+  field and repeats no input. Notes keep LF. Before, the error had no code,
+  and some of these values reached the encoder only after the requests that
+  the write sends before its PUT. The `update_event` idempotency cache kept an
+  encoder failure as an uncertain outcome.
+- A Calendar write that iCalendar cannot encode for another reason returns
+  `protocol_error` with a fixed message before any PUT. Stored event data causes
+  it, so changed arguments cannot fix it. The message repeats no event text,
+  remote name, or go-ical error. The `update_event` idempotency cache keeps it
+  as a definitive outcome.
 - Calendar reads retain historical events with empty or non-URI scheduling
   addresses. Search and availability keep their busy intervals, and
   `isGroupScheduled` remains set without exposing identities. Update and delete

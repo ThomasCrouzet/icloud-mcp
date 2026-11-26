@@ -406,28 +406,33 @@ Each Mail call uses a fresh IMAP or SMTP session.
 
 ## Direct dependencies
 
-Use Go 1.26.0 or newer. The project has one module and exactly **10** direct
-dependencies. If you add a direct dependency, add its justification here.
+Use Go 1.26.0 or newer. The project has one module and exactly **12** direct
+requirements: 11 runtime dependencies and one test dependency. If you add a
+direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
 |------------|---------------|---------------|
-| `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
-| `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
-| `github.com/mark3labs/mcp-go` | `v1.2.0` | MCP stdio, schemas, JSON-RPC |
+| `github.com/emersion/go-webdav` | `v0.8.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
+| `github.com/emersion/go-ical` | `v0.0.0-20261112170022-46c5b53a1723` | iCalendar parse/encode |
+| `github.com/mark3labs/mcp-go` | `v1.6.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
 | `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
 | `github.com/emersion/go-vcard` | `v0.1.0` | vCard 3.0/4.0 read, 3.0 write |
 | `github.com/emersion/go-imap/v2` | `v2.0.0-beta.9` | IMAP behind `internal/mail/imapadapter` |
 | `github.com/emersion/go-message` | `v0.18.2` | MIME / plain-text bounds |
-| `github.com/emersion/go-smtp` | `v0.25.0` | SMTP + STARTTLS |
+| `github.com/emersion/go-smtp` | `v0.26.0` | SMTP + STARTTLS |
 | `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
+| `golang.org/x/text` | `v0.44.0` | RFC 5051-compatible Unicode collation for local Contacts matching |
+| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.3` | Test only: conformance checks of published schemas and actual outputs |
 
 ## Hand-rolled DAV boundaries
 
 Calendar uses custom discovery, iCloud-compatible REPORT, and conditional PUT or
-DELETE code. go-webdav v0.7.0 loses shard authority during discovery. It also
-lacks the required conditional write API. Calendar update always gets the full
-object before PUT. Thus, VERSION, PRODID, and VTIMEZONE remain.
+DELETE code. go-webdav `FindCalendarHomeSet` loses shard authority during
+discovery. v0.7.0 also lacked the required conditional write API. v0.8.0 adds
+If-Match options, but the tested hand-written requests remain. Calendar update
+always gets the full object before PUT. Thus, VERSION, PRODID, and VTIMEZONE
+remain.
 
 Contacts uses custom bounded PROPFIND, REPORT, GET, PUT, and DELETE code. It also
 uses custom href resolution, redirects, and XML decoding. Resource hrefs are

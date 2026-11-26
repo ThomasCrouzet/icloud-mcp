@@ -47,7 +47,7 @@ type httpDoer interface {
 }
 
 // Client implements Service against iCloud through go-webdav/caldav. It uses
-// custom shard discovery from discovery.go. In go-webdav v0.7.0,
+// custom shard discovery from discovery.go. In go-webdav v0.7.0 and v0.8.0,
 // FindCalendarHomeSet returns only the path and loses the shard host. Custom
 // discovery routes later requests to the correct pXX-caldav.icloud.com shard.
 type Client struct {
@@ -678,7 +678,11 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, calendarPath, pat
 	}
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
-		return fmt.Errorf("encoding event for update: %w", err)
+		// No PUT was sent. Input validation rejects the line breaks that
+		// arguments can supply, so stored event data causes this failure.
+		// The go-ical error can name a remote property or parameter, so it
+		// does not go to the caller.
+		return NewError(CodeProtocolError, 0, "Calendar event data cannot be encoded for a write", nil)
 	}
 	target, err := resolvePathOnBase(c.shardBase, path)
 	if err != nil {

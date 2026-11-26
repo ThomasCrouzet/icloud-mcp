@@ -75,6 +75,9 @@ empty selections. Availability rejects explicitly empty selections.
   The successful `delete_event` response also decodes `deletedTitle`, including dry runs.
 - Invalid TEXT escapes or value types return `protocol_error` when read.
   An invalid delete title fails before mutation. Errors do not include remote text.
+- A malformed content line returns `protocol_error` for the complete read. Two
+  examples are text after a quoted parameter value and a parameter list without
+  a colon. Search and availability then fail for all selected calendars.
 
 ## Writes
 
@@ -92,6 +95,18 @@ empty selections. Availability rejects explicitly empty selections.
   PRODID, and VTIMEZONE.
 - Update preserves the existing DTSTART and DTEND form: DATE, TZID, or Z.
 - Never force UTC Z on a TZID series.
+- `create_event`, `update_event`, and `validate_event` reject a CR in a title,
+  location, or notes before any request. `create_event` and `validate_event`
+  also reject a CR or LF in `rrule`; `update_event` has no `rrule` argument.
+  The error is `validation` and names the field, not the value. Notes keep LF.
+- The client encodes the complete object before PUT. If the encoder rejects
+  the object, the client returns `protocol_error` with a fixed message and
+  sends no PUT. The message repeats no event text, remote name, or encoder text.
+- An update keeps unknown stored properties. A stored parameter or value with a
+  bare CR therefore blocks `update_event` with `protocol_error`, for a series
+  or one occurrence. `delete_event` with `scope=occurrence` rewrites the series
+  object, so it fails the same way. A series `delete_event` sends no PUT and
+  still works. Reads still return the event and its busy interval.
 - Automatic retries apply only to reads. The client never repeats PUT, DELETE,
   or a full-series delete.
 - A transport failure after dispatch returns `outcome_unknown` with

@@ -126,6 +126,20 @@ func ValidateTextField(name, value string, max int) error {
 	return nil
 }
 
+// ValidateWriteTextField applies ValidateTextField to a title, location, or
+// notes value that a write encodes as iCalendar TEXT. It also rejects a CR,
+// because the encoder cannot write it. Notes keep LF for a line break. The
+// error names the field and does not repeat the value.
+func ValidateWriteTextField(name, value string, max int) error {
+	if err := ValidateTextField(name, value, max); err != nil {
+		return err
+	}
+	if strings.ContainsRune(value, '\r') {
+		return NewValidationError(name + " contains a forbidden character (CR)")
+	}
+	return nil
+}
+
 // naiveDateTimeLayout is the RFC3339 date-time layout stripped of the
 // "Z07:00" offset designator: a local wall-clock time with no timezone
 // information at all, e.g. "2026-07-01T14:00:00".
@@ -213,6 +227,10 @@ func ValidateRange(start, end time.Time) error {
 // COUNT or UNTIL. HOURLY also requires one when both values are absent. These
 // limits prevent the creation of an infinite high-frequency series.
 func ValidateRRULE(rule string) error {
+	// The value is written as given. A line break cannot be encoded.
+	if strings.ContainsAny(rule, "\r\n") {
+		return NewValidationError("RRULE contains a forbidden character (CR or LF)")
+	}
 	rule = strings.TrimSpace(rule)
 	if rule == "" {
 		return fmt.Errorf("RRULE cannot be empty")

@@ -3,13 +3,13 @@ module github.com/ThomasCrouzet/icloud-mcp
 go 1.26.0
 
 require (
-	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723
 	github.com/emersion/go-imap/v2 v2.0.0-beta.9
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.26.0
 	github.com/emersion/go-vcard v0.1.0
-	github.com/emersion/go-webdav v0.7.0
+	github.com/emersion/go-webdav v0.8.0
 	github.com/mark3labs/mcp-go v1.6.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/teambition/rrule-go v1.8.2
