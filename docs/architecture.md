@@ -413,13 +413,13 @@ dependencies. If you add a direct dependency, add its justification here.
 |------------|---------------|---------------|
 | `github.com/emersion/go-webdav` | `v0.8.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
 | `github.com/emersion/go-ical` | `v0.0.0-20261112170022-46c5b53a1723` | iCalendar parse/encode |
-| `github.com/mark3labs/mcp-go` | `v1.2.0` | MCP stdio, schemas, JSON-RPC |
+| `github.com/mark3labs/mcp-go` | `v1.6.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
 | `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
 | `github.com/emersion/go-vcard` | `v0.1.0` | vCard 3.0/4.0 read, 3.0 write |
 | `github.com/emersion/go-imap/v2` | `v2.0.0-beta.9` | IMAP behind `internal/mail/imapadapter` |
 | `github.com/emersion/go-message` | `v0.18.2` | MIME / plain-text bounds |
-| `github.com/emersion/go-smtp` | `v0.25.0` | SMTP + STARTTLS |
+| `github.com/emersion/go-smtp` | `v0.26.0` | SMTP + STARTTLS |
 | `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
 
 ## Hand-rolled DAV boundaries
