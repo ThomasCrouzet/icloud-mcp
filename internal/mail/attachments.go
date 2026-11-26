@@ -423,12 +423,22 @@ func (s *Client) fetchOutbound(ctx context.Context, refs []AttachmentRef) ([]out
 			}
 			out[items[i].index] = outboundAttachment{
 				Filename:    outboundFilename(part.Filename),
-				ContentType: effectiveContentType(part.ContentType, part.Filename),
+				ContentType: outboundContentType(part.ContentType, part.Filename),
 				Data:        part.Data,
 			}
 		}
 	}
 	return out, nil
+}
+
+// outboundContentType keeps a received type only when it is a plain
+// type/subtype that a staged file could also use. Any other value becomes
+// application/octet-stream before the extension table applies.
+func outboundContentType(contentType, filename string) string {
+	if validateStagedContentType(contentType) != nil {
+		contentType = "application/octet-stream"
+	}
+	return effectiveContentType(contentType, filename)
 }
 
 // outboundFilename keeps a received name when it is safe and replaces

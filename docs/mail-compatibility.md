@@ -492,9 +492,13 @@ The server first validates the recipients and the text. It then fetches every
 part over IMAP before any SMTP connection. It uses one read session for each
 mailbox. The decoded parts must not exceed 2 MiB in total. The message becomes
 `multipart/mixed`: the plain-text body first, then one base64 part for each
-file. A non-ASCII filename uses RFC 2231 encoding. The encoded message must not
-exceed 3.5 MiB. A message without attachments keeps its existing encoding and
-its 256 KiB limit.
+file. For a non-ASCII name, the Content-Disposition `filename` parameter uses
+an RFC 2231 extended value, such as `filename*=utf-8''r%C3%A9sum%C3%A9.pdf`.
+The Content-Type `name` parameter keeps an RFC 2047 encoded word for older
+clients. A received content type that is not a plain `type/subtype` becomes
+`application/octet-stream`. A known file extension can then give a specific
+type. The encoded message must not exceed 3.5 MiB. A message without
+attachments keeps its existing encoding and its 256 KiB limit.
 
 The idempotency fingerprint includes the attachment references. A message
 without attachments keeps its existing fingerprint. The same key with other

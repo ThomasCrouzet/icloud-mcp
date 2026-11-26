@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"strings"
 	"sync"
@@ -520,7 +521,9 @@ func writeSinglePart(buffer *bytes.Buffer, header msgmail.Header, body string) e
 }
 
 // writeMixedParts writes multipart/mixed: the plain-text body first, then one
-// base64 attachment part per file. Filenames use RFC 2231 when not ASCII.
+// base64 attachment part per file. The Content-Disposition filename uses an
+// RFC 2231 extended value when it is not ASCII. The Content-Type name
+// parameter keeps an RFC 2047 encoded word for older clients.
 func writeMixedParts(buffer *bytes.Buffer, header msgmail.Header, body string, attachments []outboundAttachment) error {
 	writer, err := msgmail.CreateWriter(buffer, header)
 	if err != nil {
@@ -545,7 +548,7 @@ func writeMixedParts(buffer *bytes.Buffer, header msgmail.Header, body string, a
 	for _, attachment := range attachments {
 		var attachmentHeader msgmail.AttachmentHeader
 		attachmentHeader.SetContentType(attachment.ContentType, map[string]string{"name": attachment.Filename})
-		attachmentHeader.SetFilename(attachment.Filename)
+		attachmentHeader.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Filename}))
 		attachmentHeader.Set("Content-Transfer-Encoding", "base64")
 		file, err := writer.CreateAttachment(attachmentHeader)
 		if err != nil {
