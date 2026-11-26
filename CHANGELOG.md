@@ -20,7 +20,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   relative calendar path, a NUL in a title, location, notes, or `query`, an
   `rrule` that does not parse, and an invalid `alarms_minutes` list. A calendar
   selection error in `search_events` now starts with `calendars:`, as in
-  `find_free_slots`. A failed calendar listing keeps its own code. (#247)
+  `find_free_slots`. A failed calendar listing keeps its own code.
+  `search_events` and `find_free_slots` now check every argument before they
+  list or search calendars. Before, a check of `query`, `uid`, working hours,
+  `days_of_week`, or a duration longer than the range could follow a calendar
+  listing or search. (#247)
 - Calendar validation errors name the field and the accepted form, and repeat
   no rejected value. Examples are `by_day must be one of MO, TU, WE, TH, FR,
   SA, SU` and `working hours must use HH:MM`. Before, some errors repeated a

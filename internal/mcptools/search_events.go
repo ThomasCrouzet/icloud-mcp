@@ -120,16 +120,6 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			return errResult(deps.Redactor, "cursor parameter", searchCursorUnavailableError()), nil
 		}
 
-		calendarPaths, err := resolveSearchCalendars(ctx, deps, req)
-		if err != nil {
-			return errResult(deps.Redactor, "calendars", err), nil
-		}
-		if cursorMode && len(calendarPaths) == 0 {
-			return errResult(deps.Redactor, "validation", searchCursorValidationError(
-				searchCursorReasonSelectionRequired, "cursor requires a nonempty calendar or calendars selection")), nil
-		}
-		singleCalendar := req.GetString("calendar", "") != "" || req.GetString("calendars", "") != ""
-
 		query := req.GetString("query", "")
 		if err := icloud.ValidateTextField("query", query, icloud.MaxQueryLen); err != nil {
 			return errResult(deps.Redactor, "query parameter", err), nil
@@ -190,6 +180,18 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			return errResult(deps.Redactor, "validation", searchCursorValidationError(
 				searchCursorReasonOffsetNotAllowed, "cursor requires offset 0")), nil
 		}
+
+		// Check every other argument first: without an explicit selection,
+		// the calendar selection lists calendars.
+		calendarPaths, err := resolveSearchCalendars(ctx, deps, req)
+		if err != nil {
+			return errResult(deps.Redactor, "calendars", err), nil
+		}
+		if cursorMode && len(calendarPaths) == 0 {
+			return errResult(deps.Redactor, "validation", searchCursorValidationError(
+				searchCursorReasonSelectionRequired, "cursor requires a nonempty calendar or calendars selection")), nil
+		}
+		singleCalendar := req.GetString("calendar", "") != "" || req.GetString("calendars", "") != ""
 
 		var cursorQuery searchCursorDigest
 		var cursorPosition searchCursorDigest

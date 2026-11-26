@@ -117,10 +117,6 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if err := icloud.ValidateRange(queryStart, queryEnd); err != nil {
 			return errResult(deps.Redactor, "validation", fmt.Errorf("buffered search range: %w", err)), nil
 		}
-		paths, err := resolveCalendarPaths(ctx, deps, req)
-		if err != nil {
-			return errResult(deps.Redactor, "calendars", err), nil
-		}
 		limit, err := optionalIntArg(req, "limit", 50)
 		if err != nil || limit < 1 || limit > 200 {
 			if err == nil {
@@ -163,6 +159,15 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 				return errResult(deps.Redactor, "validation", e), nil
 			}
 			opts.DaysOfWeek = days
+		}
+		if err := icloud.ValidateFreeSlotOptions(opts); err != nil {
+			return errResult(deps.Redactor, "validation", err), nil
+		}
+		// Check every other argument first: without an explicit selection,
+		// the calendar selection lists calendars.
+		paths, err := resolveCalendarPaths(ctx, deps, req)
+		if err != nil {
+			return errResult(deps.Redactor, "calendars", err), nil
 		}
 
 		busy, err := collectAvailabilityIntervals(ctx, paths, func(ctx context.Context, path string) (icloud.SearchResult, error) {

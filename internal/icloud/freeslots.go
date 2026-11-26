@@ -112,27 +112,36 @@ func MergeIntervals(in []Interval) []Interval {
 	return out
 }
 
+// ValidateFreeSlotOptions checks the range, duration, working hours, and days
+// of week of a free-slot search. Callers run it before any Calendar request.
+func ValidateFreeSlotOptions(opts FreeSlotOptions) error {
+	if !opts.RangeEnd.After(opts.RangeStart) {
+		return NewValidationError("free-slot range end must be after start")
+	}
+	if opts.Duration <= 0 {
+		return NewValidationError("duration_minutes must be positive")
+	}
+	if opts.Duration > opts.RangeEnd.Sub(opts.RangeStart) {
+		return NewValidationError("requested duration is longer than the search range")
+	}
+	if opts.WorkingHourStart < 0 || opts.WorkingHourStart > 24*60 || opts.WorkingHourEnd < 0 || opts.WorkingHourEnd > 24*60 {
+		return NewValidationError("working hours must be between 00:00 and 24:00")
+	}
+	for _, day := range opts.DaysOfWeek {
+		if day < time.Sunday || day > time.Saturday {
+			return NewValidationError("days of week must be between Sunday and Saturday")
+		}
+	}
+	return nil
+}
+
 // FindFreeSlots computes free intervals of at least opts.Duration within
 // [RangeStart, RangeEnd), after subtracting merged busy intervals and
 // applying working hours / days-of-week filters. It never returns event
 // titles or any busy-event identity.
 func FindFreeSlots(busy []Interval, opts FreeSlotOptions) ([]Interval, error) {
-	if !opts.RangeEnd.After(opts.RangeStart) {
-		return nil, NewValidationError("free-slot range end must be after start")
-	}
-	if opts.Duration <= 0 {
-		return nil, NewValidationError("duration_minutes must be positive")
-	}
-	if opts.Duration > opts.RangeEnd.Sub(opts.RangeStart) {
-		return nil, NewValidationError("requested duration is longer than the search range")
-	}
-	if opts.WorkingHourStart < 0 || opts.WorkingHourStart > 24*60 || opts.WorkingHourEnd < 0 || opts.WorkingHourEnd > 24*60 {
-		return nil, NewValidationError("working hours must be between 00:00 and 24:00")
-	}
-	for _, day := range opts.DaysOfWeek {
-		if day < time.Sunday || day > time.Saturday {
-			return nil, NewValidationError("days of week must be between Sunday and Saturday")
-		}
+	if err := ValidateFreeSlotOptions(opts); err != nil {
+		return nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 {
