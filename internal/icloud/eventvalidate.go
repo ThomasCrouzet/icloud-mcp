@@ -145,6 +145,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		errs = append(errs, "RRULE contains a forbidden character (CR or LF)")
 	}
 	rrule := strings.TrimSpace(in.Recurrence)
+	structuredRule := false
 	if in.Structured != nil {
 		built, exdates, err := structuredToRRULE(in.Structured, defaultLoc, in.AllDay)
 		if err != nil {
@@ -154,6 +155,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 				errs = append(errs, "cannot supply both rrule and structured recurrence with different values")
 			}
 			rrule = built
+			structuredRule = true
 			if len(exdates) > 0 {
 				warns = append(warns, fmt.Sprintf("%d exception date(s) will be written as EXDATE", len(exdates)))
 			}
@@ -162,7 +164,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	if rrule != "" {
 		// A raw rrule with a line break already has its error. A structured
 		// recurrence that replaced it is still checked.
-		if !rruleLineBreak || in.Structured != nil {
+		if !rruleLineBreak || structuredRule {
 			if err := validateRRULEForEventContext(ctx, rrule, in.StartTime, in.AllDay); err != nil {
 				errs = append(errs, err.Error())
 			}

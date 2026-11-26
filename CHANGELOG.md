@@ -42,9 +42,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `create_event`, `update_event`, and `validate_event` reject a CR in a title,
   location, or notes with `validation` before any request. `create_event` and
   `validate_event` also reject a CR or LF in `rrule`. The message names the
-  field and repeats no input. Notes keep LF. Before, the encoder rejected the
-  value after the requests that the write sends before its PUT. The error had
-  no code, and the `update_event` idempotency cache kept it as an uncertain
+  field and repeats no input. Notes keep LF. Before, the encoder rejected a CR
+  in text, or a trailing line break in `rrule`, after the requests that the
+  write sends before its PUT. A line break inside `rrule` failed RRULE parsing
+  before any request. In both cases the error had no code, and the
+  `update_event` idempotency cache kept an encoder failure as an uncertain
   outcome.
 - A Calendar write that iCalendar cannot encode for another reason returns
   `protocol_error` with a fixed message before any PUT. Stored event data causes

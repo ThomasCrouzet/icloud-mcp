@@ -453,6 +453,44 @@ func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 			}
 		})
 	}
+	for _, test := range []struct {
+		name  string
+		args  map[string]any
+		wants []string
+	}{
+		// The structured recurrence is invalid, so it does not replace the
+		// raw rrule, and the raw rrule keeps only its line break error.
+		{"invalid structured recurrence", map[string]any{"recurrence_frequency": "daily", "recurrence_count": 2,
+			"recurrence_until": "2026-11-20T10:00:00Z", "rrule": "FREQ=WEEKLY;\rCOUNT=5"}, []string{"count and until"}},
+		// A valid structured recurrence replaces the raw rrule. The conflict
+		// is reported, and the structured rule is still checked.
+		{"valid structured recurrence", map[string]any{"recurrence_frequency": "daily", "recurrence_count": 2,
+			"rrule": "FREQ=WEEKLY;COUNT=3\n"}, []string{"cannot supply both rrule and structured recurrence"}},
+	} {
+		t.Run("validate_event rrule line break with "+test.name, func(t *testing.T) {
+			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
+			args := map[string]any{"title": "Daily", "start": "2026-11-08T10:00:00Z", "end": "2026-11-08T11:00:00Z"}
+			for key, value := range test.args {
+				args[key] = value
+			}
+			var got icloud.ValidationResult
+			if f.call(t, "validate_event", args, &got) || got.OK {
+				t.Fatalf("validate_event accepted the input: %+v", got)
+			}
+			joined := strings.Join(got.Errors, "\n")
+			if n := strings.Count(joined, "RRULE contains a forbidden character (CR or LF)"); n != 1 {
+				t.Errorf("validate_event errors = %q, want the RRULE line break error once", got.Errors)
+			}
+			for _, want := range test.wants {
+				if !strings.Contains(joined, want) {
+					t.Errorf("validate_event errors = %q, want %q", got.Errors, want)
+				}
+			}
+			if requests := f.requestLog(); len(requests) != 0 {
+				t.Fatalf("validate_event reached the server: %v", requests)
+			}
+		})
+	}
 	t.Run("notes with LF stay writable", func(t *testing.T) {
 		f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
 		var got updateEventResponse
