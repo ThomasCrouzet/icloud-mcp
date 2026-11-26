@@ -211,3 +211,31 @@ func TestProtocolStageAndDraftArguments(t *testing.T) {
 		t.Fatalf("create_draft was not audited: %s", f.audit.String())
 	}
 }
+
+func TestProtocolGetAttachmentRedactsResourceURI(t *testing.T) {
+	// The fixture redactor treats this value as a credential.
+	svc := &attachmentFakeService{getAttachment: maildomain.AttachmentResult{
+		Delivery: maildomain.DeliveryResource, Data: []byte("%PDF"), DataMIME: "application/pdf",
+		ContentType: "application/pdf", PartID: "3", Filename: "synthetic-reply-secret.pdf",
+	}}
+	f := newReplyScopeProtocol(t, svc, replyScopePlan(t, "mail.read,mail.attachments.read", false), "")
+	result := callAttachmentTool(t, f, "get_attachment", map[string]any{"mailbox": "INBOX", "uid_validity": 1, "uid": 2, "part_id": "3"})
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || strings.Contains(string(encoded), "synthetic-reply-secret") {
+		t.Fatalf("result leaks a redacted value: %s", encoded)
+	}
+	if len(result.Content) != 2 {
+		t.Fatalf("content = %+v", result.Content)
+	}
+	resource, ok := result.Content[1].(mcp.EmbeddedResource)
+	if !ok {
+		t.Fatalf("content = %T", result.Content[1])
+	}
+	blob, ok := resource.Resource.(mcp.BlobResourceContents)
+	if !ok || blob.URI != "icloud-mail-attachment:///3/%5BREDACTED%5D.pdf" || blob.Blob != base64.StdEncoding.EncodeToString([]byte("%PDF")) {
+		t.Fatalf("resource = %+v", resource.Resource)
+	}
+}

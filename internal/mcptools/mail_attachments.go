@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	maildomain "github.com/ThomasCrouzet/icloud-mcp/internal/mail"
+	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
 // maxAttachmentResultBytes keeps one attachment result, with its JSON-RPC
@@ -162,7 +163,7 @@ func attachmentToolResult(deps MailDeps, result maildomain.AttachmentResult) *mc
 		extra = mcp.NewImageContent(base64.StdEncoding.EncodeToString(result.Data), result.DataMIME)
 	case maildomain.DeliveryResource:
 		extra = mcp.NewEmbeddedResource(mcp.BlobResourceContents{
-			URI:      attachmentURI(result),
+			URI:      attachmentURI(red, result),
 			MIMEType: result.DataMIME,
 			Blob:     base64.StdEncoding.EncodeToString(result.Data),
 		})
@@ -212,8 +213,10 @@ func truncateText(value string, limit int) string {
 	return value[:limit]
 }
 
-func attachmentURI(result maildomain.AttachmentResult) string {
-	name := result.Filename
+// attachmentURI names the resource with the redacted filename, because the
+// URI is outside the redacted metadata text.
+func attachmentURI(red *security.Redactor, result maildomain.AttachmentResult) string {
+	name := redact(red, result.Filename)
 	if name == "" {
 		name = "attachment"
 	}

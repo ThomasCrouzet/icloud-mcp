@@ -253,8 +253,9 @@ The implementation therefore restricts data shape and size:
 - `get_attachment` needs the explicit `mail.attachments.read` token. It returns
   one part of at most 3 MiB encoded, as image, text, or resource content below
   960 KiB. Binary content is not redacted, because redaction would corrupt it.
-  Metadata and extracted text are redacted. Attachment content is untrusted
-  remote data. The server never executes or unpacks it.
+  Metadata, extracted text, and the filename in the resource URI are redacted.
+  Attachment content is untrusted remote data. The server never executes or
+  unpacks it.
 - Attachments by reference need `mail.attachments.send` and `mail.send`. The
   recipient allowlist still applies. Staged files from `mail.drafts` stay in
   process memory only. Audit records name no filename or content.
