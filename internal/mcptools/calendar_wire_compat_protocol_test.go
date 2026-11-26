@@ -452,10 +452,15 @@ func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 	})
 }
 
-// A stored parameter value can hold a bare CR. Reads keep the event and its
-// busy interval. A write that keeps the parameter cannot encode it, so the
-// update stops before PUT with validation. The error names no remote property,
-// parameter, or value.
+// wireEncodeMessage is the fixed protocol_error message for an object that
+// iCalendar cannot encode for a write.
+const wireEncodeMessage = "Calendar event data cannot be encoded for a write"
+
+// A stored parameter or value can hold a bare CR. Reads keep the event and its
+// busy interval. A write that keeps it cannot encode the object, so the update
+// stops before PUT with protocol_error: no argument change can fix stored data.
+// The error names no remote property, parameter, or value. The idempotency
+// cache keeps it as a definitive outcome, so it expires after its TTL.
 func TestProtocolCalendarWriteRemoteParameterLineBreak(t *testing.T) {
 	const calendarPath = "/wire/calendars/home/"
 	for _, test := range []struct {
@@ -463,6 +468,7 @@ func TestProtocolCalendarWriteRemoteParameterLineBreak(t *testing.T) {
 	}{
 		{"unquoted value", "X-WIRE;PRIVATE@EXAMPLE.INVALID=private\rparam:value\n"},
 		{"quoted value", "X-PRIVATE-WIRE;X-PRIVATE=\"private\rparam\":value\n"},
+		{"property value", "X-PRIVATE-WIRE:private\rvalue\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject(test.property)})
@@ -481,20 +487,83 @@ func TestProtocolCalendarWriteRemoteParameterLineBreak(t *testing.T) {
 				t.Fatalf("find_free_slots lost the busy interval: %+v", free)
 			}
 			assertWirePrivate(t, []any{detail, page, free}, "private", "PRIVATE")
+			args := map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag,
+				"title": "Changed", "idempotency_key": "wire-key"}
+			gets := 0
+			for attempt := range 2 {
+				var got toolErrorPayload
+				if !f.call(t, "update_event", args, &got) {
+					t.Fatalf("update_event wrote a CR inside stored data: %q", f.putBodies)
+				}
+				if got.Code != "protocol_error" || !strings.Contains(got.Message, wireEncodeMessage) {
+					t.Errorf("attempt %d: update_event error = %+v, want the fixed encode protocol_error", attempt, got)
+				}
+				assertWirePrivate(t, got, "private", "PRIVATE", "EXAMPLE", "X-WIRE", "ical:")
+				if attempt == 0 {
+					gets = f.requested(http.MethodGet, wireResource(calendarPath))
+				} else if f.requested(http.MethodGet, wireResource(calendarPath)) != gets {
+					t.Errorf("a replay inside the TTL read the event again: %v", f.requestLog())
+				}
+			}
+			f.clock.Store(int64(idempotencyTTL + time.Minute))
 			var got toolErrorPayload
-			if !f.call(t, "update_event", map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag,
-				"title": "Changed"}, &got) {
-				t.Fatalf("update_event wrote a CR inside a parameter value: %q", f.putBodies)
+			if !f.call(t, "update_event", args, &got) || got.Code != "protocol_error" {
+				t.Fatalf("replay after the TTL = %+v, want protocol_error", got)
 			}
-			if got.Code != "validation" || !strings.Contains(got.Message, "Calendar event cannot be encoded") {
-				t.Errorf("update_event error = %+v, want the stable encode validation error", got)
+			if f.requested(http.MethodGet, wireResource(calendarPath)) != gets+1 {
+				t.Errorf("the encode failure stayed cached as an uncertain outcome: %v", f.requestLog())
 			}
-			assertWirePrivate(t, got, "private", "PRIVATE", "EXAMPLE", "X-WIRE", "ical:")
 			if f.puts.Load() != 0 {
 				t.Fatalf("update_event dispatched %d PUT requests", f.puts.Load())
 			}
 		})
 	}
+}
+
+// An occurrence write on a recurring object rewrites the stored series. A
+// stored parameter with a bare CR therefore blocks update_event and
+// delete_event with scope=occurrence: both return protocol_error before PUT.
+// A series delete sends no PUT and still deletes the object.
+func TestProtocolCalendarOccurrenceWriteRemoteParameterLineBreak(t *testing.T) {
+	const calendarPath = "/wire/calendars/home/"
+	object := wireObject("RRULE:FREQ=DAILY;COUNT=3\nX-PRIVATE-WIRE;X-PRIVATE=\"private\rparam\":value\n")
+	for _, test := range []struct {
+		name, tool string
+		args       map[string]any
+	}{
+		{"update_event occurrence", "update_event", map[string]any{"title": "Changed"}},
+		{"delete_event occurrence", "delete_event", map[string]any{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: object})
+			args := map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag,
+				"scope": "occurrence", "recurrence_id": "2026-11-08T10:00:00Z"}
+			for key, value := range test.args {
+				args[key] = value
+			}
+			var got toolErrorPayload
+			if !f.call(t, test.tool, args, &got) {
+				t.Fatalf("%s wrote a CR inside a stored parameter: %q", test.tool, f.putBodies)
+			}
+			if got.Code != "protocol_error" || !strings.Contains(got.Message, wireEncodeMessage) {
+				t.Errorf("%s error = %+v, want the fixed encode protocol_error", test.tool, got)
+			}
+			assertWirePrivate(t, got, "private", "PRIVATE", "X-PRIVATE-WIRE", "ical:")
+			if f.puts.Load() != 0 || f.deletes.Load() != 0 {
+				t.Fatalf("%s dispatched PUT=%d DELETE=%d", test.tool, f.puts.Load(), f.deletes.Load())
+			}
+		})
+	}
+	t.Run("delete_event series", func(t *testing.T) {
+		f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: object})
+		var got deleteEventResponse
+		if f.call(t, "delete_event", map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag}, &got) {
+			t.Fatalf("delete_event series failed: %+v", got)
+		}
+		if f.deletes.Load() != 1 || f.puts.Load() != 0 {
+			t.Fatalf("delete_event series dispatched PUT=%d DELETE=%d, want one DELETE", f.puts.Load(), f.deletes.Load())
+		}
+	})
 }
 
 // Contacts discovery keeps address-book collection hrefs opaque. A book href

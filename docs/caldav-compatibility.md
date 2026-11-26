@@ -99,12 +99,14 @@ empty selections. Availability rejects explicitly empty selections.
   location, or notes before any request. They also reject a CR or LF in
   `rrule`. The error is `validation` and names the field, not the value. Notes
   keep LF.
-- The client encodes the complete object before PUT. A value or parameter that
-  iCalendar cannot encode, such as a CR, returns `validation`. The client sends
-  no request, and the message does not repeat event text or encoder text.
-- An update keeps unknown stored properties. A stored parameter value with a
-  bare CR therefore blocks the update with `validation`. Reads still return the
-  event and its busy interval.
+- The client encodes the complete object before PUT. If the encoder rejects
+  the object, the client returns `protocol_error` with a fixed message and
+  sends no PUT. The message repeats no event text, remote name, or encoder text.
+- An update keeps unknown stored properties. A stored parameter or value with a
+  bare CR therefore blocks `update_event` with `protocol_error`, for a series
+  or one occurrence. `delete_event` with `scope=occurrence` rewrites the series
+  object, so it fails the same way. A series `delete_event` sends no PUT and
+  still works. Reads still return the event and its busy interval.
 - Automatic retries apply only to reads. The client never repeats PUT, DELETE,
   or a full-series delete.
 - A transport failure after dispatch returns `outcome_unknown` with
