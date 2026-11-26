@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
+	"image"
 	"io"
 	"math/rand"
 	"runtime"
@@ -260,11 +262,11 @@ func TestProtocolImageDecodeIsSerialized(t *testing.T) {
 	ref := f.ref(f.partFor(t, "noise.png"))
 	// Another call holds the one decode slot, so this call must wait and
 	// reach its deadline instead of decoding in parallel.
-	imageDecodeSlot <- struct{}{}
+	renderSlot <- struct{}{}
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	_, err := f.client.GetAttachment(ctx, GetAttachmentInput{AttachmentRef: ref})
 	cancel()
-	<-imageDecodeSlot
+	<-renderSlot
 	wantCode(t, err, CodeTimeout)
 	resized, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
 	if err != nil || resized.Delivery != DeliveryImageResized {
@@ -393,5 +395,86 @@ func TestProtocolStagedFilesStayAfterFailedDraft(t *testing.T) {
 	draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x", Staged: []string{staged.Handle}})
 	if err != nil || draft.Status != "stored" || len(draft.Attachments) != 1 || draft.Attachments[0].Size != 6 {
 		t.Fatalf("draft after a failed draft = %+v, %v", draft, err)
+	}
+}
+
+// interlacedPNG sets the Adam7 interlace flag in the IHDR of a PNG fixture and
+// updates the IHDR checksum. The image data stays non-interlaced, so only the
+// header-based checks can accept or reject the result.
+func interlacedPNG(t *testing.T, data []byte) []byte {
+	t.Helper()
+	out := bytes.Clone(data)
+	if len(out) < 33 || string(out[12:16]) != "IHDR" {
+		t.Fatal("fixture has no leading IHDR chunk")
+	}
+	out[28] = 1
+	binary.BigEndian.PutUint32(out[29:33], crc32.ChecksumIEEE(out[12:29]))
+	return out
+}
+
+func TestProtocolImageDecodeBudgetCountsInterlacedPNG(t *testing.T) {
+	// 3540 x 3540 pixels at 16 bits per channel need about 95.6 MiB for the
+	// full image. An Adam7 decode also keeps one pass image of up to half
+	// that size, so the interlaced copy must exceed the budget.
+	plain := fixtureRawPNG(t, 3540, 3540, 6, 16, nil, 30)
+	interlaced := interlacedPNG(t, plain)
+	inResizeWindow(t, interlaced)
+	for _, tc := range []struct {
+		name string
+		data []byte
+		over bool
+	}{{"plain", plain, false}, {"interlaced", interlaced, true}} {
+		config, format, err := image.DecodeConfig(bytes.NewReader(tc.data))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := imageDecodeBytes(config, format, tc.data) > maxImageDecodeBytes; got != tc.over {
+			t.Fatalf("%s: estimate %d MiB over the budget = %v, want %v", tc.name, imageDecodeBytes(config, format, tc.data)>>20, got, tc.over)
+		}
+	}
+	_, allocated, err := getHostileAttachment(t, "interlaced.png", "image/png", interlaced)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("interlaced PNG allocated %d MiB, want at most %d MiB", allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+func TestProtocolDocxAttributeLimit(t *testing.T) {
+	element := func(count int) []byte {
+		return fixtureDocxXML(t, func(w io.Writer) error {
+			var builder strings.Builder
+			builder.WriteString(`<w:document xmlns:w="w"`)
+			for i := 0; i < count; i++ {
+				fmt.Fprintf(&builder, ` xmlns:n%d="u%d"`, i, i)
+			}
+			builder.WriteString(`><w:body><w:p><w:r><w:t>kept</w:t></w:r></w:p></w:body></w:document>`)
+			_, err := io.WriteString(w, builder.String())
+			return err
+		})
+	}
+	// A Word root element declares a few dozen namespaces.
+	result, _, err := getHostileAttachment(t, "namespaces.docx", docxMediaType, element(64))
+	if err != nil || result.Text != "kept" {
+		t.Fatalf("docx with 64 namespaces = %q, %v", result.Text, err)
+	}
+	_, _, err = getHostileAttachment(t, "attributes.docx", docxMediaType, element(maxDocxAttributes+1))
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+func TestProtocolDocxTextIsSerialized(t *testing.T) {
+	document := fixtureDocx(t, "serialized")
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: "letter.docx", contentType: docxMediaType, data: document}}})
+	ref := f.ref(f.partFor(t, "letter.docx"))
+	// Another call holds the one render slot, so this call must wait and
+	// reach its deadline instead of parsing in parallel.
+	renderSlot <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	_, err := f.client.GetAttachment(ctx, GetAttachmentInput{AttachmentRef: ref})
+	cancel()
+	<-renderSlot
+	wantCode(t, err, CodeTimeout)
+	text, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	if err != nil || !strings.Contains(text.Text, "serialized") {
+		t.Fatalf("docx after the slot is free = %q, %v", text.Text, err)
 	}
 }

@@ -29,6 +29,7 @@ const (
 	maxDocxDocumentBytes = 4 * 1024 * 1024
 	maxDocxTokens        = 1_000_000
 	maxDocxDepth         = 128
+	maxDocxAttributes    = 256
 	maxDocxRatio         = 100
 	docxMediaType        = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
@@ -36,9 +37,10 @@ const (
 // resizeEdges are the long-edge targets tried in order for an oversized image.
 var resizeEdges = []int{1568, 1024, 768, 512}
 
-// imageDecodeSlot lets one image decode and resize run at a time in the
-// process, so concurrent tool calls cannot add their decode buffers.
-var imageDecodeSlot = make(chan struct{}, 1)
+// renderSlot lets one image decode and resize, or one Word text extraction,
+// run at a time in the process, so concurrent tool calls cannot add their
+// decode buffers.
+var renderSlot = make(chan struct{}, 1)
 
 var extensionTypes = map[string]string{
 	".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -113,7 +115,7 @@ func renderAttachment(ctx context.Context, result *AttachmentResult, part fetche
 	if format == "auto" {
 		switch {
 		case contentType == docxMediaType:
-			text, truncated, err := docxText(data, maxText)
+			text, truncated, err := serializedDocxText(ctx, data, maxText)
 			if err != nil {
 				return err
 			}
@@ -152,17 +154,17 @@ func renderAttachment(ctx context.Context, result *AttachmentResult, part fetche
 
 func decodeCharset(data []byte, label string) (string, error) {
 	if label == "" || strings.EqualFold(label, "utf-8") || strings.EqualFold(label, "us-ascii") {
-		return strings.ToValidUTF8(string(data), "�"), nil
+		return strings.ToValidUTF8(string(data), "\uFFFD"), nil
 	}
 	reader, err := charset.Reader(label, bytes.NewReader(data))
 	if err != nil {
-		return strings.ToValidUTF8(string(data), "�"), nil
+		return strings.ToValidUTF8(string(data), "\uFFFD"), nil
 	}
 	decoded, err := io.ReadAll(io.LimitReader(reader, int64(MaxAttachmentWireBytes)*4))
 	if err != nil {
 		return "", newError(CodeProtocolError, "text attachment could not be decoded")
 	}
-	return strings.ToValidUTF8(string(decoded), "�"), nil
+	return strings.ToValidUTF8(string(decoded), "\uFFFD"), nil
 }
 
 // resizeImage decodes a PNG, JPEG, or GIF after a dimension and memory check
@@ -176,13 +178,13 @@ func resizeImage(ctx context.Context, data []byte) ([]byte, int, int, error) {
 		int64(config.Width)*int64(config.Height) > maxImagePixels {
 		return nil, 0, 0, newError(CodePayloadTooLarge, "image dimensions exceed the decode limit")
 	}
-	if int64(config.Width)*int64(config.Height)*decodeBytesPerPixel(format, config.ColorModel, data) > maxImageDecodeBytes {
+	if imageDecodeBytes(config, format, data) > maxImageDecodeBytes {
 		return nil, 0, 0, newError(CodePayloadTooLarge, "image needs more decode memory than the limit")
 	}
-	if err := acquire(ctx, imageDecodeSlot); err != nil {
+	if err := acquire(ctx, renderSlot); err != nil {
 		return nil, 0, 0, err
 	}
-	defer func() { <-imageDecodeSlot }()
+	defer func() { <-renderSlot }()
 	source, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, newError(CodeProtocolError, "image could not be decoded")
@@ -201,6 +203,23 @@ func resizeImage(ctx context.Context, data []byte) ([]byte, int, int, error) {
 		}
 	}
 	return nil, 0, 0, newError(CodePayloadTooLarge, "image does not fit the inline limit after resizing")
+}
+
+// imageDecodeBytes estimates the memory that the standard decoders use for
+// the image described by config. An Adam7 PNG decode also keeps one pass
+// image of up to half the full image.
+func imageDecodeBytes(config image.Config, format string, data []byte) int64 {
+	estimate := int64(config.Width) * int64(config.Height) * decodeBytesPerPixel(format, config.ColorModel, data)
+	if format == "png" && pngInterlaced(data) {
+		estimate += estimate / 2
+	}
+	return estimate
+}
+
+// pngInterlaced reports the interlace method of the IHDR chunk, which a PNG
+// stores first, right after the 8-byte signature.
+func pngInterlaced(data []byte) bool {
+	return len(data) > 28 && string(data[12:16]) == "IHDR" && data[28] != 0
 }
 
 // decodeBytesPerPixel is an upper bound of the memory that the standard
@@ -304,6 +323,15 @@ var errDocxMalformed = &Error{Code: CodeProtocolError, Message: "Word document c
 // archive entry count, the decompressed size, the compression ratio, the
 // element depth, the token count, and the output. It never extracts files and
 // ignores every other archive entry.
+// serializedDocxText runs docxText in the render slot.
+func serializedDocxText(ctx context.Context, data []byte, maxText int) (string, bool, error) {
+	if err := acquire(ctx, renderSlot); err != nil {
+		return "", false, err
+	}
+	defer func() { <-renderSlot }()
+	return docxText(data, maxText)
+}
+
 func docxText(data []byte, maxText int) (string, bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -382,6 +410,10 @@ func extractDocxXML(stream io.Reader, maxText int) (string, bool, error) {
 			depth++
 			if depth > maxDocxDepth {
 				return "", false, newError(CodePayloadTooLarge, "Word document is nested too deeply to read")
+			}
+			// The decoder keeps the namespace declarations of each open element.
+			if len(value.Attr) > maxDocxAttributes {
+				return "", false, newError(CodePayloadTooLarge, "Word document has too many attributes on one element")
 			}
 			switch value.Name.Local {
 			case "t":

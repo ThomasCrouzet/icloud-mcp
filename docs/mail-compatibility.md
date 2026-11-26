@@ -467,14 +467,18 @@ With `format: "auto"`, the result depends on the type:
 - PNG, JPEG, GIF, and WebP up to 600 KiB return as MCP image content.
 - A larger PNG, JPEG, or GIF returns as a resized JPEG below 600 KiB. Decode
   starts only after a check of 12,000 pixels per edge, 25 megapixels, and
-  96 MiB of decode memory. The memory check uses an upper bound of the bytes
-  per pixel for the color model. A progressive JPEG also counts its
-  coefficient buffers. One image decode runs at a time in the process.
+  96 MiB of estimated decode memory. The estimate uses an upper bound of the
+  bytes per pixel for the color model. An interlaced PNG also counts its pass
+  image, and a progressive JPEG counts its coefficient buffers. The estimate
+  does not include garbage collection delay, so the measured peak can be
+  higher. One image decode or Word text extraction runs at a time in the
+  process.
 - `text/*`, JSON, and XML return as bounded text after charset decoding.
   HTML uses the same converter as the HTML body fallback.
 - A Word `.docx` returns its paragraph text. The reader accepts at most 5,000
   archive entries, 4 MiB of document XML, a compression ratio of 100, a
-  nesting depth of 128 elements, and 1,000,000 XML tokens. It reads only
+  nesting depth of 128 elements, 256 attributes for each element, and
+  1,000,000 XML tokens. It reads only
   `word/document.xml` and never unpacks other entries.
 - Other files up to 600 KiB return as an MCP embedded resource blob.
 
