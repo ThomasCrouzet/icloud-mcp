@@ -241,18 +241,31 @@ func loadPart(session imapSession, uid uint32, path []int, maxWire int) (fetched
 	if strings.HasPrefix(found.ContentType, "multipart/") || found.ContentType == "message/rfc822" {
 		return fetchedPart{}, validationError("part_id names a container part, not a file")
 	}
+	// A size that BODYSTRUCTURE already reports as too large needs no fetch.
+	if int64(found.Size) > int64(maxWire) {
+		return fetchedPart{}, partTooLarge(maxWire)
+	}
 	data, err := fetcher.FetchAttachmentPart(uid, path, maxWire)
 	if err != nil {
 		return fetchedPart{}, err
 	}
 	if data.TooLarge {
-		return fetchedPart{}, newError(CodePayloadTooLarge, "attachment exceeds the 3 MiB encoded size limit")
+		return fetchedPart{}, partTooLarge(maxWire)
 	}
 	decoded, charset, err := decodeTransferEncoding(data.MIMEHeader, data.Body, MaxAttachmentWireBytes)
 	if err != nil {
 		return fetchedPart{}, err
 	}
 	return fetchedPart{Filename: found.Filename, ContentType: strings.ToLower(found.ContentType), Charset: charset, Data: decoded}, nil
+}
+
+// partTooLarge names the limit that a part exceeds. A budget below the wire
+// limit is what remains of the total size limit for one request.
+func partTooLarge(maxWire int) error {
+	if maxWire < MaxAttachmentWireBytes {
+		return newError(CodePayloadTooLarge, "attachments exceed the 2 MiB total size limit")
+	}
+	return newError(CodePayloadTooLarge, "attachment exceeds the 3 MiB encoded size limit")
 }
 
 // decodeTransferEncoding removes the Content-Transfer-Encoding only. It never

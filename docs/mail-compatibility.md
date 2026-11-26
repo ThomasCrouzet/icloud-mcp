@@ -457,7 +457,8 @@ BODYSTRUCTURE to confirm that the part is a leaf. A container part,
 The server then fetches the MIME header and the body with BODY.PEEK, so the
 Seen flag does not change.
 
-The encoded part must not exceed 3 MiB. The server removes only the
+The encoded part must not exceed 3 MiB. A part that BODYSTRUCTURE reports as
+larger fails before content retrieval. The server removes only the
 Content-Transfer-Encoding. It never converts the charset of the returned
 bytes, so `size` and `sha256` describe the original file.
 

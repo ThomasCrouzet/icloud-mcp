@@ -175,3 +175,31 @@ func TestProtocolDraftRecipientsWithoutAllowlist(t *testing.T) {
 		t.Fatalf("draft without an allowlist = %+v, %v", draft, err)
 	}
 }
+
+func TestProtocolAttachmentSizeCheckedBeforeFetch(t *testing.T) {
+	// 2.4 MiB of data is above the 3 MiB encoded limit after base64.
+	large := bytes.Repeat([]byte{0x5a, 0xa5, 0x3c}, 2_400_000/3)
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: "large.bin", contentType: "application/octet-stream", data: large}}})
+	ref := f.ref(f.partFor(t, "large.bin"))
+	before := f.imapRead.Load()
+	_, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	wantCode(t, err, CodePayloadTooLarge)
+	if read := f.imapRead.Load() - before; read > 256<<10 {
+		t.Fatalf("the client read %d KiB for a part that BODYSTRUCTURE already declared too large", read>>10)
+	}
+}
+
+func TestProtocolAttachmentCumulativeBudgetMessage(t *testing.T) {
+	first := bytes.Repeat([]byte{1, 2, 3}, 1_992_000/3)
+	second := bytes.Repeat([]byte{4, 5, 6}, 943_000/3)
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, send: true, extraParts: []fixturePart{
+		{filename: "first.bin", contentType: "application/octet-stream", data: first},
+		{filename: "second.bin", contentType: "application/octet-stream", data: second},
+	}})
+	refs := []AttachmentRef{f.ref(f.partFor(t, "first.bin")), f.ref(f.partFor(t, "second.bin"))}
+	_, err := f.client.SendMessage(t.Context(), SendInput{To: []string{"to@example.invalid"}, Body: "x", Attachments: refs})
+	wantCode(t, err, CodePayloadTooLarge)
+	if message := AsError(err).Message; !strings.Contains(message, "2 MiB total") {
+		t.Fatalf("cumulative budget message = %q, want the 2 MiB total limit", message)
+	}
+}

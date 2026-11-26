@@ -16,6 +16,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +68,19 @@ type attachmentFixture struct {
 	files  map[string][]byte
 	uid    uint32
 	uidVal uint32
+	// imapRead counts the bytes that the client reads from the IMAP server.
+	imapRead atomic.Int64
+}
+
+type countingConn struct {
+	net.Conn
+	read *atomic.Int64
+}
+
+func (c countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.read.Add(int64(n))
+	return n, err
 }
 
 type attachmentFixtureOptions struct {
@@ -240,7 +254,7 @@ func newAttachmentFixture(t *testing.T, options attachmentFixtureOptions) *attac
 	f.client, err = newService(cfg, func(context.Context) (net.Conn, error) {
 		local, remote := net.Pipe()
 		listener.conns <- remote
-		return local, nil
+		return countingConn{Conn: local, read: &f.imapRead}, nil
 	}, func(context.Context) (net.Conn, error) {
 		local, remote := net.Pipe()
 		go f.smtp.serveSMTP(remote, serverTLS)
