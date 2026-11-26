@@ -73,6 +73,9 @@ type attachmentFixtureOptions struct {
 	read, send, drafts bool
 	draftsMailbox      string
 	extraParts         []fixturePart
+	// noRecipientPolicy leaves the recipient allowlist unset. SMTP send is
+	// then off, as in a drafts-only profile.
+	noRecipientPolicy bool
 }
 
 type fixturePart struct {
@@ -222,9 +225,12 @@ func newAttachmentFixture(t *testing.T, options attachmentFixtureOptions) *attac
 
 	clientTLS, serverTLS := smtpTestTLSConfigs(t)
 	f.smtp = &archiveProtocol{}
-	policy, err := ParseRecipientPolicy("to@example.invalid")
-	if err != nil {
-		t.Fatal(err)
+	var policy RecipientPolicy
+	if !options.noRecipientPolicy {
+		policy, err = ParseRecipientPolicy("to@example.invalid")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	cfg := Config{
 		Address: attachmentFixtureAddress, Password: "synthetic-attachment-secret", RecipientPolicy: policy,
@@ -239,7 +245,7 @@ func newAttachmentFixture(t *testing.T, options attachmentFixtureOptions) *attac
 		local, remote := net.Pipe()
 		go f.smtp.serveSMTP(remote, serverTLS)
 		return local, nil
-	}, false, true, func(ctx context.Context, conn net.Conn, address, password string) (imapSession, error) {
+	}, false, !options.noRecipientPolicy, func(ctx context.Context, conn net.Conn, address, password string) (imapSession, error) {
 		return imapadapter.NewSession(ctx, conn, address, password)
 	}, func(ctx context.Context, conn net.Conn) (smtpSession, error) {
 		return newSMTPSessionWithTLS(ctx, conn, clientTLS)
@@ -439,7 +445,7 @@ func TestProtocolStageDraftAndSendByReference(t *testing.T) {
 	if err != nil || second.SHA256 != digest(file) {
 		t.Fatalf("staged = %+v, %v", second, err)
 	}
-	draft, err := f.client.CreateDraft(t.Context(), DraftInput{To: []string{"anyone@example.invalid"}, Subject: "draft", Body: "Draft body.", Staged: []string{first.Handle}, Attachments: []AttachmentRef{f.ref(f.partFor(t, "grafiek.png"))}})
+	draft, err := f.client.CreateDraft(t.Context(), DraftInput{To: []string{"to@example.invalid"}, Subject: "draft", Body: "Draft body.", Staged: []string{first.Handle}, Attachments: []AttachmentRef{f.ref(f.partFor(t, "grafiek.png"))}})
 	if err != nil || draft.Status != "stored" || draft.Mailbox != "Drafts" || len(draft.Attachments) != 2 {
 		t.Fatalf("draft = %+v, %v", draft, err)
 	}

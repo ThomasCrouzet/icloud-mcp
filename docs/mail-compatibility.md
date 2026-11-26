@@ -517,8 +517,10 @@ process holds at most 8 files and 4 MiB. A file expires 30 minutes after its
 last chunk. The bytes pass through the model, so staging suits small files only.
 
 `create_draft` appends one plain-text message with staged files and referenced
-parts. It sets the `\Draft` and `\Seen` flags and never contacts SMTP. A draft
-does not use the send allowlist, because it sends nothing. The result returns
+parts. It sets the `\Draft` and `\Seen` flags and never contacts SMTP. When
+`ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set, each draft recipient must pass
+that allowlist, also without `mail.send`. Without the variable, a draft accepts
+any valid recipient, because it sends nothing. The result returns
 the draft identity and the `partId` of each attachment. `send_message` can then
 attach those parts by reference. The user can also open the draft in Mail.
 

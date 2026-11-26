@@ -259,6 +259,11 @@ The implementation therefore restricts data shape and size:
 - Attachments by reference need `mail.attachments.send` and `mail.send`. The
   recipient allowlist still applies. Staged files from `mail.drafts` stay in
   process memory only. Audit records name no filename or content.
+- `create_draft` sends nothing, but a draft with in-scope attachments is one
+  tap from a send in Mail. When `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set,
+  draft recipients must pass it. Without it, a prompt-injected model can
+  prepare a draft to any address. Set the allowlist with `mail.drafts`, and
+  review each draft before you send it.
 - IMAP input has a 4 MiB limit for each session and 1 MiB for each protocol line.
 - Before recursive decoding, IMAP limits protocol depth to 24 and protocol lists
   to 512.

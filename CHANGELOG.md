@@ -18,7 +18,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mailbox. Without the tokens, every profile keeps its tool set. Word text
   extraction accepts at most 4 MiB of document XML, a compression ratio of 100,
   and a nesting depth of 128 elements. An image resize needs at most 96 MiB of
-  decode memory, and one image decode runs at a time. (#243)
+  decode memory, and one image decode runs at a time. When
+  `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` is set, `create_draft` recipients must
+  pass it. (#243)
 
 ## [1.2.0] - 2026-11-19
 

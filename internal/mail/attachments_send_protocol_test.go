@@ -134,3 +134,44 @@ func TestProtocolAttachmentInvalidContentTypeFallsBack(t *testing.T) {
 		t.Error("submitted attachment bytes differ")
 	}
 }
+
+func (f *attachmentFixture) draftCount(t *testing.T) int {
+	t.Helper()
+	drafts, err := f.client.SearchMessages(t.Context(), SearchInput{Mailbox: "Drafts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(drafts.Messages)
+}
+
+func TestProtocolDraftRecipientsFollowConfiguredAllowlist(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, send: true, drafts: true, draftsMailbox: "Drafts"})
+	for _, input := range []DraftInput{
+		{To: []string{"anyone@example.invalid"}, Body: "x"},
+		{To: []string{"to@example.invalid"}, Cc: []string{"anyone@example.invalid"}, Body: "x"},
+	} {
+		_, err := f.client.CreateDraft(t.Context(), input)
+		wantCode(t, err, CodeAuthorization)
+	}
+	if count := f.draftCount(t); count != 0 {
+		t.Fatalf("a draft to a recipient outside the allowlist was appended: %d", count)
+	}
+	draft, err := f.client.CreateDraft(t.Context(), DraftInput{To: []string{"to@EXAMPLE.invalid"}, Body: "x"})
+	if err != nil || draft.Status != "stored" {
+		t.Fatalf("draft to an allowed recipient = %+v, %v", draft, err)
+	}
+	// A draft still needs no recipient.
+	if draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"}); err != nil || draft.Status != "stored" {
+		t.Fatalf("draft without recipients = %+v, %v", draft, err)
+	}
+}
+
+func TestProtocolDraftRecipientsWithoutAllowlist(t *testing.T) {
+	// Without a configured allowlist, a drafts-only profile keeps any
+	// recipient. docs/security.md records this residual risk.
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true, draftsMailbox: "Drafts", noRecipientPolicy: true})
+	draft, err := f.client.CreateDraft(t.Context(), DraftInput{To: []string{"anyone@example.invalid"}, Body: "x"})
+	if err != nil || draft.Status != "stored" {
+		t.Fatalf("draft without an allowlist = %+v, %v", draft, err)
+	}
+}

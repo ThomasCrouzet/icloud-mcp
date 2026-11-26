@@ -369,7 +369,7 @@ shell must supply them; restart the process after a change.
 | `ICLOUD_MAIL_PASSWORD` | No | `ICLOUD_PASSWORD` | Separate Mail app-specific password; supports `file://` |
 | `ICLOUD_MCP_ENABLE_MAIL_WRITE` | No | `false` | Compatibility gate only; Mail mutation requires `mail.mutate` or `mail.trash` |
 | `ICLOUD_MCP_ENABLE_MAIL_SEND` | No | `false` | Compatibility gate only; send requires `mail.send` and a recipient policy |
-| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | When send is requested | None | Comma-separated exact addresses, or literal `*` |
+| `ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS` | When send is requested | None | Comma-separated exact addresses, or literal `*`; when set, also limits `create_draft` recipients |
 | `ICLOUD_MCP_DRAFTS_MAILBOX` | No | None | Drafts mailbox name for `create_draft` when no mailbox has SPECIAL-USE `\Drafts`; set `Drafts` for iCloud; requires `mail.drafts` |
 
 Boolean values accept unset, `0`, `false`, `1`, and `true`; the parser trims

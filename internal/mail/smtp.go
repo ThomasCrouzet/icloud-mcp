@@ -425,18 +425,21 @@ type composeInput struct {
 }
 
 // composeMessage validates and encodes one message. A submission enforces the
-// recipient allowlist and requires a recipient. A draft does neither, because
-// APPEND to Drafts sends nothing.
+// recipient allowlist and requires a recipient. A draft requires no
+// recipient, because APPEND to Drafts sends nothing. It enforces the
+// allowlist only when one is configured, so a draft cannot prepare a message
+// to an address that send would reject.
 func (s *Client) composeMessage(input composeInput, submission bool) (preparedMessage, error) {
-	to, recipients, seen, err := s.validateRecipientGroup("to", input.To, nil, nil, submission)
+	enforcePolicy := submission || s.config.RecipientPolicy.valid()
+	to, recipients, seen, err := s.validateRecipientGroup("to", input.To, nil, nil, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}
-	cc, recipients, seen, err := s.validateRecipientGroup("cc", input.Cc, recipients, seen, submission)
+	cc, recipients, seen, err := s.validateRecipientGroup("cc", input.Cc, recipients, seen, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}
-	_, recipients, _, err = s.validateRecipientGroup("bcc", input.Bcc, recipients, seen, submission)
+	_, recipients, _, err = s.validateRecipientGroup("bcc", input.Bcc, recipients, seen, enforcePolicy)
 	if err != nil {
 		return preparedMessage{}, err
 	}

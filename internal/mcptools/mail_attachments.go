@@ -58,7 +58,7 @@ func newStageAttachmentTool() mcp.Tool {
 
 func newCreateDraftTool() mcp.Tool {
 	return mcp.NewTool("create_draft",
-		mcp.WithDescription("Appends one plain-text draft with optional attachments to the single SPECIAL-USE Drafts mailbox. Attachments come from stage_attachment handles or from parts already on the mail server. It never sends mail and never contacts SMTP; recipients are not checked against the send allowlist. The result returns the draft identity and the partId of each attachment, so send_message can attach them by reference. The user can also review and send the draft in Mail. APPEND is never automatically retried; an ambiguous outcome reports outcome_unknown."),
+		mcp.WithDescription("Appends one plain-text draft with optional attachments to the single SPECIAL-USE Drafts mailbox. Attachments come from stage_attachment handles or from parts already on the mail server. It never sends mail and never contacts SMTP. When ICLOUD_MCP_SMTP_ALLOWED_RECIPIENTS is set, each recipient must pass that allowlist, as for send_message; without it, recipients are not checked. The result returns the draft identity and the partId of each attachment, so send_message can attach them by reference. The user can also review and send the draft in Mail. APPEND is never automatically retried; an ambiguous outcome reports outcome_unknown."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
