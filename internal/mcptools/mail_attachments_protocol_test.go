@@ -239,3 +239,32 @@ func TestProtocolGetAttachmentRedactsResourceURI(t *testing.T) {
 		t.Fatalf("resource = %+v", resource.Resource)
 	}
 }
+
+func TestProtocolAttachmentReferencesOutsideReadScope(t *testing.T) {
+	svc := &attachmentFakeService{}
+	svc.replyResult = maildomain.SendResult{Status: maildomain.SendAccepted, MessageID: "reply@example.invalid"}
+	f := newReplyScopeProtocol(t, svc, replyScopePlan(t, "mail.read,mail.send,mail.attachments.send,mail.drafts", false), "mail.read=INBOX")
+	outside := []any{map[string]any{"mailbox": "Private", "uid_validity": 7, "uid": 9, "part_id": "2"}}
+	inside := []any{map[string]any{"mailbox": "INBOX", "uid_validity": 7, "uid": 9, "part_id": "2"}}
+
+	result := callAttachmentTool(t, f, "create_draft", map[string]any{"body": "x", "attachments": outside})
+	if !result.IsError || svc.attachmentCalls != 0 {
+		t.Fatalf("create_draft accepted an out-of-scope attachment: calls = %d", svc.attachmentCalls)
+	}
+	result = callAttachmentTool(t, f, "reply_message", map[string]any{"mailbox": "INBOX", "uid_validity": 7, "uid": 9, "body": "x", "attachments": outside})
+	if !result.IsError || svc.replyCalls != 0 {
+		t.Fatalf("reply_message accepted an out-of-scope attachment: calls = %d", svc.replyCalls)
+	}
+	// In-scope controls reach the service.
+	result = callAttachmentTool(t, f, "create_draft", map[string]any{"body": "x", "attachments": inside})
+	if result.IsError || svc.attachmentCalls != 1 {
+		t.Fatalf("create_draft in scope = %+v, calls = %d", result, svc.attachmentCalls)
+	}
+	result = callAttachmentTool(t, f, "reply_message", map[string]any{"mailbox": "INBOX", "uid_validity": 7, "uid": 9, "body": "x", "attachments": inside})
+	if result.IsError || svc.replyCalls != 1 {
+		t.Fatalf("reply_message in scope = %+v, calls = %d", result, svc.replyCalls)
+	}
+	if strings.Contains(f.audit.String(), "Private") {
+		t.Fatalf("audit names a raw mailbox: %s", f.audit.String())
+	}
+}

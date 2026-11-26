@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"hash/crc32"
 	"io"
@@ -267,5 +268,60 @@ func TestProtocolImageDecodeIsSerialized(t *testing.T) {
 	resized, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
 	if err != nil || resized.Delivery != DeliveryImageResized {
 		t.Fatalf("resize after the slot is free = %s, %v", resized.Delivery, err)
+	}
+}
+
+func TestStageAttachmentFileCountLimit(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{drafts: true, draftsMailbox: "Drafts"})
+	for i := 0; i < MaxStagedFiles; i++ {
+		if _, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "AAAA"}); err != nil {
+			t.Fatalf("file %d: %v", i, err)
+		}
+	}
+	_, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "AAAA"})
+	wantCode(t, err, CodeRateLimited)
+	if len(f.client.staging.files) != MaxStagedFiles {
+		t.Fatalf("staged files = %d, want %d", len(f.client.staging.files), MaxStagedFiles)
+	}
+}
+
+func TestStageAttachmentTotalMemoryLimit(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{drafts: true, draftsMailbox: "Drafts"})
+	chunk := base64.StdEncoding.EncodeToString(make([]byte, 384*1024))
+	// Two files of 1,920 KiB each stay below the 2 MiB file limit and fill
+	// 3,840 KiB of the 4 MiB staging memory.
+	for file := 0; file < 2; file++ {
+		staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "big.bin", ContentType: "application/octet-stream", Data: chunk})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 4; i++ {
+			if _, err := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: chunk}); err != nil {
+				t.Fatalf("file %d chunk %d: %v", file, i, err)
+			}
+		}
+	}
+	_, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "third.bin", ContentType: "application/octet-stream", Data: chunk})
+	wantCode(t, err, CodeRateLimited)
+	if f.client.staging.total > MaxStagedTotalBytes {
+		t.Fatalf("staging memory = %d bytes, want at most %d", f.client.staging.total, MaxStagedTotalBytes)
+	}
+}
+
+func TestProtocolDraftsMailboxOutsideScope(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true, draftsMailbox: "Drafts"})
+	f.client.config.DraftsScope = []string{"INBOX"}
+	_, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"})
+	wantCode(t, err, CodeAuthorization)
+	drafts, err := f.client.SearchMessages(t.Context(), SearchInput{Mailbox: "Drafts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts.Messages) != 0 {
+		t.Fatalf("a draft outside the scope was appended: %d messages", len(drafts.Messages))
+	}
+	f.client.config.DraftsScope = []string{"Drafts"}
+	if draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"}); err != nil || draft.Status != "stored" {
+		t.Fatalf("draft inside the scope = %+v, %v", draft, err)
 	}
 }
