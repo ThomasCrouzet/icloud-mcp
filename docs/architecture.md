@@ -406,8 +406,9 @@ Each Mail call uses a fresh IMAP or SMTP session.
 
 ## Direct dependencies
 
-Use Go 1.26.0 or newer. The project has one module and exactly **10** direct
-dependencies. If you add a direct dependency, add its justification here.
+Use Go 1.26.0 or newer. The project has one module and exactly **12** direct
+requirements: 11 runtime dependencies and one test dependency. If you add a
+direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
 |------------|---------------|---------------|
@@ -421,6 +422,8 @@ dependencies. If you add a direct dependency, add its justification here.
 | `github.com/emersion/go-message` | `v0.18.2` | MIME / plain-text bounds |
 | `github.com/emersion/go-smtp` | `v0.26.0` | SMTP + STARTTLS |
 | `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
+| `golang.org/x/text` | `v0.44.0` | RFC 5051-compatible Unicode collation for local Contacts matching |
+| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.3` | Test only: conformance checks of published schemas and actual outputs |
 
 ## Hand-rolled DAV boundaries
 
