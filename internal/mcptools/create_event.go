@@ -245,7 +245,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if timezone != "" {
 			loc, lerr := time.LoadLocation(timezone)
 			if lerr != nil {
-				return deny("timezone parameter", fmt.Errorf("invalid timezone %q", timezone))
+				return deny("timezone parameter", fmt.Errorf("timezone must be an IANA timezone name, for example Europe/Paris"))
 			}
 			// A TZID write stores a bare wall time, so both bounds must survive
 			// the first-fold resolution the reader applies. A second-fold
@@ -347,7 +347,7 @@ func parseAlarmsMinutesList(s string) ([]icloud.AlarmSpec, error) {
 			return nil, fmt.Errorf("invalid alarms_minutes entry")
 		}
 		if n < 0 || n > maxAlarmMinutesBefore {
-			return nil, fmt.Errorf("alarms_minutes entry %d out of range 0..%d", n, maxAlarmMinutesBefore)
+			return nil, fmt.Errorf("alarms_minutes entries must be between 0 and %d", maxAlarmMinutesBefore)
 		}
 		if n == 0 {
 			continue

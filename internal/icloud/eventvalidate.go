@@ -361,7 +361,7 @@ func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location, allDa
 			switch up {
 			case "MO", "TU", "WE", "TH", "FR", "SA", "SU":
 			default:
-				return "", nil, fmt.Errorf("invalid by_day %q", d)
+				return "", nil, fmt.Errorf("by_day must be one of MO, TU, WE, TH, FR, SA, SU")
 			}
 		}
 		parts = append(parts, "BYDAY="+strings.ToUpper(strings.Join(s.ByDay, ",")))

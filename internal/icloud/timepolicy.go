@@ -132,7 +132,7 @@ func ValidateNamedTZIDRoundTrip(field string, instant time.Time, loc *time.Locat
 	if resolved.Equal(instant) {
 		return nil
 	}
-	err := NewValidationError(field + " " + wall.Format("2006-01-02T15:04:05") + " in timezone " + loc.String() +
+	err := NewValidationError(field + " in timezone " + loc.String() +
 		" does not round-trip: a TZID value cannot encode the second occurrence of a daylight-saving fold")
 	err.Details = map[string]string{
 		"reconciliation": "Select an unambiguous instant, for example one outside the repeated hour, or send an offset-free local time so the first fold applies. Use get_event to confirm the stored value.",

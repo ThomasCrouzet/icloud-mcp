@@ -256,11 +256,11 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	}
 	status := strings.ToUpper(strings.TrimSpace(ne.Status))
 	if !AllowedStatus[status] {
-		return "", fmt.Errorf("invalid status %q", ne.Status)
+		return "", NewValidationError("status must be one of TENTATIVE, CONFIRMED, CANCELLED")
 	}
 	transp := strings.ToUpper(strings.TrimSpace(ne.Transparency))
 	if !AllowedTransparency[transp] {
-		return "", fmt.Errorf("invalid transparency %q", ne.Transparency)
+		return "", NewValidationError("transparency must be OPAQUE or TRANSPARENT")
 	}
 	if ne.URL != "" {
 		if err := validateEventURL(ne.URL); err != nil {
@@ -269,7 +269,7 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	}
 	if ne.Timezone != "" {
 		if _, err := time.LoadLocation(ne.Timezone); err != nil {
-			return "", fmt.Errorf("invalid timezone %q", ne.Timezone)
+			return "", NewValidationError("timezone must be an IANA timezone name, for example Europe/Paris")
 		}
 	}
 	if loc := resolveWriteLocation(ne); loc != nil && loc != time.UTC && !ne.AllDay {
@@ -450,7 +450,7 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 			newStart, sErr := startProp.DateTime(time.UTC)
 			newEnd, eErr := endProp.DateTime(time.UTC)
 			if sErr == nil && eErr == nil && !newEnd.After(newStart) {
-				return fmt.Errorf("invalid update: end (%s) must be after start (%s)", newEnd.Format(time.RFC3339), newStart.Format(time.RFC3339))
+				return fmt.Errorf("invalid update: end must be after start")
 			}
 		}
 	}
@@ -660,7 +660,7 @@ func applyOccurrenceUpdate(cal *ical.Calendar, master *ical.Event, recID time.Ti
 			newStart, sErr := sp.DateTime(time.UTC)
 			newEnd, eErr := ep.DateTime(time.UTC)
 			if sErr == nil && eErr == nil && !newEnd.After(newStart) {
-				return fmt.Errorf("invalid update: end (%s) must be after start (%s)", newEnd.Format(time.RFC3339), newStart.Format(time.RFC3339))
+				return fmt.Errorf("invalid update: end must be after start")
 			}
 		}
 	}

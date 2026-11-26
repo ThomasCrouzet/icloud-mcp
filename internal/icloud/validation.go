@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -177,8 +178,8 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 		resolved, adjusted := ResolveWallClock(wall, loc)
 		if adjusted {
 			return time.Time{}, fmt.Errorf(
-				"invalid %s: local time %s does not exist in %s because of a daylight-saving gap",
-				name, value, loc,
+				"invalid %s: the local time does not exist in %s because of a daylight-saving gap",
+				name, loc,
 			)
 		}
 		return resolved, nil
@@ -214,7 +215,7 @@ func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time
 // MaxRangeDays days (which also indirectly bounds recurrence expansion).
 func ValidateRange(start, end time.Time) error {
 	if !end.After(start) {
-		return fmt.Errorf("end date (%s) must be after start date (%s)", end.Format(time.RFC3339), start.Format(time.RFC3339))
+		return fmt.Errorf("end date must be after start date")
 	}
 	if end.Sub(start) > MaxRangeDays*24*time.Hour {
 		return fmt.Errorf("date range exceeds %d days (maximum allowed)", MaxRangeDays)
@@ -246,7 +247,7 @@ func ValidateRRULE(rule string) error {
 	}
 	ropt, err := rrule.StrToROption(strings.ToUpper(rule))
 	if err != nil {
-		return fmt.Errorf("invalid RRULE: %w", err)
+		return errInvalidRRULEParts
 	}
 	if !normalizeRecurrenceSelectorLists(ropt) {
 		return fmt.Errorf("RRULE has excessive selector cardinality")
@@ -286,7 +287,7 @@ func ValidateRRULE(rule string) error {
 	switch freq {
 	case "SECONDLY", "MINUTELY":
 		if !hasBound {
-			return fmt.Errorf("RRULE with FREQ=%s requires COUNT or UNTIL (unbounded high-frequency series rejected)", freq)
+			return fmt.Errorf("RRULE with FREQ=SECONDLY or FREQ=MINUTELY requires COUNT or UNTIL (unbounded high-frequency series rejected)")
 		}
 	case "HOURLY":
 		if !hasBound {
@@ -295,6 +296,10 @@ func ValidateRRULE(rule string) error {
 	}
 	return nil
 }
+
+// errInvalidRRULEParts replaces the rrule-go parse error, which can repeat
+// caller text.
+var errInvalidRRULEParts = errors.New("invalid RRULE: use RFC 5545 rule parts, for example FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10")
 
 // validateRRULEParts enforces RFC 5545 section 3.3.10 cardinality: FREQ is
 // required, every rule part occurs at most once, and COUNT and UNTIL are
@@ -313,7 +318,7 @@ func validateRRULEParts(rule string) error {
 		}
 		key = strings.ToUpper(strings.TrimSpace(key))
 		if seen[key] {
-			return fmt.Errorf("RRULE part %s occurs more than once", key)
+			return fmt.Errorf("RRULE must not repeat a rule part")
 		}
 		seen[key] = true
 		if key == "FREQ" {
@@ -370,7 +375,7 @@ func validateRRULEValueForms(rule string, allDay bool) error {
 			}
 		case "BYSECOND", "BYMINUTE", "BYHOUR":
 			if allDay {
-				return fmt.Errorf("all-day RRULE cannot use %s", strings.ToUpper(key))
+				return fmt.Errorf("all-day RRULE cannot use BYSECOND, BYMINUTE, or BYHOUR")
 			}
 		}
 	}
@@ -383,7 +388,7 @@ func validateRRULEForStartContext(ctx context.Context, rule string, start time.T
 	}
 	opt, err := rrule.StrToROption(strings.ToUpper(strings.TrimSpace(rule)))
 	if err != nil {
-		return fmt.Errorf("invalid RRULE: %w", err)
+		return errInvalidRRULEParts
 	}
 	if !normalizeRecurrenceSelectorLists(opt) {
 		return fmt.Errorf("RRULE has excessive selector cardinality")

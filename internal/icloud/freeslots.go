@@ -1,7 +1,6 @@
 package icloud
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -387,12 +386,12 @@ func ParseWorkingHours(s string) (int, error) {
 	if len(s) != len("HH:MM") || s[2] != ':' ||
 		s[0] < '0' || s[0] > '9' || s[1] < '0' || s[1] > '9' ||
 		s[3] < '0' || s[3] > '9' || s[4] < '0' || s[4] > '9' {
-		return 0, NewValidationError(fmt.Sprintf("invalid working hours %q: use HH:MM", s))
+		return 0, NewValidationError("working hours must use HH:MM")
 	}
 	h := int(s[0]-'0')*10 + int(s[1]-'0')
 	m := int(s[3]-'0')*10 + int(s[4]-'0')
 	if h > 24 || m > 59 || (h == 24 && m != 0) {
-		return 0, NewValidationError(fmt.Sprintf("invalid working hours %q", s))
+		return 0, NewValidationError("working hours must be between 00:00 and 24:00")
 	}
 	return h*60 + m, nil
 }

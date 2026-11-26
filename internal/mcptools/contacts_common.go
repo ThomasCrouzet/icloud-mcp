@@ -81,7 +81,7 @@ func parseContactsArgs(req mcp.CallToolRequest, allowed ...string) (contactsRawA
 	}
 	for name := range args {
 		if _, ok := allowedSet[name]; !ok {
-			return nil, fmt.Errorf("unknown parameter %q", name)
+			return nil, fmt.Errorf("arguments contain an unknown parameter")
 		}
 	}
 	return args, nil
@@ -102,7 +102,7 @@ func parseContactsObject(raw json.RawMessage, path string, allowed ...string) (c
 	}
 	for name := range object {
 		if _, ok := allowedSet[name]; !ok {
-			return nil, fmt.Errorf("unknown parameter %q in %s", name, path)
+			return nil, fmt.Errorf("%s contains an unknown parameter", path)
 		}
 	}
 	return object, nil

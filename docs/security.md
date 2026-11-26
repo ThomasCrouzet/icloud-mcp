@@ -413,6 +413,11 @@ categories when applicable. Errors contain bounded local text. They can contain
 retry metadata: `retryable` and `retry_after_seconds`. Ambiguous outcomes
 include operation-specific reconciliation.
 
+A tool validation error names the field and the accepted form. It does not
+repeat the rejected value or a time derived from it. It can name a valid IANA
+timezone. The MCP input schema check runs before the tool, and its refusal can
+repeat a rejected value or an unknown key.
+
 Errors exclude raw HTTP, XML, IMAP, SMTP, and MIME data. They also exclude
 identity, password, secret file path, and recipient policy values.
 
