@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -323,5 +324,66 @@ func TestProtocolDraftsMailboxOutsideScope(t *testing.T) {
 	f.client.config.DraftsScope = []string{"Drafts"}
 	if draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x"}); err != nil || draft.Status != "stored" {
 		t.Fatalf("draft inside the scope = %+v, %v", draft, err)
+	}
+}
+
+func TestProtocolStagedFilesAreReservedDuringCreateDraft(t *testing.T) {
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true, draftsMailbox: "Drafts"})
+	staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "YWJj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first draft holds its staged file while it waits in the IMAP dial.
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	hook := func() { once.Do(func() { close(entered); <-release }) }
+	f.dialHook.Store(&hook)
+	input := DraftInput{Body: "x", Staged: []string{staged.Handle}}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := f.client.CreateDraft(t.Context(), input)
+		first <- err
+	}()
+	<-entered
+	go func() {
+		_, err := f.client.CreateDraft(t.Context(), input)
+		second <- err
+	}()
+	_, chunkErr := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: "ZGVm"})
+	// Without a reservation, the second call waits for the mutation slot.
+	// Release the first call after a short pause, so both outcomes appear.
+	select {
+	case err := <-second:
+		second <- err
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first draft: %v", err)
+	}
+	wantCode(t, <-second, CodeConflict)
+	wantCode(t, chunkErr, CodeConflict)
+	if count := f.draftCount(t); count != 1 {
+		t.Fatalf("drafts stored from one staged file = %d, want 1", count)
+	}
+}
+
+func TestProtocolStagedFilesStayAfterFailedDraft(t *testing.T) {
+	// Without a Drafts mailbox the draft fails, and the staged file stays
+	// usable for a later chunk and a later draft.
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, drafts: true})
+	staged, err := f.client.StageAttachment(t.Context(), StageInput{Filename: "a.txt", ContentType: "text/plain", Data: "YWJj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.client.CreateDraft(t.Context(), DraftInput{Body: "x", Staged: []string{staged.Handle}})
+	wantCode(t, err, CodeProtocolError)
+	if _, err := f.client.StageAttachment(t.Context(), StageInput{Handle: staged.Handle, Data: "ZGVm"}); err != nil {
+		t.Fatalf("chunk after a failed draft: %v", err)
+	}
+	f.client.config.DraftsMailbox = "Drafts"
+	draft, err := f.client.CreateDraft(t.Context(), DraftInput{Body: "x", Staged: []string{staged.Handle}})
+	if err != nil || draft.Status != "stored" || len(draft.Attachments) != 1 || draft.Attachments[0].Size != 6 {
+		t.Fatalf("draft after a failed draft = %+v, %v", draft, err)
 	}
 }

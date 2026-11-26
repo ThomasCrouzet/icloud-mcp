@@ -70,6 +70,8 @@ type attachmentFixture struct {
 	uidVal uint32
 	// imapRead counts the bytes that the client reads from the IMAP server.
 	imapRead atomic.Int64
+	// dialHook, when set, runs before each IMAP connection.
+	dialHook atomic.Pointer[func()]
 }
 
 type countingConn struct {
@@ -252,6 +254,9 @@ func newAttachmentFixture(t *testing.T, options attachmentFixtureOptions) *attac
 		DraftsMailbox: options.draftsMailbox,
 	}
 	f.client, err = newService(cfg, func(context.Context) (net.Conn, error) {
+		if hook := f.dialHook.Load(); hook != nil {
+			(*hook)()
+		}
 		local, remote := net.Pipe()
 		listener.conns <- remote
 		return countingConn{Conn: local, read: &f.imapRead}, nil

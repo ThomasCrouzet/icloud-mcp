@@ -516,6 +516,12 @@ type stagedFile struct {
 	contentType string
 	data        []byte
 	expires     time.Time
+	// reserved is true while a create_draft call uses the file.
+	reserved bool
+}
+
+func errStagedFileReserved() error {
+	return newError(CodeConflict, "staged file is in use by another create_draft call")
 }
 
 func newStagingStore() *stagingStore {
@@ -574,6 +580,9 @@ func (s *Client) StageAttachment(_ context.Context, input StageInput) (StageResu
 		if input.Filename != "" && input.Filename != file.filename || input.ContentType != "" && !strings.EqualFold(input.ContentType, file.contentType) {
 			return StageResult{}, validationError("a later chunk must not change filename or content_type")
 		}
+		if file.reserved {
+			return StageResult{}, errStagedFileReserved()
+		}
 	}
 	if len(file.data)+len(chunk) > MaxOutboundAttachmentBytes {
 		return StageResult{}, newError(CodePayloadTooLarge, "staged file exceeds the 2 MiB size limit")
@@ -600,14 +609,15 @@ func newStageHandle() (string, error) {
 	return "stg_" + hex.EncodeToString(buffer[:]), nil
 }
 
-// takeStaged copies the named staged files without removing them. Removal
-// happens only after a definitive APPEND.
+// snapshot copies the named staged files and reserves them without removing
+// them. A reserved file accepts no chunk and no other draft. The caller must
+// call unreserve after a failure, or release after a stored draft.
 func (st *stagingStore) snapshot(handles []string, now time.Time) ([]outboundAttachment, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.expireLocked(now)
 	seen := make(map[string]struct{}, len(handles))
-	out := make([]outboundAttachment, 0, len(handles))
+	files := make([]*stagedFile, 0, len(handles))
 	for _, handle := range handles {
 		if _, duplicate := seen[handle]; duplicate {
 			return nil, validationError("staged contains a duplicate handle")
@@ -617,9 +627,28 @@ func (st *stagingStore) snapshot(handles []string, now time.Time) ([]outboundAtt
 		if file == nil {
 			return nil, newError(CodeNotFound, "staging handle is unknown or expired")
 		}
+		if file.reserved {
+			return nil, errStagedFileReserved()
+		}
+		files = append(files, file)
+	}
+	out := make([]outboundAttachment, 0, len(files))
+	for _, file := range files {
+		file.reserved = true
 		out = append(out, outboundAttachment{Filename: file.filename, ContentType: file.contentType, Data: append([]byte(nil), file.data...)})
 	}
 	return out, nil
+}
+
+// unreserve makes the named files usable again after a failed draft.
+func (st *stagingStore) unreserve(handles []string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, handle := range handles {
+		if file := st.files[handle]; file != nil {
+			file.reserved = false
+		}
+	}
 }
 
 func (st *stagingStore) release(handles []string) {
@@ -702,6 +731,12 @@ func (s *Client) CreateDraft(ctx context.Context, input DraftInput) (DraftResult
 	if err != nil {
 		return DraftResult{}, err
 	}
+	stored := false
+	defer func() {
+		if !stored {
+			s.staging.unreserve(input.Staged)
+		}
+	}()
 	referenced, err := s.fetchOutbound(ctx, input.Attachments)
 	if err != nil {
 		return DraftResult{}, err
@@ -755,6 +790,7 @@ func (s *Client) CreateDraft(ctx context.Context, input DraftInput) (DraftResult
 	}
 	appended := value.(imapadapter.AppendData)
 	s.staging.release(input.Staged)
+	stored = true
 	result.Status = "stored"
 	result.UIDValidity, result.UID = appended.UIDValidity, appended.UID
 	for i, attachment := range attachments {

@@ -533,7 +533,9 @@ SPECIAL-USE role. The Drafts mailbox must be allowed by the `mail.read` scope.
 
 APPEND is never retried. An ambiguous result reports `outcome_unknown` with the
 Message-ID for reconciliation. Staged files are released only after a stored
-draft.
+draft. While a `create_draft` call uses a staged file, another chunk or draft
+for that file returns `conflict`. After a failed draft, the file is usable
+again.
 
 ## Rates and concurrency
 
