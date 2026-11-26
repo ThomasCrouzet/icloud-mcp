@@ -92,6 +92,9 @@ empty selections. Availability rejects explicitly empty selections.
   PRODID, and VTIMEZONE.
 - Update preserves the existing DTSTART and DTEND form: DATE, TZID, or Z.
 - Never force UTC Z on a TZID series.
+- The client encodes the complete object before PUT. A value or parameter that
+  iCalendar cannot encode, such as a CR, returns `validation`. The client sends
+  no request, and the message does not repeat event text or encoder text.
 - Automatic retries apply only to reads. The client never repeats PUT, DELETE,
   or a full-series delete.
 - A transport failure after dispatch returns `outcome_unknown` with

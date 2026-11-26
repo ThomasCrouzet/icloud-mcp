@@ -678,7 +678,9 @@ func (c *Client) putCalendarObjectIfMatch(ctx context.Context, calendarPath, pat
 	}
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
-		return fmt.Errorf("encoding event for update: %w", err)
+		// No request was sent. The go-ical error can name a remote
+		// property or parameter, so it does not go to the caller.
+		return NewValidationError("Calendar event cannot be encoded: a value or parameter contains a line break or another character that iCalendar does not allow")
 	}
 	target, err := resolvePathOnBase(c.shardBase, path)
 	if err != nil {

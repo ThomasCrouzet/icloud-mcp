@@ -25,6 +25,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
 
 ### Fixed
+- Calendar writes that iCalendar cannot encode, such as a CR in a title,
+  location, or notes, return `validation` before any PUT. The message does not
+  repeat the input or the go-ical error. Before, the error had no code, and the
+  `update_event` idempotency cache kept it as an uncertain outcome.
 - Calendar reads retain historical events with empty or non-URI scheduling
   addresses. Search and availability keep their busy intervals, and
   `isGroupScheduled` remains set without exposing identities. Update and delete

@@ -49,6 +49,8 @@ type wireProtocol struct {
 	puts      atomic.Int32
 	deletes   atomic.Int32
 	audit     bytes.Buffer
+	idem      *idempotencyStore
+	clock     atomic.Int64 // idempotency clock offset in nanoseconds
 
 	mu        sync.Mutex
 	requests  []string
@@ -80,12 +82,18 @@ func wireXMLText(t *testing.T, value string) string {
 // form or by the other trailing-slash form and records the exact request path.
 func newWireProtocol(t *testing.T, scopes string, calendars ...wireCalendar) *wireProtocol {
 	t.Helper()
-	f := &wireProtocol{calendars: calendars}
+	f := &wireProtocol{calendars: calendars, idem: newIdempotencyStore()}
+	started := time.Now()
+	f.idem.now = func() time.Time { return started.Add(time.Duration(f.clock.Load())) }
 	discovery := &redactionTestServer{}
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.EscapedPath())
+		if r.Method == http.MethodPut {
+			f.puts.Add(1)
+			f.putBodies = append(f.putBodies, string(body))
+		}
 		f.mu.Unlock()
 		switch {
 		case r.Method == "PROPFIND" && r.URL.Path == "/":
@@ -120,10 +128,6 @@ func newWireProtocol(t *testing.T, scopes string, calendars ...wireCalendar) *wi
 				_, _ = io.WriteString(w, calendar.object)
 				return
 			case r.Method == http.MethodPut && r.URL.Path == wireResource(calendar.href):
-				f.puts.Add(1)
-				f.mu.Lock()
-				f.putBodies = append(f.putBodies, string(body))
-				f.mu.Unlock()
 				w.Header().Set("ETag", wireNewETag)
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -151,7 +155,7 @@ func newWireProtocol(t *testing.T, scopes string, calendars ...wireCalendar) *wi
 		resourceScopes = mustScopes(t, scopes)
 	}
 	Register(s, Deps{Service: service, Redactor: redactor, DefaultLocation: time.UTC, ResourceScopes: resourceScopes,
-		Audit: security.NewAuditLogger(&f.audit), Idempotency: newIdempotencyStore()}, false)
+		Audit: security.NewAuditLogger(&f.audit), Idempotency: f.idem}, false)
 	f.client, err = client.NewInProcessClient(s)
 	if err != nil {
 		t.Fatal(err)
@@ -374,29 +378,50 @@ func TestProtocolCalendarCollectionHrefForms(t *testing.T) {
 
 // A write must not dispatch a line break inside a content line. MCP input has
 // no path to a parameter value: the only written parameter is TZID, and it
-// comes from a loaded time zone. Text values with a CR keep their current
-// pre-dispatch rejection.
+// comes from a loaded time zone. A CR in a text value stops before PUT with a
+// stable validation error that repeats no input or encoder text. The
+// idempotency cache keeps it as a known outcome, so it expires after its TTL.
 func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 	const calendarPath = "/wire/calendars/home/"
 	for _, test := range []struct {
-		name string
-		args map[string]any
+		name, tool string
+		args       map[string]any
 	}{
-		{"title with CR", map[string]any{"title": "private\rX-INJECTED:1"}},
-		{"location with CR LF", map[string]any{"location": "private\r\nX-INJECTED:1"}},
+		{"update title with CR", "update_event", map[string]any{"title": "private\rX-INJECTED:1"}},
+		{"update location with CR LF", "update_event", map[string]any{"location": "private\r\nX-INJECTED:1"}},
+		{"create notes with CR", "create_event", map[string]any{"title": "New", "notes": "private\rX-INJECTED:1",
+			"start": "2026-11-08T10:00:00Z", "end": "2026-11-08T11:00:00Z"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
-			args := map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag}
+			args := map[string]any{"calendar": calendarPath, "idempotency_key": "wire-key"}
+			if test.tool == "update_event" {
+				args["uid"], args["etag"] = wireUID, wireETag
+			}
 			for key, value := range test.args {
 				args[key] = value
 			}
-			var got toolErrorPayload
-			if !f.call(t, "update_event", args, &got) {
-				t.Fatalf("update_event accepted a CR in a text value: %+v", got)
+			for attempt := range 2 {
+				var got toolErrorPayload
+				if !f.call(t, test.tool, args, &got) {
+					t.Fatalf("%s accepted a CR in a text value: %+v", test.tool, got)
+				}
+				if got.Code != "validation" || !strings.Contains(got.Message, "Calendar event cannot be encoded") {
+					t.Errorf("attempt %d: %s error = %+v, want the stable encode validation error", attempt, test.tool, got)
+				}
+				assertWirePrivate(t, got, "private", "X-INJECTED", "ical:", "SUMMARY", "LOCATION", "DESCRIPTION")
 			}
-			t.Logf("characterized_error code=%q message=%q", got.Code, got.Message)
-			assertWirePrivate(t, got, "private", "X-INJECTED")
+			if test.tool == "update_event" {
+				gets := f.requested(http.MethodGet, wireResource(calendarPath))
+				f.clock.Store(int64(idempotencyTTL + time.Minute))
+				var got toolErrorPayload
+				if !f.call(t, test.tool, args, &got) || got.Code != "validation" {
+					t.Fatalf("replay after the TTL = %+v, want validation", got)
+				}
+				if f.requested(http.MethodGet, wireResource(calendarPath)) != gets+1 {
+					t.Errorf("the encode failure stayed cached as an uncertain outcome: %v", f.requestLog())
+				}
+			}
 			if f.puts.Load() != 0 {
 				t.Fatalf("a CR in a text value dispatched %d PUT requests", f.puts.Load())
 			}
