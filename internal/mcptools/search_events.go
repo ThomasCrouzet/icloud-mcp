@@ -122,7 +122,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 
 		calendarPaths, err := resolveSearchCalendars(ctx, deps, req)
 		if err != nil {
-			return errResult(deps.Redactor, "calendar parameter", err), nil
+			return errResult(deps.Redactor, "calendars", err), nil
 		}
 		if cursorMode && len(calendarPaths) == 0 {
 			return errResult(deps.Redactor, "validation", searchCursorValidationError(
@@ -589,11 +589,11 @@ func resolveSearchCalendars(ctx context.Context, deps Deps, req mcp.CallToolRequ
 			return nil
 		}
 		if err := icloud.ValidateCalendarPath(p); err != nil {
-			return err
+			return icloud.NewValidationError(err.Error())
 		}
 		if !seen[p] {
 			if len(paths) >= maxExplicitSearchCalendars {
-				return fmt.Errorf("calendar selection must contain at most %d unique paths", maxExplicitSearchCalendars)
+				return icloud.NewValidationError(fmt.Sprintf("calendar selection must contain at most %d unique paths", maxExplicitSearchCalendars))
 			}
 			seen[p] = true
 			paths = append(paths, p)

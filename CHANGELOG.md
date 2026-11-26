@@ -6,6 +6,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `create_event`, `update_event`, `delete_event`, `search_events`, and
+  `find_free_slots` return `validation` with `retryable: false` for each
+  argument check that they make before a request. The message names the field.
+  Before, some of these checks returned an error without a code, for example a
+  relative calendar path, a NUL in a title, location, notes, or `query`, an
+  `rrule` that does not parse, and an invalid `alarms_minutes` list. A calendar
+  selection error in `search_events` now starts with `calendars:`, as in
+  `find_free_slots`. A failed calendar listing keeps its own code. (#247)
+
 ## [1.3.0] - 2026-11-26
 
 This minor release adds opt-in Mail attachment support without disk access:

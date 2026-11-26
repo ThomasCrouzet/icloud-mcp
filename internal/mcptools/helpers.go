@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -65,8 +66,9 @@ func errorMessage(context string, err error) string {
 
 // errResult builds an error CallToolResult and sends its message through the
 // Redactor. All tool errors use this helper. A classified *icloud.Error adds a
-// stable JSON code, so agents do not need to parse English text. The result
-// never includes raw HTTP or XML bodies.
+// stable JSON code, so agents do not need to parse English text. Another error
+// gets the validation code only under an argument context. The result never
+// includes raw HTTP or XML bodies.
 func errResult(red *security.Redactor, context string, err error) *mcp.CallToolResult {
 	msg := boundedUTF8(redact(red, errorMessage(context, err)), maxErrorMessageBytes)
 	payload := toolErrorPayload{Message: msg}
@@ -98,7 +100,7 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 				payload.Reconciliation = payload.Details["reconciliation"]
 			}
 		}
-	} else if context == "validation" || context == "validation error" {
+	} else if isArgumentContext(context) {
 		payload.Code = string(icloud.CodeValidation)
 	}
 	b, mErr := json.Marshal(payload)
@@ -114,6 +116,14 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 		}
 	}
 	return mcp.NewToolResultError(string(b))
+}
+
+// isArgumentContext reports whether a context marks an argument rejection
+// before any request: "validation", "validation error", or "<field>
+// parameter". A failure that can occur after a request must use an operation
+// context, such as "searching events", so that it does not get this code.
+func isArgumentContext(context string) bool {
+	return context == "validation" || context == "validation error" || strings.HasSuffix(context, " parameter")
 }
 
 func calendarMutationErrorStatus(err error) string {

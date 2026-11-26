@@ -210,13 +210,13 @@ func resolveCalendarPaths(ctx context.Context, deps Deps, req mcp.CallToolReques
 			return nil
 		}
 		if err := icloud.ValidateCalendarPath(path); err != nil {
-			return err
+			return icloud.NewValidationError(err.Error())
 		}
 		if _, ok := seen[path]; ok {
 			return nil
 		}
 		if len(paths) >= maxExplicitFreeSlotCalendars {
-			return fmt.Errorf("calendar selection must contain at most %d unique paths", maxExplicitFreeSlotCalendars)
+			return icloud.NewValidationError(fmt.Sprintf("calendar selection must contain at most %d unique paths", maxExplicitFreeSlotCalendars))
 		}
 		seen[path] = struct{}{}
 		paths = append(paths, path)
@@ -240,7 +240,7 @@ func resolveCalendarPaths(ctx context.Context, deps Deps, req mcp.CallToolReques
 	}
 	if hasCalendars || hasCalendar {
 		if len(paths) == 0 {
-			return nil, fmt.Errorf("calendar selection must contain at least one non-empty path")
+			return nil, icloud.NewValidationError("calendar selection must contain at least one non-empty path")
 		}
 	}
 	paths, err := selectCalendarReadPaths(ctx, deps, paths)

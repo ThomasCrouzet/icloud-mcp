@@ -35,6 +35,12 @@ Contacts, and Mail use the same public codes.
 | `outcome_unknown` | no | The mutation might already have succeeded. Follow `reconciliation`. Read the resource before choosing a new update key. |
 | `internal_error` | no | Report the failure with redacted logs. If a mutation was possible, read the resource before another update. |
 
+Each argument check that a tool makes before a request returns `validation`
+with `retryable: false`. The message names the field. A failure after a
+request, such as a failed calendar listing, keeps its own code. The MCP input
+schema check runs before the tool. Its refusal is plain text without a `code`;
+fix the arguments as for `validation`.
+
 `search_events` cursor failures use `validation` with a bounded
 `details.cursor` reason. The reasons are `malformed`, `signature`, `expired`,
 `query_mismatch`, `stale`, `selection_required`, and `offset_not_allowed`.
