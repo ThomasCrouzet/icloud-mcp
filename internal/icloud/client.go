@@ -47,7 +47,7 @@ type httpDoer interface {
 }
 
 // Client implements Service against iCloud through go-webdav/caldav. It uses
-// custom shard discovery from discovery.go. In go-webdav v0.7.0,
+// custom shard discovery from discovery.go. In go-webdav v0.7.0 and v0.8.0,
 // FindCalendarHomeSet returns only the path and loses the shard host. Custom
 // discovery routes later requests to the correct pXX-caldav.icloud.com shard.
 type Client struct {

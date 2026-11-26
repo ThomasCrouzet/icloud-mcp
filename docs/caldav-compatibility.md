@@ -75,6 +75,9 @@ empty selections. Availability rejects explicitly empty selections.
   The successful `delete_event` response also decodes `deletedTitle`, including dry runs.
 - Invalid TEXT escapes or value types return `protocol_error` when read.
   An invalid delete title fails before mutation. Errors do not include remote text.
+- A malformed content line returns `protocol_error` for the complete read. Two
+  examples are text after a quoted parameter value and a parameter list without
+  a colon. Search and availability then fail for all selected calendars.
 
 ## Writes
 
@@ -95,6 +98,9 @@ empty selections. Availability rejects explicitly empty selections.
 - The client encodes the complete object before PUT. A value or parameter that
   iCalendar cannot encode, such as a CR, returns `validation`. The client sends
   no request, and the message does not repeat event text or encoder text.
+- An update keeps unknown stored properties. A stored parameter value with a
+  bare CR therefore blocks the update with `validation`. Reads still return the
+  event and its busy interval.
 - Automatic retries apply only to reads. The client never repeats PUT, DELETE,
   or a full-series delete.
 - A transport failure after dispatch returns `outcome_unknown` with

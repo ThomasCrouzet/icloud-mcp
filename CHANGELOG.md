@@ -24,6 +24,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
   the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
 
+### Changed
+- Update `github.com/emersion/go-webdav` to v0.8.0 and `github.com/emersion/go-ical`
+  to v0.0.0-20261112170022-46c5b53a1723. The server uses only the go-webdav
+  Basic authentication client and CalendarObject type, and they did not change.
+  Collection hrefs keep their exact form.
+- The go-ical decoder now reports text after a quoted parameter value and a
+  parameter list without a colon. The earlier decoder stopped on them with a
+  recovered panic, so reads still return `protocol_error` without remote text.
+- The go-ical encoder now rejects a CR or LF in a parameter value. An update
+  that keeps such a stored value returns `validation` before any PUT. Before,
+  the PUT sent the bare CR. Reads still return the event.
+
 ### Fixed
 - Calendar writes that iCalendar cannot encode, such as a CR in a title,
   location, or notes, return `validation` before any PUT. The message does not

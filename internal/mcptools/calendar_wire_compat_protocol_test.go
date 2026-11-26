@@ -443,6 +443,51 @@ func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 	})
 }
 
+// A stored parameter value can hold a bare CR. Reads keep the event and its
+// busy interval. A write that keeps the parameter cannot encode it, so the
+// update stops before PUT with validation. The error names no remote property,
+// parameter, or value.
+func TestProtocolCalendarWriteRemoteParameterLineBreak(t *testing.T) {
+	const calendarPath = "/wire/calendars/home/"
+	for _, test := range []struct {
+		name, property string
+	}{
+		{"unquoted value", "X-WIRE;PRIVATE@EXAMPLE.INVALID=private\rparam:value\n"},
+		{"quoted value", "X-PRIVATE-WIRE;X-PRIVATE=\"private\rparam\":value\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject(test.property)})
+			var detail getEventDTO
+			if f.call(t, "get_event", map[string]any{"calendar": calendarPath, "uid": wireUID}, &detail) ||
+				detail.Title != "Wire event" || detail.ETag != wireETag {
+				t.Fatalf("get_event lost the event: %+v", detail)
+			}
+			var page searchEventsResponse
+			if f.call(t, "search_events", wireSearchArgs(calendarPath), &page) || page.Count != 1 {
+				t.Fatalf("search_events lost the event: %+v", page)
+			}
+			var free freeSlotsResponse
+			if f.call(t, "find_free_slots", wireFreeSlotArgs(calendarPath), &free) || free.Count != 2 ||
+				free.Slots[0].End != "2026-11-07T10:00:00+00:00" || free.Slots[1].Start != "2026-11-07T11:00:00+00:00" {
+				t.Fatalf("find_free_slots lost the busy interval: %+v", free)
+			}
+			assertWirePrivate(t, []any{detail, page, free}, "private", "PRIVATE")
+			var got toolErrorPayload
+			if !f.call(t, "update_event", map[string]any{"calendar": calendarPath, "uid": wireUID, "etag": wireETag,
+				"title": "Changed"}, &got) {
+				t.Fatalf("update_event wrote a CR inside a parameter value: %q", f.putBodies)
+			}
+			if got.Code != "validation" || !strings.Contains(got.Message, "Calendar event cannot be encoded") {
+				t.Errorf("update_event error = %+v, want the stable encode validation error", got)
+			}
+			assertWirePrivate(t, got, "private", "PRIVATE", "EXAMPLE", "X-WIRE", "ical:")
+			if f.puts.Load() != 0 {
+				t.Fatalf("update_event dispatched %d PUT requests", f.puts.Load())
+			}
+		})
+	}
+}
+
 // Contacts discovery keeps address-book collection hrefs opaque. A book href
 // with or without a trailing slash gives a stable identifier, scope matching by
 // name, and a REPORT on the exact href form.

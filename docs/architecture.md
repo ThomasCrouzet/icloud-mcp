@@ -411,8 +411,8 @@ dependencies. If you add a direct dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
 |------------|---------------|---------------|
-| `github.com/emersion/go-webdav` | `v0.7.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
-| `github.com/emersion/go-ical` | `v0.0.0-20250609112844-439c63cef608` | iCalendar parse/encode |
+| `github.com/emersion/go-webdav` | `v0.8.0` | CalDAV primitives. Discovery and conditional operations remain hand-written. |
+| `github.com/emersion/go-ical` | `v0.0.0-20261112170022-46c5b53a1723` | iCalendar parse/encode |
 | `github.com/mark3labs/mcp-go` | `v1.2.0` | MCP stdio, schemas, JSON-RPC |
 | `github.com/teambition/rrule-go` | `v1.8.2` | Bounded recurrence with timezone preservation |
 | `golang.org/x/time` | `v0.16.0` | Per-domain rate limiters |
@@ -425,9 +425,11 @@ dependencies. If you add a direct dependency, add its justification here.
 ## Hand-rolled DAV boundaries
 
 Calendar uses custom discovery, iCloud-compatible REPORT, and conditional PUT or
-DELETE code. go-webdav v0.7.0 loses shard authority during discovery. It also
-lacks the required conditional write API. Calendar update always gets the full
-object before PUT. Thus, VERSION, PRODID, and VTIMEZONE remain.
+DELETE code. go-webdav `FindCalendarHomeSet` loses shard authority during
+discovery. v0.7.0 also lacked the required conditional write API. v0.8.0 adds
+If-Match options, but the tested hand-written requests remain. Calendar update
+always gets the full object before PUT. Thus, VERSION, PRODID, and VTIMEZONE
+remain.
 
 Contacts uses custom bounded PROPFIND, REPORT, GET, PUT, and DELETE code. It also
 uses custom href resolution, redirects, and XML decoding. Resource hrefs are
