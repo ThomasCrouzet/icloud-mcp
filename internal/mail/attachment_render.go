@@ -216,8 +216,8 @@ func imageDecodeBytes(config image.Config, format string, data []byte) int64 {
 	return estimate
 }
 
-// pngInterlaced reports the interlace method of the IHDR chunk, which a PNG
-// stores first, right after the 8-byte signature.
+// pngInterlaced reports whether the IHDR chunk sets an interlace method. A PNG
+// stores IHDR first, right after the 8-byte signature.
 func pngInterlaced(data []byte) bool {
 	return len(data) > 28 && string(data[12:16]) == "IHDR" && data[28] != 0
 }
@@ -319,11 +319,8 @@ func scaleImage(source image.Image, longEdge int) *image.RGBA {
 
 var errDocxMalformed = &Error{Code: CodeProtocolError, Message: "Word document could not be read as text"}
 
-// docxText extracts the paragraph text of word/document.xml. It bounds the
-// archive entry count, the decompressed size, the compression ratio, the
-// element depth, the token count, and the output. It never extracts files and
-// ignores every other archive entry.
-// serializedDocxText runs docxText in the render slot.
+// serializedDocxText runs docxText in the render slot, so one Word text
+// extraction or image decode runs at a time in the process.
 func serializedDocxText(ctx context.Context, data []byte, maxText int) (string, bool, error) {
 	if err := acquire(ctx, renderSlot); err != nil {
 		return "", false, err
@@ -332,6 +329,10 @@ func serializedDocxText(ctx context.Context, data []byte, maxText int) (string, 
 	return docxText(data, maxText)
 }
 
+// docxText extracts the paragraph text of word/document.xml. It bounds the
+// archive entry count, the decompressed size, the compression ratio, the
+// element depth, the attributes of each element, the token count, and the
+// output. It never extracts files and ignores every other archive entry.
 func docxText(data []byte, maxText int) (string, bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -411,7 +412,9 @@ func extractDocxXML(stream io.Reader, maxText int) (string, bool, error) {
 			if depth > maxDocxDepth {
 				return "", false, newError(CodePayloadTooLarge, "Word document is nested too deeply to read")
 			}
-			// The decoder keeps the namespace declarations of each open element.
+			// The decoder keeps the namespace declarations of each open
+			// element. This bound limits them; renderSlot limits the parse
+			// cost of one oversized element to one call at a time.
 			if len(value.Attr) > maxDocxAttributes {
 				return "", false, newError(CodePayloadTooLarge, "Word document has too many attributes on one element")
 			}
