@@ -267,7 +267,10 @@ the complete object. Identical UIDs in different calendars stay isolated.
 
 `get_event` reports `isGroupScheduled` when the object has `ORGANIZER` or
 `ATTENDEE`. It never returns an address or parameter from those properties.
-A malformed cal-address fails closed with `protocol_error`.
+Reads tolerate historical empty or non-URI cal-addresses without returning
+the identities. Their presence still sets `isGroupScheduled`.
+Search and availability retain the event and its busy interval.
+Mutation validation still rejects malformed cal-addresses with `protocol_error`.
 
 A series or occurrence update or delete of such an object is denied with
 `authorization` by default, before any PUT or DELETE. The approved path needs

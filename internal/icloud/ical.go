@@ -1022,10 +1022,11 @@ func parseCalendarObject(obj *extcaldav.CalendarObject) (*Event, []Event, error)
 			return nil, nil, NewError(CodeProtocolError, 0, "Calendar recurrence override time form does not match the master", nil)
 		}
 	}
-	groupScheduled, err := schedulingIndicators(obj.Data)
-	if err != nil {
-		return nil, nil, err
-	}
+	// Reads need only a conservative presence marker. Historical imports may
+	// contain non-URI cal-addresses; do not lose the event or its busy interval.
+	// Mutation paths separately call schedulingIndicators and retain its strict
+	// validation before any PUT or DELETE.
+	groupScheduled := hasSchedulingProperties(obj.Data)
 	master.IsGroupScheduled = groupScheduled
 	for i := range overrides {
 		overrides[i].IsGroupScheduled = groupScheduled
@@ -1037,6 +1038,21 @@ func parseCalendarObject(obj *extcaldav.CalendarObject) (*Event, []Event, error)
 // SchedulingNotificationRisk is the fixed warning returned for an object that
 // carries ORGANIZER or ATTENDEE. It deliberately names no address.
 const SchedulingNotificationRisk = "the event carries scheduling metadata; a scheduling-capable server can notify organizers or attendees about a series or occurrence change"
+
+// hasSchedulingProperties treats even an empty or malformed property as a
+// scheduling risk. It never exposes, normalizes, or writes a cal-address.
+func hasSchedulingProperties(cal *ical.Calendar) bool {
+	if cal == nil {
+		return false
+	}
+	for _, child := range cal.Children {
+		if child.Name == ical.CompEvent &&
+			(len(child.Props[ical.PropOrganizer]) > 0 || len(child.Props[ical.PropAttendee]) > 0) {
+			return true
+		}
+	}
+	return false
+}
 
 // schedulingIndicators reports whether the complete calendar object has
 // ORGANIZER or ATTENDEE. It validates each cal-address value and fails closed
