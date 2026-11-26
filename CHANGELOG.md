@@ -23,6 +23,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pass it. The Drafts mailbox must pass the `mail.mutate` resource scope, with
   the usual fallback to `mail.read`, and the `mail.read` scope. (#243)
 
+### Fixed
+- Calendar reads retain historical events with empty or non-URI scheduling
+  addresses. Search and availability keep their busy intervals, and
+  `isGroupScheduled` remains set without exposing identities. Update and delete
+  still reject malformed scheduling metadata before any write.
+
 ## [1.2.0] - 2026-11-19
 
 This minor release adds an optional custom sender address for Mail and
