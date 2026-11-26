@@ -187,11 +187,14 @@ func sendClaimIsDefinitive(result SendResult, err error) bool {
 	}
 }
 
+// definitiveSendErrorCode lists the codes of a rejected outcome that may
+// expire. An attachment read before SMTP can also fail with
+// concurrent_modification, and it dispatches nothing.
 func definitiveSendErrorCode(code Code) bool {
 	switch code {
 	case CodeValidation, CodeAuthorization, CodeRateLimited, CodeTimeout,
 		CodeUnavailable, CodeAuthentication, CodeProtocolError, CodePayloadTooLarge,
-		CodeNotFound, CodeInternalError:
+		CodeNotFound, CodeInternalError, CodeConcurrentModification:
 		return true
 	}
 	return false

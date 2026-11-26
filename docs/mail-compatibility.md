@@ -498,7 +498,10 @@ its 256 KiB limit.
 
 The idempotency fingerprint includes the attachment references. A message
 without attachments keeps its existing fingerprint. The same key with other
-attachments returns `conflict`.
+attachments returns `conflict`. A failed attachment read, such as a changed
+UIDVALIDITY, occurs before SMTP and reports `status: rejected`. A keyed call
+keeps this definitive outcome for 15 minutes, as for other rejected outcomes.
+After that window, the same key can send with corrected references.
 
 ### Staging and drafts
 
