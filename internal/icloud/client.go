@@ -226,16 +226,16 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, ne *NewEv
 	if len(ne.ExDates) > maxRemoteExDates {
 		return "", NewValidationError(fmt.Sprintf("at most %d recurrence exceptions allowed", maxRemoteExDates))
 	}
-	if err := ValidateTextField("title", ne.Title, MaxTitleLen); err != nil {
+	if err := ValidateWriteTextField("title", ne.Title, MaxTitleLen); err != nil {
 		return "", err
 	}
 	if ne.Title == "" {
 		return "", fmt.Errorf("title cannot be empty")
 	}
-	if err := ValidateTextField("location", ne.Location, MaxLocationLen); err != nil {
+	if err := ValidateWriteTextField("location", ne.Location, MaxLocationLen); err != nil {
 		return "", err
 	}
-	if err := ValidateTextField("notes", ne.Notes, MaxNotesLen); err != nil {
+	if err := ValidateWriteTextField("notes", ne.Notes, MaxNotesLen); err != nil {
 		return "", err
 	}
 	if err := ValidateRange(ne.StartTime, ne.EndTime); err != nil {
@@ -348,17 +348,17 @@ func (c *Client) UpdateEvent(ctx context.Context, calendarPath, uid string, up *
 		return err
 	}
 	if up.Title != nil {
-		if err := ValidateTextField("title", *up.Title, MaxTitleLen); err != nil {
+		if err := ValidateWriteTextField("title", *up.Title, MaxTitleLen); err != nil {
 			return err
 		}
 	}
 	if up.Location != nil {
-		if err := ValidateTextField("location", *up.Location, MaxLocationLen); err != nil {
+		if err := ValidateWriteTextField("location", *up.Location, MaxLocationLen); err != nil {
 			return err
 		}
 	}
 	if up.Notes != nil {
-		if err := ValidateTextField("notes", *up.Notes, MaxNotesLen); err != nil {
+		if err := ValidateWriteTextField("notes", *up.Notes, MaxNotesLen); err != nil {
 			return err
 		}
 	}

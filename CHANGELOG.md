@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The Calendar client methods for create and update also reject a CR in a
+  title, location, or notes with `validation` before any request, as the MCP
+  handlers do. Notes keep LF. The MCP tools already applied this check, so
+  their behavior does not change. (#249)
+
 ### Fixed
 - `create_event`, `update_event`, `delete_event`, `search_events`, and
   `find_free_slots` return `validation` with `retryable: false` for each
