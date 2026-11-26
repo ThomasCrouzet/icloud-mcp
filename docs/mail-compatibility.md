@@ -469,8 +469,9 @@ With `format: "auto"`, the result depends on the type:
 - `text/*`, JSON, and XML return as bounded text after charset decoding.
   HTML uses the same converter as the HTML body fallback.
 - A Word `.docx` returns its paragraph text. The reader accepts at most 5,000
-  archive entries, 16 MiB of document XML, and 4,000,000 XML tokens. It reads
-  only `word/document.xml` and never unpacks other entries.
+  archive entries, 4 MiB of document XML, a compression ratio of 100, a
+  nesting depth of 128 elements, and 1,000,000 XML tokens. It reads only
+  `word/document.xml` and never unpacks other entries.
 - Other files up to 600 KiB return as an MCP embedded resource blob.
 
 With `format: "original"`, the bytes return unchanged as image or resource

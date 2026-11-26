@@ -24,8 +24,10 @@ const (
 	maxImagePixels       = 25_000_000
 	maxImageEdge         = 12_000
 	maxDocxEntries       = 5_000
-	maxDocxDocumentBytes = 16 * 1024 * 1024
-	maxDocxTokens        = 4_000_000
+	maxDocxDocumentBytes = 4 * 1024 * 1024
+	maxDocxTokens        = 1_000_000
+	maxDocxDepth         = 128
+	maxDocxRatio         = 100
 	docxMediaType        = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
@@ -228,8 +230,9 @@ func scaleImage(source image.Image, longEdge int) *image.RGBA {
 var errDocxMalformed = &Error{Code: CodeProtocolError, Message: "Word document could not be read as text"}
 
 // docxText extracts the paragraph text of word/document.xml. It bounds the
-// archive entry count, the decompressed size, the token count, and the
-// output. It never extracts files and ignores every other archive entry.
+// archive entry count, the decompressed size, the compression ratio, the
+// element depth, the token count, and the output. It never extracts files and
+// ignores every other archive entry.
 func docxText(data []byte, maxText int) (string, bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -251,6 +254,11 @@ func docxText(data []byte, maxText int) (string, bool, error) {
 	if document.UncompressedSize64 > maxDocxDocumentBytes {
 		return "", false, newError(CodePayloadTooLarge, "Word document text exceeds the decode limit")
 	}
+	// The archive reader rejects an entry that inflates beyond its declared
+	// size, so the declared sizes bound the real ratio.
+	if document.UncompressedSize64 > 0 && (document.CompressedSize64 == 0 || document.UncompressedSize64/document.CompressedSize64 > maxDocxRatio) {
+		return "", false, newError(CodePayloadTooLarge, "Word document is compressed beyond the decode limit")
+	}
 	stream, err := document.Open()
 	if err != nil {
 		return "", false, errDocxMalformed
@@ -266,6 +274,7 @@ func extractDocxXML(stream io.Reader, maxText int) (string, bool, error) {
 	var builder strings.Builder
 	inText := false
 	tokens := 0
+	depth := 0
 	newlines := 0
 	write := func(value string) bool {
 		for _, r := range value {
@@ -298,6 +307,11 @@ func extractDocxXML(stream io.Reader, maxText int) (string, bool, error) {
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
+			// The decoder keeps one entry for each open element.
+			depth++
+			if depth > maxDocxDepth {
+				return "", false, newError(CodePayloadTooLarge, "Word document is nested too deeply to read")
+			}
 			switch value.Name.Local {
 			case "t":
 				inText = true
@@ -311,6 +325,7 @@ func extractDocxXML(stream io.Reader, maxText int) (string, bool, error) {
 				}
 			}
 		case xml.EndElement:
+			depth--
 			switch value.Name.Local {
 			case "t":
 				inText = false

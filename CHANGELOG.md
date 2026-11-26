@@ -15,7 +15,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   append a draft to the Drafts mailbox. New tokens: `mail.attachments.read`,
   `mail.attachments.send`, and `mail.drafts`. New optional
   `ICLOUD_MCP_DRAFTS_MAILBOX`, because iCloud marks no SPECIAL-USE Drafts
-  mailbox. Without the tokens, every profile keeps its tool set. (#243)
+  mailbox. Without the tokens, every profile keeps its tool set. Word text
+  extraction accepts at most 4 MiB of document XML, a compression ratio of 100,
+  and a nesting depth of 128 elements. (#243)
 
 ## [1.2.0] - 2026-11-19
 
