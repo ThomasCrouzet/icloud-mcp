@@ -3,6 +3,7 @@ package mail
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"image"
@@ -23,6 +24,7 @@ import (
 const (
 	maxImagePixels       = 25_000_000
 	maxImageEdge         = 12_000
+	maxImageDecodeBytes  = 96 * 1024 * 1024
 	maxDocxEntries       = 5_000
 	maxDocxDocumentBytes = 4 * 1024 * 1024
 	maxDocxTokens        = 1_000_000
@@ -33,6 +35,10 @@ const (
 
 // resizeEdges are the long-edge targets tried in order for an oversized image.
 var resizeEdges = []int{1568, 1024, 768, 512}
+
+// imageDecodeSlot lets one image decode and resize run at a time in the
+// process, so concurrent tool calls cannot add their decode buffers.
+var imageDecodeSlot = make(chan struct{}, 1)
 
 var extensionTypes = map[string]string{
 	".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -81,7 +87,7 @@ func isImageType(contentType string) bool {
 // renderAttachment chooses the delivery for one decoded part. Images go to
 // the model as images, text and Word documents as bounded text, and other
 // files as an embedded resource when they fit the inline limit.
-func renderAttachment(result *AttachmentResult, part fetchedPart, format string, maxText int) error {
+func renderAttachment(ctx context.Context, result *AttachmentResult, part fetchedPart, format string, maxText int) error {
 	contentType := result.ContentType
 	data := part.Data
 	if isImageType(contentType) {
@@ -95,7 +101,7 @@ func renderAttachment(result *AttachmentResult, part fetchedPart, format string,
 		if format == "original" || contentType == "image/webp" {
 			return newError(CodePayloadTooLarge, "image exceeds the 600 KiB inline limit; use format auto for a resized copy, or attach it to a message by reference")
 		}
-		resized, width, height, err := resizeImage(data)
+		resized, width, height, err := resizeImage(ctx, data)
 		if err != nil {
 			return err
 		}
@@ -159,10 +165,10 @@ func decodeCharset(data []byte, label string) (string, error) {
 	return strings.ToValidUTF8(string(decoded), "�"), nil
 }
 
-// resizeImage decodes a PNG, JPEG, or GIF after a dimension check and
-// encodes a smaller JPEG that fits the inline limit.
-func resizeImage(data []byte) ([]byte, int, int, error) {
-	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+// resizeImage decodes a PNG, JPEG, or GIF after a dimension and memory check
+// and encodes a smaller JPEG that fits the inline limit.
+func resizeImage(ctx context.Context, data []byte) ([]byte, int, int, error) {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, newError(CodeProtocolError, "image could not be decoded")
 	}
@@ -170,6 +176,13 @@ func resizeImage(data []byte) ([]byte, int, int, error) {
 		int64(config.Width)*int64(config.Height) > maxImagePixels {
 		return nil, 0, 0, newError(CodePayloadTooLarge, "image dimensions exceed the decode limit")
 	}
+	if int64(config.Width)*int64(config.Height)*decodeBytesPerPixel(format, config.ColorModel, data) > maxImageDecodeBytes {
+		return nil, 0, 0, newError(CodePayloadTooLarge, "image needs more decode memory than the limit")
+	}
+	if err := acquire(ctx, imageDecodeSlot); err != nil {
+		return nil, 0, 0, err
+	}
+	defer func() { <-imageDecodeSlot }()
 	source, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, newError(CodeProtocolError, "image could not be decoded")
@@ -190,9 +203,61 @@ func resizeImage(data []byte) ([]byte, int, int, error) {
 	return nil, 0, 0, newError(CodePayloadTooLarge, "image does not fit the inline limit after resizing")
 }
 
+// decodeBytesPerPixel is an upper bound of the memory that the standard
+// decoders use for each pixel. A PNG transparency chunk can widen gray to
+// NRGBA. A JPEG can need an RGB copy of its YCbCr planes, and a progressive
+// JPEG keeps one 32-bit coefficient for each sample of each component.
+func decodeBytesPerPixel(format string, model color.Model, data []byte) int64 {
+	if format == "jpeg" {
+		perPixel, components := int64(1), int64(1)
+		switch model {
+		case color.YCbCrModel:
+			perPixel, components = 7, 3
+		case color.CMYKModel:
+			perPixel, components = 8, 4
+		}
+		if jpegProgressive(data) {
+			perPixel += 4 * components
+		}
+		return perPixel
+	}
+	if _, ok := model.(color.Palette); ok {
+		return 1
+	}
+	switch model {
+	case color.GrayModel, color.RGBAModel, color.NRGBAModel:
+		return 4
+	}
+	return 8
+}
+
+// jpegProgressive reports whether the first frame header of a JPEG is
+// progressive. A header that it cannot find counts as progressive.
+func jpegProgressive(data []byte) bool {
+	for i := 2; i+4 <= len(data); {
+		if data[i] != 0xff {
+			return true
+		}
+		switch marker := data[i+1]; {
+		case marker == 0xff:
+			i++
+		case marker == 0xc0 || marker == 0xc1:
+			return false
+		case marker == 0x01 || marker >= 0xd0 && marker <= 0xd8:
+			i += 2
+		default:
+			i += 2 + (int(data[i+2])<<8 | int(data[i+3]))
+		}
+	}
+	return true
+}
+
 // scaleImage downsamples with a bounded box filter and composites any alpha
-// over white. It samples at most 3 by 3 source pixels per target pixel.
+// over white. It samples at most 3 by 3 source pixels per target pixel. It
+// reads samples without an interface value for each one, so the scan makes
+// no garbage.
 func scaleImage(source image.Image, longEdge int) *image.RGBA {
+	direct, _ := source.(image.RGBA64Image)
 	bounds := source.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 	targetW, targetH := width, height
@@ -212,7 +277,13 @@ func scaleImage(source image.Image, longEdge int) *image.RGBA {
 			stepY, stepX := max(1, (y1-y0)/3), max(1, (x1-x0)/3)
 			for sy := y0; sy < y1; sy += stepY {
 				for sx := x0; sx < x1; sx += stepX {
-					cr, cg, cb, ca := source.At(sx, sy).RGBA()
+					var cr, cg, cb, ca uint32
+					if direct != nil {
+						sample := direct.RGBA64At(sx, sy)
+						cr, cg, cb, ca = uint32(sample.R), uint32(sample.G), uint32(sample.B), uint32(sample.A)
+					} else {
+						cr, cg, cb, ca = source.At(sx, sy).RGBA()
+					}
 					// Composite premultiplied color over white.
 					white := 0xffff - ca
 					r += uint64(cr + white)

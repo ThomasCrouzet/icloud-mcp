@@ -465,7 +465,10 @@ With `format: "auto"`, the result depends on the type:
 
 - PNG, JPEG, GIF, and WebP up to 600 KiB return as MCP image content.
 - A larger PNG, JPEG, or GIF returns as a resized JPEG below 600 KiB. Decode
-  starts only after a check of 12,000 pixels per edge and 25 megapixels.
+  starts only after a check of 12,000 pixels per edge, 25 megapixels, and
+  96 MiB of decode memory. The memory check uses an upper bound of the bytes
+  per pixel for the color model. A progressive JPEG also counts its
+  coefficient buffers. One image decode runs at a time in the process.
 - `text/*`, JSON, and XML return as bounded text after charset decoding.
   HTML uses the same converter as the HTML body fallback.
 - A Word `.docx` returns its paragraph text. The reader accepts at most 5,000

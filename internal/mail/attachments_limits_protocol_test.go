@@ -3,11 +3,16 @@ package mail
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
+	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"io"
 	"math/rand"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These protocol tests send hostile attachments through the production IMAP
@@ -132,4 +137,135 @@ func TestProtocolDocxDocumentSizeLimit(t *testing.T) {
 	}
 	_, _, err := getHostileAttachment(t, "large.docx", docxMediaType, large)
 	wantCode(t, err, CodePayloadTooLarge)
+}
+
+// fixtureRawPNG writes a PNG without filters. The first noiseRows rows are
+// random and the rest are zero, so the file size stays controllable while the
+// declared dimensions stay large. plte is the palette for color type 3.
+func fixtureRawPNG(t *testing.T, width, height int, colorType, bitDepth byte, plte []byte, noiseRows int) []byte {
+	t.Helper()
+	channels := map[byte]int{0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colorType]
+	rowBytes := (width*channels*int(bitDepth) + 7) / 8
+	var out bytes.Buffer
+	out.WriteString("\x89PNG\r\n\x1a\n")
+	chunk := func(kind string, data []byte) {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(data)))
+		out.Write(length[:])
+		sum := crc32.NewIEEE()
+		_, _ = io.WriteString(sum, kind)
+		_, _ = sum.Write(data)
+		out.WriteString(kind)
+		out.Write(data)
+		var crc [4]byte
+		binary.BigEndian.PutUint32(crc[:], sum.Sum32())
+		out.Write(crc[:])
+	}
+	header := make([]byte, 13)
+	binary.BigEndian.PutUint32(header[0:], uint32(width))
+	binary.BigEndian.PutUint32(header[4:], uint32(height))
+	header[8], header[9] = bitDepth, colorType
+	chunk("IHDR", header)
+	if plte != nil {
+		chunk("PLTE", plte)
+	}
+	var compressed bytes.Buffer
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	random := rand.New(rand.NewSource(3))
+	row := make([]byte, rowBytes+1)
+	for y := 0; y < height; y++ {
+		clear(row)
+		if y < noiseRows {
+			_, _ = random.Read(row[1:])
+		}
+		if _, err := writer.Write(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	chunk("IDAT", compressed.Bytes())
+	chunk("IEND", nil)
+	return out.Bytes()
+}
+
+func inResizeWindow(t *testing.T, data []byte) {
+	t.Helper()
+	if len(data) <= MaxAttachmentInlineBytes || len(data) > MaxAttachmentWireBytes*3/4 {
+		t.Fatalf("fixture image is %d bytes, want it between the inline and the wire limits", len(data))
+	}
+}
+
+func TestProtocolImageDecodeBudget(t *testing.T) {
+	// 4000 x 3500 pixels at 16 bits per channel pass the edge and pixel
+	// limits but decode into about 107 MiB.
+	deep := fixtureRawPNG(t, 4000, 3500, 6, 16, nil, 30)
+	inResizeWindow(t, deep)
+	_, allocated, err := getHostileAttachment(t, "deep.png", "image/png", deep)
+	wantCode(t, err, CodePayloadTooLarge)
+	if allocated > hostileAllocationBudget {
+		t.Fatalf("16-bit PNG allocated %d MiB, want at most %d MiB", allocated>>20, hostileAllocationBudget>>20)
+	}
+}
+
+// fixtureJPEGHeader writes a JFIF marker, a frame header, and comment
+// padding, which is enough for DecodeConfig. marker selects baseline (0xc0)
+// or progressive (0xc2).
+func fixtureJPEGHeader(width, height int, marker byte, size int) []byte {
+	out := []byte{0xff, 0xd8, 0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+		0xff, marker, 0, 17, 8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 3,
+		1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0}
+	for len(out) < size {
+		out = append(out, 0xff, 0xfe, 0xff, 0xff)
+		out = append(out, make([]byte, 0xfffd)...)
+	}
+	return out
+}
+
+func TestProtocolImageDecodeBudgetCountsProgressiveJPEG(t *testing.T) {
+	// A progressive decode keeps one coefficient for each sample, so the
+	// same dimensions cost more than a baseline decode.
+	progressive := fixtureJPEGHeader(3000, 2500, 0xc2, 700<<10)
+	inResizeWindow(t, progressive)
+	_, _, err := getHostileAttachment(t, "progressive.jpg", "image/jpeg", progressive)
+	wantCode(t, err, CodePayloadTooLarge)
+	// The baseline control passes the budget and fails only in the decoder.
+	baseline := fixtureJPEGHeader(3000, 2500, 0xc0, 700<<10)
+	_, _, err = getHostileAttachment(t, "baseline.jpg", "image/jpeg", baseline)
+	wantCode(t, err, CodeProtocolError)
+}
+
+func TestProtocolImageDimensionLimits(t *testing.T) {
+	// An edge above 12,000 pixels, with few decoded bytes.
+	wide := fixtureRawPNG(t, 13_000, 64, 0, 8, nil, 64)
+	inResizeWindow(t, wide)
+	_, _, err := getHostileAttachment(t, "wide.png", "image/png", wide)
+	wantCode(t, err, CodePayloadTooLarge)
+	// More than 25 megapixels at one bit per pixel, inside the byte budget.
+	many := fixtureRawPNG(t, 5_100, 5_000, 3, 1, []byte{0, 0, 0, 255, 255, 255}, 1_000)
+	inResizeWindow(t, many)
+	_, _, err = getHostileAttachment(t, "many.png", "image/png", many)
+	wantCode(t, err, CodePayloadTooLarge)
+}
+
+func TestProtocolImageDecodeIsSerialized(t *testing.T) {
+	large := fixturePNG(t, 700, 500, true)
+	f := newAttachmentFixture(t, attachmentFixtureOptions{read: true, extraParts: []fixturePart{{filename: "noise.png", contentType: "image/png", data: large}}})
+	ref := f.ref(f.partFor(t, "noise.png"))
+	// Another call holds the one decode slot, so this call must wait and
+	// reach its deadline instead of decoding in parallel.
+	imageDecodeSlot <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	_, err := f.client.GetAttachment(ctx, GetAttachmentInput{AttachmentRef: ref})
+	cancel()
+	<-imageDecodeSlot
+	wantCode(t, err, CodeTimeout)
+	resized, err := f.client.GetAttachment(t.Context(), GetAttachmentInput{AttachmentRef: ref})
+	if err != nil || resized.Delivery != DeliveryImageResized {
+		t.Fatalf("resize after the slot is free = %s, %v", resized.Delivery, err)
+	}
 }

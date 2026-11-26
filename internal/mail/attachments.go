@@ -348,7 +348,7 @@ func (s *Client) GetAttachment(ctx context.Context, input GetAttachmentInput) (A
 		Filename: part.Filename, ContentType: effectiveContentType(part.ContentType, part.Filename),
 		Size: len(part.Data), SHA256: hex.EncodeToString(sum[:]),
 	}
-	if err := renderAttachment(&result, part, format, maxText); err != nil {
+	if err := renderAttachment(ctx, &result, part, format, maxText); err != nil {
 		return AttachmentResult{}, err
 	}
 	return result, nil
