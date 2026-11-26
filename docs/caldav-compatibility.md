@@ -96,9 +96,9 @@ empty selections. Availability rejects explicitly empty selections.
 - Update preserves the existing DTSTART and DTEND form: DATE, TZID, or Z.
 - Never force UTC Z on a TZID series.
 - `create_event`, `update_event`, and `validate_event` reject a CR in a title,
-  location, or notes before any request. They also reject a CR or LF in
-  `rrule`. The error is `validation` and names the field, not the value. Notes
-  keep LF.
+  location, or notes before any request. `create_event` and `validate_event`
+  also reject a CR or LF in `rrule`; `update_event` has no `rrule` argument.
+  The error is `validation` and names the field, not the value. Notes keep LF.
 - The client encodes the complete object before PUT. If the encoder rejects
   the object, the client returns `protocol_error` with a fixed message and
   sends no PUT. The message repeats no event text, remote name, or encoder text.

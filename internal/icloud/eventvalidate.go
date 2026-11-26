@@ -138,6 +138,12 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	} else {
 		writeLoc = defaultLoc
 	}
+	// Check the raw value: the trim below would hide a trailing line break
+	// that create_event rejects.
+	rruleLineBreak := strings.ContainsAny(in.Recurrence, "\r\n")
+	if rruleLineBreak {
+		errs = append(errs, "RRULE contains a forbidden character (CR or LF)")
+	}
 	rrule := strings.TrimSpace(in.Recurrence)
 	if in.Structured != nil {
 		built, exdates, err := structuredToRRULE(in.Structured, defaultLoc, in.AllDay)
@@ -154,8 +160,12 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		}
 	}
 	if rrule != "" {
-		if err := validateRRULEForEventContext(ctx, rrule, in.StartTime, in.AllDay); err != nil {
-			errs = append(errs, err.Error())
+		// A raw rrule with a line break already has its error. A structured
+		// recurrence that replaced it is still checked.
+		if !rruleLineBreak || in.Structured != nil {
+			if err := validateRRULEForEventContext(ctx, rrule, in.StartTime, in.AllDay); err != nil {
+				errs = append(errs, err.Error())
+			}
 		}
 		if !in.AllDay && writeLoc != nil && writeLoc != time.UTC && !recurringTimezoneStable(writeLoc, in.StartTime) {
 			errs = append(errs, "timezone does not have a stable annual transition rule for recurring writes")

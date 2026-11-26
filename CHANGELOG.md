@@ -40,9 +40,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `create_event`, `update_event`, and `validate_event` reject a CR in a title,
-  location, or notes, and a CR or LF in `rrule`, with `validation` before any
-  request. The message names the field and repeats no input. Notes keep LF.
-  Before, the encoder rejected the value after discovery and GET. The error had
+  location, or notes with `validation` before any request. `create_event` and
+  `validate_event` also reject a CR or LF in `rrule`. The message names the
+  field and repeats no input. Notes keep LF. Before, the encoder rejected the
+  value after the requests that the write sends before its PUT. The error had
   no code, and the `update_event` idempotency cache kept it as an uncertain
   outcome.
 - A Calendar write that iCalendar cannot encode for another reason returns

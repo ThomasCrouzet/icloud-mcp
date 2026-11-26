@@ -436,6 +436,23 @@ func TestProtocolCalendarWriteLineBreakInput(t *testing.T) {
 			t.Fatalf("validate_event reached the server: %v", requests)
 		}
 	})
+	for _, rule := range []string{"FREQ=DAILY;COUNT=2\r", "FREQ=DAILY;COUNT=2\n", "FREQ=DAILY;COUNT=2\r\n", "FREQ=DAILY;\rCOUNT=2"} {
+		t.Run(fmt.Sprintf("validate_event rrule %q", rule), func(t *testing.T) {
+			f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
+			var got icloud.ValidationResult
+			if f.call(t, "validate_event", map[string]any{"title": "Daily", "rrule": rule,
+				"start": "2026-11-08T10:00:00Z", "end": "2026-11-08T11:00:00Z"}, &got) || got.OK {
+				t.Fatalf("validate_event accepted a trailing line break in rrule: %+v", got)
+			}
+			if n := strings.Count(strings.Join(got.Errors, "\n"), "RRULE contains a forbidden character (CR or LF)"); n != 1 {
+				t.Errorf("validate_event errors = %q, want the RRULE line break error once", got.Errors)
+			}
+			assertWirePrivate(t, got.Errors, "COUNT=2")
+			if requests := f.requestLog(); len(requests) != 0 {
+				t.Fatalf("validate_event reached the server: %v", requests)
+			}
+		})
+	}
 	t.Run("notes with LF stay writable", func(t *testing.T) {
 		f := newWireProtocol(t, "", wireCalendar{href: calendarPath, name: "Home", object: wireObject("")})
 		var got updateEventResponse
