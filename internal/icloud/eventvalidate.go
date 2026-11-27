@@ -133,7 +133,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		var err error
 		writeLoc, err = time.LoadLocation(in.Timezone)
 		if err != nil {
-			errs = append(errs, "invalid timezone")
+			errs = append(errs, "timezone must be an IANA timezone name, for example Europe/Paris")
 		}
 	} else {
 		writeLoc = defaultLoc
@@ -249,7 +249,7 @@ func validateEventURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid url")
+		return fmt.Errorf("url must be an absolute http or https URL")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {

@@ -45,10 +45,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   argument` for an undeclared key. Before, it could repeat a rejected value or
   an unknown key. The names come from the request keys and the validation
   result, not from the refusal text. (#248)
-- Some messages now name the exact argument and the rule. They cover the `uid`
-  and `client_uid` checks and the Mail `to`, `cc`, and `bcc` recipients. They
-  also cover Mail text such as `mailbox`, `subject`, and `body`, and
-  `working_hours_start` and `working_hours_end`. (#248)
+- These validation messages now name the exact argument, the rule, and the
+  accepted form. Clients that match message text must update. (#248)
+  - UID: `UID must not contain '/', '\', '%', or control characters` and
+    `UID must not contain a directory traversal sequence ('..')`. `get_event`
+    and `search_events` add the `uid parameter:` prefix. `create_event` uses
+    the `client_uid:` prefix.
+  - Mail recipients: `to`, `cc`, or `bcc` `must contain only plain
+    addr-specs, for example name@example.com`.
+  - Mail text: `<argument> must be valid UTF-8 of at most <N> bytes without
+    control characters`. `mailbox` and `destination` allow a tab. `body` uses
+    `without NUL`.
+  - `idempotency_key must be at most 255 bytes without CR, LF, or NUL`.
+  - `working_hours_start` or `working_hours_end` `must use HH:MM`, or `must be
+    between 00:00 and 24:00`.
+  - `timezone must be an IANA timezone name, for example Europe/Paris`.
+  - `alarms_minutes must be a comma-separated list of whole minutes from 0 to
+    40320`.
+  - `days_of_week must be a comma-separated list of days: sun to sat, sunday
+    to saturday, or 0 to 6 with 0 for Sunday`.
+  - `url must be an absolute http or https URL`.
+  - `calendar path must not contain '?', '#', NUL, CR, or LF`.
+  - `RRULE parts must use KEY=VALUE with a non-empty key and value`.
+  - `recurrence_id must not be empty`.
+  - Contacts: `<field>.type must contain only letters, digits, '-', or '_'`.
+    The `client_uid` message states its length and character rule.
+  - The `search_contacts` cursor message adds `use start or the exact
+    nextCursor value`.
+  - Mail: `flags must contain only seen, flagged, or answered`, and
+    `attachments item <N> must have only mailbox, uid_validity, uid, and
+    part_id`.
 
 ## [1.3.0] - 2026-11-26
 

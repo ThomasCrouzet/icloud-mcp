@@ -376,7 +376,7 @@ func mailAttachmentRefs(args map[string]any) ([]maildomain.AttachmentRef, error)
 		allowed := mailKeySet("mailbox", "uid_validity", "uid", "part_id")
 		for key := range object {
 			if _, ok := allowed[key]; !ok {
-				return nil, fmt.Errorf("attachments item %d has an unsupported field", index)
+				return nil, fmt.Errorf("attachments item %d must have only mailbox, uid_validity, uid, and part_id", index)
 			}
 		}
 		identity, err := mailParseIdentity(object)

@@ -51,10 +51,10 @@ func ValidateCalendarPath(path string) error {
 	}
 	// Reject query/fragment markers that change URL semantics under ResolveReference.
 	if strings.ContainsAny(path, "?#") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	if strings.ContainsAny(path, "\x00\n\r") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("calendar path contains a directory traversal sequence ('..')")
@@ -71,7 +71,7 @@ func ValidateCalendarPath(path string) error {
 		return fmt.Errorf("calendar path must be path-absolute (no host or scheme)")
 	}
 	if strings.ContainsAny(decoded, "?#\x00\n\r") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	return nil
 }
@@ -201,7 +201,7 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Time{}, fmt.Errorf("invalid %s: empty", name)
+		return time.Time{}, fmt.Errorf("%s must not be empty", name)
 	}
 	if len(value) == 10 {
 		if t, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
@@ -314,7 +314,7 @@ func validateRRULEParts(rule string) error {
 		}
 		key, value, ok := strings.Cut(part, "=")
 		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-			return fmt.Errorf("RRULE contains a malformed part")
+			return fmt.Errorf("RRULE parts must use KEY=VALUE with a non-empty key and value")
 		}
 		key = strings.ToUpper(strings.TrimSpace(key))
 		if seen[key] {

@@ -347,7 +347,7 @@ func parseAlarmsMinutesList(s string) ([]icloud.AlarmSpec, error) {
 		}
 		n, err := strconv.Atoi(part)
 		if err != nil {
-			return nil, fmt.Errorf("invalid alarms_minutes entry")
+			return nil, fmt.Errorf("alarms_minutes must be a comma-separated list of whole minutes from 0 to %d", maxAlarmMinutesBefore)
 		}
 		if n < 0 || n > maxAlarmMinutesBefore {
 			return nil, fmt.Errorf("alarms_minutes entries must be between 0 and %d", maxAlarmMinutesBefore)

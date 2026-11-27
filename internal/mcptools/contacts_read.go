@@ -187,7 +187,7 @@ func searchContactsHandler(deps ContactsDeps) server.ToolHandlerFunc {
 }
 
 func errContactsStaleCursor() error {
-	return fmt.Errorf("cursor is invalid, expired, or bound to different filters or read scope")
+	return fmt.Errorf("cursor is invalid, expired, or bound to different filters or read scope; use start or the exact nextCursor value")
 }
 
 // assembleContactsPage takes one page of at most limit rows from rows starting

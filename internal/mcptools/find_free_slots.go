@@ -64,7 +64,7 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 		if tz := req.GetString("timezone", ""); tz != "" {
 			l, lerr := time.LoadLocation(tz)
 			if lerr != nil {
-				return errResult(deps.Redactor, "validation", fmt.Errorf("invalid timezone")), nil
+				return errResult(deps.Redactor, "validation", fmt.Errorf("timezone must be an IANA timezone name, for example Europe/Paris")), nil
 			}
 			loc = l
 		}
@@ -281,7 +281,7 @@ func parseDaysOfWeek(s string) ([]time.Weekday, error) {
 		case "6", "sat", "saturday":
 			out = append(out, time.Saturday)
 		default:
-			return nil, fmt.Errorf("invalid day_of_week")
+			return nil, fmt.Errorf("days_of_week must be a comma-separated list of days: sun to sat, sunday to saturday, or 0 to 6 with 0 for Sunday")
 		}
 	}
 	return out, nil

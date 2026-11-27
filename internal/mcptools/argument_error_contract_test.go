@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -100,10 +101,10 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 			{"relative calendar", "calendar", set("find_free_slots", map[string]any{"calendar": "cal/allowed/"})},
 			{"empty calendars", "calendar", set("find_free_slots", map[string]any{"calendars": " , "})},
 			{"working hours", "working_hours_start", set("find_free_slots", map[string]any{"calendar": contractCalendar, "working_hours_start": "nine"})},
-			{"days of week", "day_of_week", set("find_free_slots", map[string]any{"calendar": contractCalendar, "days_of_week": "someday"})},
+			{"days of week", "days_of_week", set("find_free_slots", map[string]any{"calendar": contractCalendar, "days_of_week": "someday"})},
 			{"working hours without selection", "working_hours_start", set("find_free_slots", map[string]any{"working_hours_start": "nine"})},
 			{"working hours end without selection", "working_hours_end", set("find_free_slots", map[string]any{"working_hours_end": "25:00"})},
-			{"days of week without selection", "day_of_week", set("find_free_slots", map[string]any{"days_of_week": "someday"})},
+			{"days of week without selection", "days_of_week", set("find_free_slots", map[string]any{"days_of_week": "someday"})},
 			{"duration longer than range", "duration", set("find_free_slots", map[string]any{"calendar": contractCalendar, "start": "2026-07-01T09:00:00Z", "end": "2026-07-01T09:30:00Z"})},
 			{"duration longer than range without selection", "duration", set("find_free_slots", map[string]any{"start": "2026-07-01T09:00:00Z", "end": "2026-07-01T09:30:00Z"})},
 			{"timezone", "timezone", set("find_free_slots", map[string]any{"timezone": "Nowhere/Invalid"})},
@@ -400,13 +401,37 @@ func TestValidationMessagesNameArgumentAndRule(t *testing.T) {
 		{"send body", "send_message", set("send_message", map[string]any{"body": "a\x00b"}), "body must be valid UTF-8 of at most 102400 bytes without NUL"},
 		{"working_hours_start form", "find_free_slots", set("find_free_slots", map[string]any{"working_hours_start": "nine"}), "working_hours_start must use HH:MM"},
 		{"working_hours_end range", "find_free_slots", set("find_free_slots", map[string]any{"working_hours_end": "25:00"}), "working_hours_end must be between 00:00 and 24:00"},
+		{"create_event timezone", "create_event", set("create_event", map[string]any{"timezone": "Nowhere/Invalid"}), "timezone must be an IANA timezone name, for example Europe/Paris"},
+		{"validate_event timezone", "validate_event", set("validate_event", map[string]any{"timezone": "Nowhere/Invalid"}), "timezone must be an IANA timezone name, for example Europe/Paris"},
+		{"find_free_slots timezone", "find_free_slots", set("find_free_slots", map[string]any{"timezone": "Nowhere/Invalid"}), "timezone must be an IANA timezone name, for example Europe/Paris"},
+		{"create_event alarms_minutes", "create_event", set("create_event", map[string]any{"alarms_minutes": "soon"}), "alarms_minutes must be a comma-separated list of whole minutes from 0 to 40320"},
+		{"validate_event alarms_minutes", "validate_event", set("validate_event", map[string]any{"alarms_minutes": "soon"}), "alarms_minutes must be a comma-separated list of whole minutes from 0 to 40320"},
+		{"days_of_week entry", "find_free_slots", set("find_free_slots", map[string]any{"days_of_week": "someday"}), "days_of_week must be a comma-separated list of days: sun to sat, sunday to saturday, or 0 to 6 with 0 for Sunday"},
+		{"create_event url", "create_event", set("create_event", map[string]any{"url": "http://[x"}), "url must be an absolute http or https URL"},
+		{"update_event url", "update_event", set("update_event", map[string]any{"url": "http://[x"}), "url must be an absolute http or https URL"},
+		{"validate_event url", "validate_event", set("validate_event", map[string]any{"url": "http://[x"}), "url must be an absolute http or https URL"},
+		{"calendar path characters", "get_event", set("get_event", map[string]any{"calendar": "/cal/a?b/"}), "calendar path must not contain '?', '#', NUL, CR, or LF"},
+		{"rrule part form", "create_event", set("create_event", map[string]any{"rrule": "FREQ=DAILY;COUNT"}), "RRULE parts must use KEY=VALUE with a non-empty key and value"},
+		{"recurrence_id blank", "delete_event", set("delete_event", map[string]any{"scope": "occurrence", "recurrence_id": " "}), "recurrence_id must not be empty"},
+		{"contact address type", "create_contact", set("create_contact", map[string]any{"addresses": []any{map[string]any{"type": "home office", "locality": "City"}}}), "addresses[0].type must contain only letters, digits, '-', or '_'"},
+		{"contacts cursor", "search_contacts", set("search_contacts", map[string]any{"cursor": "not-a-cursor"}), "use start or the exact nextCursor value"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newContractRuntime(t, contractProfile{plan: contractAllOnPlan()})
+			args := contractClone(test.args)
+			if args["address_book"] == "$book" {
+				args["address_book"] = f.book
+			}
 			before := f.counts()
-			result := f.call(t, test.tool, test.args)
+			result := f.call(t, test.tool, args)
 			payload := contractPayload(t, result)
 			message, _ := payload["message"].(string)
+			if errs, ok := payload["errors"].([]any); ok && !result.IsError && payload["ok"] == false {
+				// validate_event reports invalid events in a success result.
+				message = fmt.Sprint(errs...)
+				payload["code"] = string(icloud.CodeValidation)
+				result.IsError = true
+			}
 			if !result.IsError || payload["code"] != string(icloud.CodeValidation) || !strings.Contains(message, test.want) {
 				t.Fatalf("message = %q, want validation with %q", message, test.want)
 			}

@@ -169,7 +169,7 @@ func validateFlags(input SetFlagsInput) error {
 	seen := make(map[MessageFlag]struct{}, len(input.Flags))
 	for _, flag := range input.Flags {
 		if flag != FlagSeen && flag != FlagFlagged && flag != FlagAnswered {
-			return validationError("flags contain an unsupported value")
+			return validationError("flags must contain only seen, flagged, or answered")
 		}
 		if _, duplicate := seen[flag]; duplicate {
 			return validationError("flags contain a duplicate value")
