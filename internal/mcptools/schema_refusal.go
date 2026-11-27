@@ -30,6 +30,12 @@ const schemaRefusalSummary = "arguments do not match the input schema"
 // The message names only declared properties. It never repeats a value, an
 // unknown key, or the SDK text. Handler results are JSON payloads and are
 // never changed.
+//
+// mcp-go runs OnSuccess hooks first and then OnAfterCallTool hooks in order,
+// with the same result. This function puts its hook first among the
+// OnAfterCallTool hooks, so every later observer sees the rewritten result.
+// Do not add an OnSuccess hook that reads tool results: it runs earlier and
+// sees the raw SDK text with caller values.
 func ConfigureSchemaRefusals(s *server.MCPServer, red *security.Redactor) {
 	if red == nil {
 		panic("mcptools: schema refusals require a non-nil redactor")
@@ -39,14 +45,14 @@ func ConfigureSchemaRefusals(s *server.MCPServer, red *security.Redactor) {
 		hooks = &server.Hooks{}
 		server.WithHooks(hooks)(s)
 	}
-	hooks.AddAfterCallTool(func(_ context.Context, _ any, request *mcp.CallToolRequest, result any) {
+	hooks.OnAfterCallTool = append([]server.OnAfterCallToolFunc{func(_ context.Context, _ any, request *mcp.CallToolRequest, result any) {
 		res, ok := result.(*mcp.CallToolResult)
 		if !ok || request == nil || !isSDKSchemaRefusal(res) {
 			return
 		}
 		message := schemaRefusalMessage(s.GetTool(request.Params.Name), request)
 		*res = *errResult(red, "validation", errors.New(message))
-	})
+	}}, hooks.OnAfterCallTool...)
 }
 
 // isSDKSchemaRefusal accepts only the exact SDK refusal shape: an error with

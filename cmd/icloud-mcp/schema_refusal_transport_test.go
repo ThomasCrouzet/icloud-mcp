@@ -73,3 +73,25 @@ func TestSchemaRefusalTransports(t *testing.T) {
 		})
 	}
 }
+
+// TestNewMCPServerSchemaRefusalHookOrder fails when the production server
+// registers an observer that can see a raw SDK refusal: an OnSuccess hook, or
+// an OnAfterCallTool hook before the rewrite.
+func TestNewMCPServerSchemaRefusalHookOrder(t *testing.T) {
+	s := newMCPServer(security.NewRedactor("synthetic-schema-secret"), mcptools.NewCapabilityPlan(false, false, true, true, false))
+	hooks := s.GetHooks()
+	if hooks == nil || len(hooks.OnAfterCallTool) == 0 {
+		t.Fatal("production server has no schema refusal hook")
+	}
+	if len(hooks.OnSuccess) != 0 {
+		t.Fatalf("production server has %d OnSuccess hooks; they would see raw SDK refusals", len(hooks.OnSuccess))
+	}
+	result := mcp.NewToolResultError("input schema validation failed: /mailbox: 'ZQXMARKER' does not match pattern")
+	request := &mcp.CallToolRequest{}
+	request.Params.Name = "list_mailboxes"
+	hooks.OnAfterCallTool[0](t.Context(), 1, request, result)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.HasPrefix(text, `{"code":"validation"`) || strings.Contains(text, "ZQXMARKER") {
+		t.Fatalf("first OnAfterCallTool hook is not the schema refusal rewrite: %s", text)
+	}
+}

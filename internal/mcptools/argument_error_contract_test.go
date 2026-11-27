@@ -1,6 +1,8 @@
 package mcptools
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
@@ -8,9 +10,11 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
+	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
 
 // contractAllOnPlan enables every capability token, so the plan registers
@@ -410,5 +414,35 @@ func TestValidationMessagesNameArgumentAndRule(t *testing.T) {
 				t.Fatal("rejected argument reached a backend")
 			}
 		})
+	}
+}
+
+// TestSchemaRefusalHookRunsBeforeOtherObservers registers an observer before
+// the rewrite. The observer must still see only the rewritten result.
+func TestSchemaRefusalHookRunsBeforeOtherObservers(t *testing.T) {
+	hooks := &server.Hooks{}
+	var observed []string
+	hooks.AddAfterCallTool(func(_ context.Context, _ any, _ *mcp.CallToolRequest, result any) {
+		if res, ok := result.(*mcp.CallToolResult); ok && len(res.Content) == 1 {
+			if text, ok := res.Content[0].(mcp.TextContent); ok {
+				observed = append(observed, text.Text)
+			}
+		}
+	})
+	s := server.NewMCPServer("hook-order", "test", server.WithInputSchemaValidation(), server.WithStrictInputSchemaDefault(), server.WithHooks(hooks))
+	ConfigureSchemaRefusals(s, security.NewRedactor("synthetic-secret"))
+	s.AddTool(mcp.NewTool("probe", mcp.WithString("value", mcp.Required())), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	if len(hooks.OnSuccess) != 0 {
+		t.Fatal("an OnSuccess hook would see the raw SDK refusal")
+	}
+	raw := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"probe","arguments":{"`+echoMarker+`":1}}}`))
+	wire, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 1 || !contractSchemaRefusal(observed[0]) || strings.Contains(observed[0], echoMarker) || strings.Contains(string(wire), echoMarker) {
+		t.Fatalf("observer saw %q; wire %s", observed, wire)
 	}
 }
