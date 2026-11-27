@@ -140,14 +140,14 @@ func findFreeSlotsHandler(deps Deps) server.ToolHandlerFunc {
 			ProbeExtra:        true,
 		}
 		if whs := req.GetString("working_hours_start", ""); whs != "" {
-			m, e := icloud.ParseWorkingHours(whs)
+			m, e := icloud.ParseWorkingHours("working_hours_start", whs)
 			if e != nil {
 				return errResult(deps.Redactor, "validation", e), nil
 			}
 			opts.WorkingHourStart = m
 		}
 		if whe := req.GetString("working_hours_end", ""); whe != "" {
-			m, e := icloud.ParseWorkingHours(whe)
+			m, e := icloud.ParseWorkingHours("working_hours_end", whe)
 			if e != nil {
 				return errResult(deps.Redactor, "validation", e), nil
 			}

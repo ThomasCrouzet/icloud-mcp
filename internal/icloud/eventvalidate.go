@@ -175,7 +175,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	}
 	if in.ClientUID != "" {
 		if err := ValidateUID(in.ClientUID); err != nil {
-			errs = append(errs, "client uid: "+err.Error())
+			errs = append(errs, "client_uid: "+err.Error())
 		}
 	}
 	if in.IdempotencyKey != "" {

@@ -61,7 +61,7 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 			{"rrule prefix", "rrule", set("create_event", map[string]any{"rrule": "RRULE:FREQ=DAILY"})},
 			{"start", "start", set("create_event", map[string]any{"start": "tomorrow"})},
 			{"timezone", "timezone", set("create_event", map[string]any{"timezone": "Nowhere/Invalid"})},
-			{"client uid", "uid", set("create_event", map[string]any{"client_uid": "a/b"})},
+			{"client uid", "client_uid", set("create_event", map[string]any{"client_uid": "a/b"})},
 		},
 		"update_event": {
 			{"uid separator", "uid", set("update_event", map[string]any{"uid": "a/b"})},
@@ -95,10 +95,10 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 		"find_free_slots": {
 			{"relative calendar", "calendar", set("find_free_slots", map[string]any{"calendar": "cal/allowed/"})},
 			{"empty calendars", "calendar", set("find_free_slots", map[string]any{"calendars": " , "})},
-			{"working hours", "working hours", set("find_free_slots", map[string]any{"calendar": contractCalendar, "working_hours_start": "nine"})},
+			{"working hours", "working_hours_start", set("find_free_slots", map[string]any{"calendar": contractCalendar, "working_hours_start": "nine"})},
 			{"days of week", "day_of_week", set("find_free_slots", map[string]any{"calendar": contractCalendar, "days_of_week": "someday"})},
-			{"working hours without selection", "working hours", set("find_free_slots", map[string]any{"working_hours_start": "nine"})},
-			{"working hours end without selection", "working hours", set("find_free_slots", map[string]any{"working_hours_end": "25:00"})},
+			{"working hours without selection", "working_hours_start", set("find_free_slots", map[string]any{"working_hours_start": "nine"})},
+			{"working hours end without selection", "working_hours_end", set("find_free_slots", map[string]any{"working_hours_end": "25:00"})},
 			{"days of week without selection", "day_of_week", set("find_free_slots", map[string]any{"days_of_week": "someday"})},
 			{"duration longer than range", "duration", set("find_free_slots", map[string]any{"calendar": contractCalendar, "start": "2026-07-01T09:00:00Z", "end": "2026-07-01T09:30:00Z"})},
 			{"duration longer than range without selection", "duration", set("find_free_slots", map[string]any{"start": "2026-07-01T09:00:00Z", "end": "2026-07-01T09:30:00Z"})},
@@ -139,7 +139,7 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 			{"mailbox control", "mailbox", set("trash_message", map[string]any{"mailbox": "IN\x01BOX"})},
 		},
 		"send_message": {
-			{"recipient", "recipient", set("send_message", map[string]any{"to": []any{"not an address"}})},
+			{"recipient", "to", set("send_message", map[string]any{"to": []any{"not an address"}})},
 			{"subject CR", "subject", set("send_message", map[string]any{"subject": "a\rb"})},
 			{"attachment mailbox control", "mailbox", set("send_message", map[string]any{"attachments": badRef})},
 		},
@@ -157,7 +157,7 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 			{"first chunk without filename", "filename", contractOmit(stage, "filename")},
 		},
 		"create_draft": {
-			{"recipient", "recipient", contractMerge(draft, map[string]any{"to": []any{"not an address"}})},
+			{"recipient", "to", contractMerge(draft, map[string]any{"to": []any{"not an address"}})},
 			{"subject CR", "subject", contractMerge(draft, map[string]any{"subject": "a\rb"})},
 			{"body NUL", "body", contractMerge(draft, map[string]any{"body": "a\x00b"})},
 			{"attachment mailbox control", "mailbox", contractMerge(draft, map[string]any{"attachments": badRef})},
@@ -358,5 +358,53 @@ func TestSchemaRefusalDetectorKeepsOtherResults(t *testing.T) {
 		if isSDKSchemaRefusal(result) {
 			t.Errorf("%s was treated as an SDK refusal", name)
 		}
+	}
+}
+
+// TestValidationMessagesNameArgumentAndRule pins the messages that must name
+// the exact argument and the rule that failed.
+func TestValidationMessagesNameArgumentAndRule(t *testing.T) {
+	set := func(tool string, values map[string]any) map[string]any {
+		return contractMerge(contractBusinessFixtures()[tool].base, values)
+	}
+	const uidRule = "UID must not contain '/', '\\', '%', or control characters"
+	draft := map[string]any{"to": []any{"recipient@example.invalid"}, "body": "Synthetic draft body"}
+	for _, test := range []struct {
+		name, tool string
+		args       map[string]any
+		want       string
+	}{
+		{"get_event uid", "get_event", set("get_event", map[string]any{"uid": "a/b"}), "uid parameter: " + uidRule},
+		{"search_events uid", "search_events", set("search_events", map[string]any{"uid": "a/b"}), "uid parameter: " + uidRule},
+		{"delete_event uid", "delete_event", set("delete_event", map[string]any{"uid": "a\x01b"}), "uid parameter: " + uidRule},
+		{"create_event client_uid", "create_event", set("create_event", map[string]any{"client_uid": "a/b"}), "client_uid: " + uidRule},
+		{"uid traversal", "get_event", set("get_event", map[string]any{"uid": "a..b"}), "uid parameter: UID must not contain a directory traversal sequence ('..')"},
+		{"mailbox", "get_message", map[string]any{"mailbox": "IN\x01BOX", "uid_validity": 9, "uid": 2}, "mailbox must be valid UTF-8 of at most 4096 bytes without control characters other than tab"},
+		{"search value", "search_messages", set("search_messages", map[string]any{"query": "a\x01b"}), "query must be valid UTF-8 of at most 512 bytes without control characters"},
+		{"to recipient", "send_message", set("send_message", map[string]any{"to": []any{"not an address"}}), "to must contain only plain addr-specs, for example name@example.com"},
+		{"cc recipient", "send_message", set("send_message", map[string]any{"cc": []any{"not an address"}}), "cc must contain only plain addr-specs, for example name@example.com"},
+		{"bcc recipient", "send_message", set("send_message", map[string]any{"bcc": []any{"not an address"}}), "bcc must contain only plain addr-specs, for example name@example.com"},
+		{"draft cc recipient", "create_draft", contractMerge(draft, map[string]any{"cc": []any{"not an address"}}), "cc must contain only plain addr-specs, for example name@example.com"},
+		{"subject", "send_message", set("send_message", map[string]any{"subject": "a\rb"}), "subject must be valid UTF-8 of at most 998 bytes without control characters"},
+		{"draft subject", "create_draft", contractMerge(draft, map[string]any{"subject": "a\rb"}), "subject must be valid UTF-8 of at most 998 bytes without control characters"},
+		{"body", "reply_message", set("reply_message", map[string]any{"body": "a\x00b"}), "body must be valid UTF-8 of at most 102400 bytes without NUL"},
+		{"draft body", "create_draft", contractMerge(draft, map[string]any{"body": "a\x00b"}), "body must be valid UTF-8 of at most 102400 bytes without NUL"},
+		{"send body", "send_message", set("send_message", map[string]any{"body": "a\x00b"}), "body must be valid UTF-8 of at most 102400 bytes without NUL"},
+		{"working_hours_start form", "find_free_slots", set("find_free_slots", map[string]any{"working_hours_start": "nine"}), "working_hours_start must use HH:MM"},
+		{"working_hours_end range", "find_free_slots", set("find_free_slots", map[string]any{"working_hours_end": "25:00"}), "working_hours_end must be between 00:00 and 24:00"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newContractRuntime(t, contractProfile{plan: contractAllOnPlan()})
+			before := f.counts()
+			result := f.call(t, test.tool, test.args)
+			payload := contractPayload(t, result)
+			message, _ := payload["message"].(string)
+			if !result.IsError || payload["code"] != string(icloud.CodeValidation) || !strings.Contains(message, test.want) {
+				t.Fatalf("message = %q, want validation with %q", message, test.want)
+			}
+			if !reflect.DeepEqual(before, f.counts()) {
+				t.Fatal("rejected argument reached a backend")
+			}
+		})
 	}
 }

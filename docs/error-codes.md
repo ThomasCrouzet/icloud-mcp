@@ -36,7 +36,8 @@ Contacts, and Mail use the same public codes.
 | `internal_error` | no | Report the failure with redacted logs. If a mutation was possible, read the resource before another update. |
 
 Each argument check that a tool makes before a request returns `validation`
-with `retryable: false`. The message names the field. A failure after a
+with `retryable: false`. The message names the field or argument group and
+the rule that failed. It does not repeat the rejected value. A failure after a
 request, such as a failed calendar listing, keeps its own code. The MCP input
 schema check runs before the tool and returns the same payload. Its message
 names only declared arguments and says `unknown argument` for an undeclared key.

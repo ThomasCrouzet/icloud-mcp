@@ -413,8 +413,8 @@ categories when applicable. Errors contain bounded local text. They can contain
 retry metadata: `retryable` and `retry_after_seconds`. Ambiguous outcomes
 include operation-specific reconciliation.
 
-A tool validation error names the field and the accepted form. It does not
-repeat the rejected value or a time derived from it. It can name a valid IANA
+A tool validation error names the field or argument group and the rule that
+failed. It does not repeat the rejected value or a time derived from it. It can name a valid IANA
 timezone. An MCP input schema refusal follows the same rule. It names only
 declared arguments and says `unknown argument` for an undeclared key.
 

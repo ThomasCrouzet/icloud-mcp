@@ -310,7 +310,7 @@ func mailDraftInput(args map[string]any) (maildomain.DraftInput, error) {
 			return maildomain.DraftInput{}, err
 		}
 		for _, address := range values {
-			if err := mailValidateAddress(address); err != nil {
+			if err := mailValidateAddress(field.name, address); err != nil {
 				return maildomain.DraftInput{}, err
 			}
 		}
@@ -325,14 +325,14 @@ func mailDraftInput(args map[string]any) (maildomain.DraftInput, error) {
 		return maildomain.DraftInput{}, err
 	}
 	if len(input.Subject) > maildomain.MaxSubjectBytes || !utf8.ValidString(input.Subject) || mailHasDisallowedControl(input.Subject, false) {
-		return maildomain.DraftInput{}, fmt.Errorf("subject contains invalid or excessive data")
+		return maildomain.DraftInput{}, mailSubjectError()
 	}
 	input.Body, err = mailRequiredString(args, "body")
 	if err != nil {
 		return maildomain.DraftInput{}, err
 	}
 	if len(input.Body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
-		return maildomain.DraftInput{}, fmt.Errorf("body contains invalid or excessive data")
+		return maildomain.DraftInput{}, mailBodyError()
 	}
 	input.Staged, err = mailStringArray(args, "staged", false)
 	if err != nil {

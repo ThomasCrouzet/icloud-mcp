@@ -127,7 +127,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 		uidFilter := req.GetString("uid", "")
 		if uidFilter != "" {
 			if err := icloud.ValidateUID(uidFilter); err != nil {
-				return errResult(deps.Redactor, "validation", err), nil
+				return errResult(deps.Redactor, "uid parameter", err), nil
 			}
 		}
 		statusFilter := strings.ToUpper(strings.TrimSpace(req.GetString("status", "")))

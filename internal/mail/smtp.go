@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net"
@@ -450,10 +451,10 @@ func (s *Client) composeMessage(input composeInput, submission bool) (preparedMe
 		return preparedMessage{}, validationError("recipient count exceeds 50")
 	}
 	if len(input.Subject) > MaxSubjectBytes || !utf8.ValidString(input.Subject) || hasDisallowedControl(input.Subject, false) {
-		return preparedMessage{}, validationError("subject contains invalid or excessive data")
+		return preparedMessage{}, validationError(fmt.Sprintf("subject must be valid UTF-8 of at most %d bytes without control characters", MaxSubjectBytes))
 	}
 	if len(input.Body) > MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
-		return preparedMessage{}, validationError("body contains invalid or excessive data")
+		return preparedMessage{}, validationError(fmt.Sprintf("body must be valid UTF-8 of at most %d bytes without NUL", MaxSendBodyBytes))
 	}
 	if err := validateReplyHeaders(input.InReplyTo, input.References); err != nil {
 		return preparedMessage{}, err

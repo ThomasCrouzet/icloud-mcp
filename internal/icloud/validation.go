@@ -85,16 +85,16 @@ func ValidateUID(uid string) error {
 		return fmt.Errorf("UID is too long (max %d UTF-8 bytes)", MaxUIDLen)
 	}
 	if strings.Contains(uid, "..") {
-		return fmt.Errorf("UID contains a directory traversal sequence ('..')")
+		return fmt.Errorf("UID must not contain a directory traversal sequence ('..')")
 	}
 	// Path separators and backslash must never appear: the UID becomes a
 	// path segment (<uid>.ics). Control characters are also rejected.
 	if strings.ContainsAny(uid, "\x00\n\r/%\\") {
-		return fmt.Errorf("UID contains invalid characters")
+		return errors.New("UID must not contain '/', '\\', '%', or control characters")
 	}
 	for _, r := range uid {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("UID contains invalid characters")
+			return errors.New("UID must not contain '/', '\\', '%', or control characters")
 		}
 	}
 	return nil

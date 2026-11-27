@@ -372,12 +372,12 @@ func TestNormalizeAllDayBounds(t *testing.T) {
 }
 
 func TestParseWorkingHours(t *testing.T) {
-	m, err := ParseWorkingHours("09:30")
+	m, err := ParseWorkingHours("working_hours_start", "09:30")
 	if err != nil || m != 9*60+30 {
 		t.Fatalf("%d %v", m, err)
 	}
 	for _, invalid := range []string{"25:00", "9:30", "09:3", "09:30junk", "09:30:00", "+9:30"} {
-		if _, err := ParseWorkingHours(invalid); err == nil {
+		if _, err := ParseWorkingHours("working_hours_start", invalid); err == nil {
 			t.Errorf("ParseWorkingHours(%q) accepted an invalid value", invalid)
 		}
 	}

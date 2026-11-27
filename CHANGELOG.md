@@ -15,7 +15,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - `create_event`, `update_event`, `delete_event`, `search_events`, and
   `find_free_slots` return `validation` with `retryable: false` for each
-  argument check that they make before a request. The message names the field.
+  argument check that they make before a request. The message names the field
+  or argument group.
   Before, some of these checks returned an error without a code, for example a
   relative calendar path, a NUL in a title, location, notes, or `query`, an
   `rrule` that does not parse, and an invalid `alarms_minutes` list. A calendar
@@ -27,8 +28,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   than the range could follow a calendar listing or search. An MCP input schema
   refusal now returns the same `validation` payload for every tool. Before, it
   was plain text without a code. (#247)
-- Calendar validation errors name the field and the accepted form, and repeat
-  no rejected value. Examples are `by_day must be one of MO, TU, WE, TH, FR,
+- Calendar validation errors name the field or argument group and the rule
+  that failed, and repeat no rejected value. Examples are `by_day must be one of MO, TU, WE, TH, FR,
   SA, SU` and `working hours must use HH:MM`. Before, some errors repeated a
   value: `recurrence_by_day`, an `rrule` part, working hours, an
   `alarms_minutes` entry, a time in a daylight-saving gap or a second fold, and
@@ -36,7 +37,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runs when no input schema refused the key, also repeats no key now. An MCP
   input schema refusal names only declared arguments and says `unknown
   argument` for an undeclared key. Before, it could repeat a rejected value or
-  an unknown key. (#248)
+  an unknown key. Some messages now name the exact argument and the rule:
+  `uid` and `client_uid` UID checks, Mail `to`, `cc`, and `bcc` recipients,
+  Mail text arguments such as `mailbox`, `subject`, and `body`, and
+  `working_hours_start` and `working_hours_end`. (#248)
 
 ## [1.3.0] - 2026-11-26
 
