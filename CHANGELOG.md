@@ -25,8 +25,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list or search calendars. Before, a check of `query`, `uid`, working hours,
   `days_of_week`, or the duration could follow a calendar request. (#247)
 - A calendar selection error in `search_events` now starts with `calendars:`,
-  as in `find_free_slots`. A cursor error after the selection starts with
-  `cursor:`. A failed calendar listing keeps its own code. (#247)
+  as in `find_free_slots`. A failed calendar listing keeps its own code. (#247)
+- An internal `search_events` cursor signing or encoding error after the
+  calendar selection now starts with `cursor:`, not `cursor parameter:`. It
+  keeps `internal_error`. Other cursor errors keep their prefix. (#247)
 - An MCP input schema refusal now returns the `validation` payload for every
   tool. Before, it was plain text without a code. (#247)
 - A deadline or cancellation that stops the local RRULE selector check now
