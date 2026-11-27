@@ -3,10 +3,14 @@ package mcptools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -24,6 +28,17 @@ const (
 )
 
 const schemaRefusalSummary = "arguments do not match the input schema"
+
+// maxSchemaRevalidationBytes bounds the second validation. Larger raw
+// arguments get only the clauses derived from the request keys.
+const maxSchemaRevalidationBytes = 64 << 10
+
+// compiledSchemas caches compiled input schemas by tool name and schema
+// digest. A nil entry records a schema that does not compile.
+var compiledSchemas sync.Map
+
+// schemaCompilations counts schema compilations for tests.
+var schemaCompilations atomic.Int64
 
 // ConfigureSchemaRefusals rewrites each SDK input schema refusal into the
 // project error payload: code validation, not retryable, and a fixed message.
@@ -72,12 +87,26 @@ func isSDKSchemaRefusal(res *mcp.CallToolResult) bool {
 // parses the SDK text, because that text embeds caller values. Missing and
 // unknown keys come from the request keys. Invalid arguments come from the
 // instance locations of a second validation of the same input against the
-// same schema, kept only when the tool declares the first segment.
+// same schema, kept only when the tool declares the first segment. Raw
+// arguments above maxSchemaRevalidationBytes skip the second validation and
+// keep only the clauses derived from the request keys. A tool without a
+// readable schema gets the bare summary.
 func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest) string {
-	properties, required := declaredArguments(tool)
-	instance, err := schemaInstance(request.GetRawArguments())
-	if err != nil {
+	properties, required, readable := declaredArguments(tool)
+	if !readable {
 		return schemaRefusalSummary
+	}
+	raw := request.GetRawArguments()
+	revalidate := rawArgumentsSize(raw) <= maxSchemaRevalidationBytes
+	instance := request.Params.Arguments
+	if revalidate {
+		decoded, err := schemaInstance(raw)
+		if err != nil {
+			return schemaRefusalSummary
+		}
+		instance = decoded
+	} else if instance == nil {
+		instance = map[string]any{}
 	}
 	args, object := instance.(map[string]any)
 	if !object {
@@ -97,18 +126,20 @@ func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest)
 	}
 	invalid := map[string]bool{}
 	var verr *jsonschema.ValidationError
-	if schema := compileInputSchema(tool); schema != nil && errors.As(schema.Validate(instance), &verr) {
-		walkSchemaFailures(verr, func(location []string, failure jsonschema.ErrorKind) {
-			if len(location) == 0 {
-				return
-			}
-			if _, nested := failure.(*kind.AdditionalProperties); nested {
-				unknown = true
-			}
-			if properties[location[0]] && !missing[location[0]] {
-				invalid[location[0]] = true
-			}
-		})
+	if revalidate {
+		if schema := cachedInputSchema(tool); schema != nil && errors.As(schema.Validate(instance), &verr) {
+			walkSchemaFailures(verr, func(location []string, failure jsonschema.ErrorKind) {
+				if len(location) == 0 {
+					return
+				}
+				if _, nested := failure.(*kind.AdditionalProperties); nested {
+					unknown = true
+				}
+				if properties[location[0]] && !missing[location[0]] {
+					invalid[location[0]] = true
+				}
+			})
+		}
 	}
 	var clauses []string
 	if len(missing) > 0 {
@@ -147,9 +178,10 @@ func schemaInstance(raw any) (any, error) {
 	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
 }
 
-// compileInputSchema compiles the tool input schema with the validator that
-// the SDK uses. It returns nil when the schema cannot be compiled.
-func compileInputSchema(tool *server.ServerTool) *jsonschema.Schema {
+// cachedInputSchema returns the compiled tool input schema, compiled once
+// for each tool name and schema digest with the validator that the SDK uses.
+// It returns nil when the schema cannot be compiled.
+func cachedInputSchema(tool *server.ServerTool) *jsonschema.Schema {
 	if tool == nil {
 		return nil
 	}
@@ -161,6 +193,18 @@ func compileInputSchema(tool *server.ServerTool) *jsonschema.Schema {
 		}
 		data = encoded
 	}
+	digest := sha256.Sum256(data)
+	key := tool.Tool.Name + "\x00" + hex.EncodeToString(digest[:])
+	if cached, ok := compiledSchemas.Load(key); ok {
+		return cached.(*jsonschema.Schema)
+	}
+	schema := compileInputSchema(data)
+	cached, _ := compiledSchemas.LoadOrStore(key, schema)
+	return cached.(*jsonschema.Schema)
+}
+
+func compileInputSchema(data []byte) *jsonschema.Schema {
+	schemaCompilations.Add(1)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
 		return nil
@@ -177,6 +221,21 @@ func compileInputSchema(tool *server.ServerTool) *jsonschema.Schema {
 	return schema
 }
 
+// rawArgumentsSize returns the size of the raw arguments in bytes.
+func rawArgumentsSize(raw any) int {
+	if data, ok := raw.(json.RawMessage); ok {
+		return len(data)
+	}
+	if raw == nil {
+		return 0
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return maxSchemaRevalidationBytes + 1
+	}
+	return len(encoded)
+}
+
 // walkSchemaFailures calls visit for each leaf failure.
 func walkSchemaFailures(verr *jsonschema.ValidationError, visit func([]string, jsonschema.ErrorKind)) {
 	if len(verr.Causes) == 0 {
@@ -189,11 +248,12 @@ func walkSchemaFailures(verr *jsonschema.ValidationError, visit func([]string, j
 }
 
 // declaredArguments returns the top-level property names and the required
-// names of a tool input schema.
-func declaredArguments(tool *server.ServerTool) (map[string]bool, []string) {
-	properties := map[string]bool{}
+// names of a tool input schema. readable is false when the schema is absent
+// or cannot be decoded.
+func declaredArguments(tool *server.ServerTool) (properties map[string]bool, required []string, readable bool) {
+	properties = map[string]bool{}
 	if tool == nil {
-		return properties, nil
+		return properties, nil, false
 	}
 	if len(tool.Tool.RawInputSchema) > 0 {
 		var raw struct {
@@ -201,17 +261,17 @@ func declaredArguments(tool *server.ServerTool) (map[string]bool, []string) {
 			Required   []string                   `json:"required"`
 		}
 		if json.Unmarshal(tool.Tool.RawInputSchema, &raw) != nil {
-			return properties, nil
+			return properties, nil, false
 		}
 		for name := range raw.Properties {
 			properties[name] = true
 		}
-		return properties, raw.Required
+		return properties, raw.Required, true
 	}
 	for name := range tool.Tool.InputSchema.Properties {
 		properties[name] = true
 	}
-	return properties, tool.Tool.InputSchema.Required
+	return properties, tool.Tool.InputSchema.Required, true
 }
 
 func sortedNames(set map[string]bool) string {

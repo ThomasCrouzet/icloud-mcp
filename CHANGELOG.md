@@ -49,7 +49,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An MCP input schema refusal names only declared arguments and says `unknown
   argument` for an undeclared key. Before, it could repeat a rejected value or
   an unknown key. The names come from the request keys and the validation
-  result, not from the refusal text. (#248)
+  result, not from the refusal text. Above 64 KiB of arguments, the message
+  names only missing and unknown arguments. (#248)
 - These validation messages now name the exact argument, the rule, and the
   accepted form. Clients that match message text must update. (#248)
   - UID: `UID must not contain '/', '\', '%', or control characters` and

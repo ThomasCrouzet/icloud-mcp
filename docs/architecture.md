@@ -376,10 +376,13 @@ including Calendar, has a 256 KiB limit.
 mcp-go checks the input schema before any middleware or handler. Its refusal
 text can repeat caller values. `mcptools.ConfigureSchemaRefusals` adds an
 `OnAfterCallTool` hook that rewrites this refusal into the `validation`
-payload before the response is written. The function puts its hook first
-among the `OnAfterCallTool` hooks. mcp-go runs `OnSuccess` hooks before them,
-so do not add an `OnSuccess` hook that reads tool results. A test fails if the
-production server registers one.
+payload before the response is written. It caches each compiled schema by
+tool name and schema digest. For raw arguments above 64 KiB, it skips the
+second validation and names only missing and unknown arguments.
+
+The function puts its hook first among the `OnAfterCallTool` hooks. mcp-go
+runs `OnSuccess` hooks before them, so do not add an `OnSuccess` hook that
+reads tool results. A test fails if the production server registers one.
 
 Search tools return summary models. Contact results exclude PHOTO and raw vCard.
 Mail results exclude raw MIME, raw headers, HTML, and attachment bodies.
