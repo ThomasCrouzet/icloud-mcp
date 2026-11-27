@@ -8,41 +8,46 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - The Calendar client methods for create and update also reject a CR in a
-  title, location, or notes with `validation` before any request, as the MCP
-  handlers do. Notes keep LF. The MCP tools already applied this check, so
-  their behavior does not change. (#249)
+  title, location, or notes with `validation` before any request. Notes keep
+  LF. The MCP tools already applied this check, so their behavior does not
+  change. (#249)
+- The jsonschema validator is now a direct runtime import. The MCP SDK already
+  links the same module, so the binary gains no new dependency. (#248)
 
 ### Fixed
 - `create_event`, `update_event`, `delete_event`, `search_events`, and
   `find_free_slots` return `validation` with `retryable: false` for each
-  argument check that they make before a request. The message names the field
-  or argument group.
-  Before, some of these checks returned an error without a code, for example a
-  relative calendar path, a NUL in a title, location, notes, or `query`, an
-  `rrule` that does not parse, and an invalid `alarms_minutes` list. A calendar
-  selection error in `search_events` now starts with `calendars:`, as in
-  `find_free_slots`. A failed calendar listing keeps its own code.
-  `search_events` and `find_free_slots` now check every argument before they
-  list or search calendars. Before,
-  a check of `query`, `uid`, working hours, `days_of_week`, or a duration longer
-  than the range could follow a calendar listing or search. An MCP input schema
-  refusal now returns the same `validation` payload for every tool. Before, it
-  was plain text without a code. (#247)
+  argument check before a request. The message names the field or argument
+  group. Before, some of these checks returned an error without a code. Examples
+  are a relative calendar path, a NUL in a title, location, notes, or `query`,
+  and an `rrule` that does not parse. (#247)
+- `search_events` and `find_free_slots` now check every argument before they
+  list or search calendars. Before, a check of `query`, `uid`, working hours,
+  `days_of_week`, or the duration could follow a calendar request. (#247)
+- A calendar selection error in `search_events` now starts with `calendars:`,
+  as in `find_free_slots`. A cursor error after the selection starts with
+  `cursor:`. A failed calendar listing keeps its own code. (#247)
+- An MCP input schema refusal now returns the `validation` payload for every
+  tool. Before, it was plain text without a code. (#247)
 - A tool deadline that stops the local RRULE check in `create_event` or
   `validate_event` returns `timeout` with `retryable: false`. Before, it
   returned `validation`, although the arguments can be valid. (#247)
 - Calendar validation errors name the field or argument group and the rule
-  that failed, and repeat no rejected value. Examples are `by_day must be one of MO, TU, WE, TH, FR,
-  SA, SU` and `working hours must use HH:MM`. Before, some errors repeated a
-  value: `recurrence_by_day`, an `rrule` part, working hours, an
-  `alarms_minutes` entry, a time in a daylight-saving gap or a second fold, and
-  the bounds of a reversed range. The Contacts unknown parameter check, which
-  runs when no input schema refused the key, also repeats no key now. An MCP
-  input schema refusal names only declared arguments and says `unknown
+  that failed. They repeat no rejected value. An example is `by_day must be one
+  of MO, TU, WE, TH, FR, SA, SU`. (#248)
+- Before, some Calendar errors repeated a value: `recurrence_by_day`, an
+  `rrule` part, working hours, an `alarms_minutes` entry, and the bounds of a
+  reversed range. A time in a daylight-saving gap or a second fold was also
+  repeated. (#248)
+- The Contacts unknown parameter check repeats no key. It runs when no input
+  schema refused the key. (#248)
+- An MCP input schema refusal names only declared arguments and says `unknown
   argument` for an undeclared key. Before, it could repeat a rejected value or
-  an unknown key. Some messages now name the exact argument and the rule:
-  `uid` and `client_uid` UID checks, Mail `to`, `cc`, and `bcc` recipients,
-  Mail text arguments such as `mailbox`, `subject`, and `body`, and
+  an unknown key. The names come from the request keys and the validation
+  result, not from the refusal text. (#248)
+- Some messages now name the exact argument and the rule. They cover the `uid`
+  and `client_uid` checks and the Mail `to`, `cc`, and `bcc` recipients. They
+  also cover Mail text such as `mailbox`, `subject`, and `body`, and
   `working_hours_start` and `working_hours_end`. (#248)
 
 ## [1.3.0] - 2026-11-26
