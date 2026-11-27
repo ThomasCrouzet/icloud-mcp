@@ -4,6 +4,7 @@
 package mcptools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -116,6 +117,16 @@ func errResult(red *security.Redactor, context string, err error) *mcp.CallToolR
 		}
 	}
 	return mcp.NewToolResultError(string(b))
+}
+
+// localValidationTimeout returns a timeout when the tool deadline stopped
+// local validation. A canceled check proves nothing about the arguments, so
+// it must not return validation.
+func localValidationTimeout(ctx context.Context) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return icloud.NewError(icloud.CodeTimeout, 0, "event validation stopped at the tool deadline", nil)
 }
 
 // isArgumentContext reports whether a context marks an argument rejection

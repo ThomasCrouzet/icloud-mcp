@@ -127,3 +127,22 @@ func TestClientWritesRejectCRBeforeAnyRequest(t *testing.T) {
 		})
 	}
 }
+
+// TestClientCreateEventCanceledSelectorCheckIsTimeout keeps a canceled RRULE
+// selector check out of the validation code.
+func TestClientCreateEventCanceledSelectorCheckIsTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client, doer := newRequestCountingClient()
+	ne := validNewEvent()
+	ne.StartTime = time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	ne.EndTime = ne.StartTime.Add(time.Hour)
+	ne.Recurrence = "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=2"
+	_, err := client.CreateEvent(ctx, "/cal/home/", ne)
+	if typed := AsICloudError(err); typed == nil || typed.Code != CodeTimeout || typed.Retryable {
+		t.Fatalf("error = %v, want timeout that is not retryable", err)
+	}
+	if doer.requests != 0 {
+		t.Fatalf("requests = %d, want 0", doer.requests)
+	}
+}
