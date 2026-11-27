@@ -218,8 +218,8 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		// Local validate for status/url/uid/recurrence/alarms before network.
 		vr := icloud.ValidateEventInputContext(ctx, input, deps.DefaultLocation)
-		if err := localValidationTimeout(ctx); !vr.OK && err != nil {
-			return deny("validating event", err)
+		if vr.Interrupted != nil {
+			return deny("validating event", vr.Interrupted)
 		}
 		if !vr.OK {
 			return deny("validation", fmt.Errorf("%s", joinErrors(vr.Errors)))

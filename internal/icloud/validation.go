@@ -399,8 +399,9 @@ func validateRRULEForStartContext(ctx context.Context, rule string, start time.T
 	safety, _, _ := checkRecurrenceSelectorSafety(ctx, opt, &seriesRemaining, &aggregateRemaining)
 	switch safety {
 	case recurrenceSelectorsCanceled:
-		// A tool deadline stopped the check. The rule can still be valid.
-		return NewError(CodeTimeout, 0, "RRULE selector validation stopped at the tool deadline", ctx.Err())
+		// A deadline or cancellation stopped the check. The rule can still be
+		// valid.
+		return NewError(CodeTimeout, 0, "RRULE selector validation stopped because the call was canceled or timed out", ctx.Err())
 	case recurrenceSelectorsUnsupported:
 		return fmt.Errorf("RRULE uses an unsupported unsafe selector combination")
 	case recurrenceSelectorsUnreachable:

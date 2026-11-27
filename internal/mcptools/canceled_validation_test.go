@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
@@ -58,5 +59,41 @@ func TestCanceledValidationIsTimeout(t *testing.T) {
 				t.Fatalf("canceled validation reached the service: create=%d list=%d", svc.CreateCallCount, svc.ListCallCount)
 			}
 		})
+	}
+}
+
+// TestCanceledContextKeepsArgumentErrors keeps validation when a check that
+// does not depend on the context fails. Only an interrupted RRULE check is a
+// timeout.
+func TestCanceledContextKeepsArgumentErrors(t *testing.T) {
+	for _, rule := range []string{"", canceledSelectorRule} {
+		args := map[string]any{
+			"calendar": "/cal/home/", "title": "Synthetic",
+			"start": "2026-01-01T09:00:00Z", "end": "2026-01-01T10:00:00Z",
+			"url": "ftp://example.invalid/event",
+		}
+		if rule != "" {
+			args["rrule"] = rule
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		svc := &icloud.MockService{}
+		created, err := createEventHandler(testDeps(svc))(ctx, newReq(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := resultText(t, created); !created.IsError || !strings.Contains(text, `"code":"validation"`) || !strings.Contains(text, "url scheme must be http or https") {
+			t.Fatalf("create_event rrule=%q: %s, want validation for url", rule, text)
+		}
+		validated, err := validateEventHandler(testDeps(svc))(ctx, newReq(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := resultText(t, validated); validated.IsError || !strings.Contains(text, "url scheme must be http or https") || strings.Contains(text, "deadline") {
+			t.Fatalf("validate_event rrule=%q: %s, want an invalid-event result for url only", rule, text)
+		}
+		if svc.CreateCallCount != 0 {
+			t.Fatal("invalid event reached the service")
+		}
 	}
 }

@@ -119,8 +119,8 @@ func validateEventHandler(deps Deps) server.ToolHandlerFunc {
 			in.ClientUID = req.GetString("idempotency_key", "")
 		}
 		res := icloud.ValidateEventInputContext(ctx, in, deps.DefaultLocation)
-		if err := localValidationTimeout(ctx); !res.OK && err != nil {
-			return errResult(deps.Redactor, "validating event", err), nil
+		if res.Interrupted != nil {
+			return errResult(deps.Redactor, "validating event", res.Interrupted), nil
 		}
 		return writeJSON(deps.Redactor, res), nil
 	}

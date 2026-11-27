@@ -29,9 +29,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `cursor:`. A failed calendar listing keeps its own code. (#247)
 - An MCP input schema refusal now returns the `validation` payload for every
   tool. Before, it was plain text without a code. (#247)
-- A tool deadline that stops the local RRULE check in `create_event` or
-  `validate_event` returns `timeout` with `retryable: false`. Before, it
-  returned `validation`, although the arguments can be valid. (#247)
+- A deadline or cancellation that stops the local RRULE selector check now
+  returns `timeout` with `retryable: false`. `create_event` and
+  `validate_event` both return an error result. Before, `create_event`
+  returned `validation`, and `validate_event` returned a success result that
+  reported the event as invalid. The arguments can be valid. A failed check
+  that does not depend on the call context still returns `validation`. (#247)
 - Calendar validation errors name the field or argument group and the rule
   that failed. They repeat no rejected value. An example is `by_day must be one
   of MO, TU, WE, TH, FR, SA, SU`. (#248)
