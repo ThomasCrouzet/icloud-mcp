@@ -91,9 +91,8 @@ current. Add a new checked date and keep the old record.
 - Use **English ASCII** in tracked files, commits, and tags.
 - **No em dash** (U+2014). Use commas, colons, or different wording.
 - Do not add automated `Co-Authored-By` trailers to commits or tags.
-- Keep the **12 direct requirements** in `go.mod`: 11 runtime dependencies
-  and one test dependency. If you add one, add a written justification to the
-  README.
+- Keep the **12 direct requirements** in `go.mod`. All are runtime
+  dependencies. If you add one, add a written justification to the README.
 - Do not add `os/exec`, telemetry, private or reverse-engineered Apple APIs,
   browser automation, or UI automation. Do not add network destinations
   outside the Calendar, Contacts, IMAP, and SMTP allowlists. Do not write to
