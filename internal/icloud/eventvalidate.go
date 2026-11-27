@@ -64,6 +64,10 @@ type ValidationResult struct {
 	Errors     []string         `json:"errors,omitempty"`
 	Warnings   []string         `json:"warnings,omitempty"`
 	Normalized *NormalizedEvent `json:"normalized,omitempty"`
+	// Interrupted is the timeout when the tool deadline stopped a
+	// context-dependent check and no other check failed. The arguments can
+	// then be valid, so callers must report it instead of Errors.
+	Interrupted error `json:"-"`
 }
 
 // NormalizedEvent is a redacted, normalized view safe to return to agents.
@@ -95,6 +99,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		ctx = context.Background()
 	}
 	var errs, warns []string
+	var interrupted error
 	if in == nil {
 		return ValidationResult{OK: false, Errors: []string{"event cannot be nil"}}
 	}
@@ -133,7 +138,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		var err error
 		writeLoc, err = time.LoadLocation(in.Timezone)
 		if err != nil {
-			errs = append(errs, "invalid timezone")
+			errs = append(errs, "timezone must be an IANA timezone name, for example Europe/Paris")
 		}
 	} else {
 		writeLoc = defaultLoc
@@ -166,7 +171,11 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		// recurrence that replaced it is still checked.
 		if !rruleLineBreak || structuredRule {
 			if err := validateRRULEForEventContext(ctx, rrule, in.StartTime, in.AllDay); err != nil {
-				errs = append(errs, err.Error())
+				if typed := AsICloudError(err); typed != nil && typed.Code == CodeTimeout {
+					interrupted = err
+				} else {
+					errs = append(errs, err.Error())
+				}
 			}
 		}
 		if !in.AllDay && writeLoc != nil && writeLoc != time.UTC && !recurringTimezoneStable(writeLoc, in.StartTime) {
@@ -175,7 +184,7 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 	}
 	if in.ClientUID != "" {
 		if err := ValidateUID(in.ClientUID); err != nil {
-			errs = append(errs, "client uid: "+err.Error())
+			errs = append(errs, "client_uid: "+err.Error())
 		}
 	}
 	if in.IdempotencyKey != "" {
@@ -196,6 +205,9 @@ func ValidateEventInputContext(ctx context.Context, in *EventInput, defaultLoc *
 		warns = append(warns, w)
 	}
 
+	if interrupted != nil && len(errs) == 0 {
+		return ValidationResult{OK: false, Errors: []string{interrupted.Error()}, Interrupted: interrupted}
+	}
 	res := ValidationResult{OK: len(errs) == 0, Errors: errs, Warnings: warns}
 	if res.OK {
 		tz := in.Timezone
@@ -249,7 +261,7 @@ func validateEventURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid url")
+		return fmt.Errorf("url must be an absolute http or https URL")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
@@ -361,7 +373,7 @@ func structuredToRRULE(s *StructuredRecurrence, defaultLoc *time.Location, allDa
 			switch up {
 			case "MO", "TU", "WE", "TH", "FR", "SA", "SU":
 			default:
-				return "", nil, fmt.Errorf("invalid by_day %q", d)
+				return "", nil, fmt.Errorf("by_day must be one of MO, TU, WE, TH, FR, SA, SU")
 			}
 		}
 		parts = append(parts, "BYDAY="+strings.ToUpper(strings.Join(s.ByDay, ",")))

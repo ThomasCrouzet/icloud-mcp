@@ -2,6 +2,7 @@ package icloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -50,10 +51,10 @@ func ValidateCalendarPath(path string) error {
 	}
 	// Reject query/fragment markers that change URL semantics under ResolveReference.
 	if strings.ContainsAny(path, "?#") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	if strings.ContainsAny(path, "\x00\n\r") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("calendar path contains a directory traversal sequence ('..')")
@@ -70,7 +71,7 @@ func ValidateCalendarPath(path string) error {
 		return fmt.Errorf("calendar path must be path-absolute (no host or scheme)")
 	}
 	if strings.ContainsAny(decoded, "?#\x00\n\r") {
-		return fmt.Errorf("calendar path contains invalid characters")
+		return fmt.Errorf("calendar path must not contain '?', '#', NUL, CR, or LF")
 	}
 	return nil
 }
@@ -84,16 +85,16 @@ func ValidateUID(uid string) error {
 		return fmt.Errorf("UID is too long (max %d UTF-8 bytes)", MaxUIDLen)
 	}
 	if strings.Contains(uid, "..") {
-		return fmt.Errorf("UID contains a directory traversal sequence ('..')")
+		return fmt.Errorf("UID must not contain a directory traversal sequence ('..')")
 	}
 	// Path separators and backslash must never appear: the UID becomes a
 	// path segment (<uid>.ics). Control characters are also rejected.
 	if strings.ContainsAny(uid, "\x00\n\r/%\\") {
-		return fmt.Errorf("UID contains invalid characters")
+		return errors.New("UID must not contain '/', '\\', '%', or control characters")
 	}
 	for _, r := range uid {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("UID contains invalid characters")
+			return errors.New("UID must not contain '/', '\\', '%', or control characters")
 		}
 	}
 	return nil
@@ -177,8 +178,8 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 		resolved, adjusted := ResolveWallClock(wall, loc)
 		if adjusted {
 			return time.Time{}, fmt.Errorf(
-				"invalid %s: local time %s does not exist in %s because of a daylight-saving gap",
-				name, value, loc,
+				"invalid %s: the local time does not exist in %s because of a daylight-saving gap",
+				name, loc,
 			)
 		}
 		return resolved, nil
@@ -200,7 +201,7 @@ func ParseDateTime(name, value string, defaultLoc *time.Location) (time.Time, er
 func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Time{}, fmt.Errorf("invalid %s: empty", name)
+		return time.Time{}, fmt.Errorf("%s must not be empty", name)
 	}
 	if len(value) == 10 {
 		if t, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
@@ -214,7 +215,7 @@ func ParseRecurrenceID(name, value string, defaultLoc *time.Location) (time.Time
 // MaxRangeDays days (which also indirectly bounds recurrence expansion).
 func ValidateRange(start, end time.Time) error {
 	if !end.After(start) {
-		return fmt.Errorf("end date (%s) must be after start date (%s)", end.Format(time.RFC3339), start.Format(time.RFC3339))
+		return fmt.Errorf("end date must be after start date")
 	}
 	if end.Sub(start) > MaxRangeDays*24*time.Hour {
 		return fmt.Errorf("date range exceeds %d days (maximum allowed)", MaxRangeDays)
@@ -246,7 +247,7 @@ func ValidateRRULE(rule string) error {
 	}
 	ropt, err := rrule.StrToROption(strings.ToUpper(rule))
 	if err != nil {
-		return fmt.Errorf("invalid RRULE: %w", err)
+		return errInvalidRRULEParts
 	}
 	if !normalizeRecurrenceSelectorLists(ropt) {
 		return fmt.Errorf("RRULE has excessive selector cardinality")
@@ -286,7 +287,7 @@ func ValidateRRULE(rule string) error {
 	switch freq {
 	case "SECONDLY", "MINUTELY":
 		if !hasBound {
-			return fmt.Errorf("RRULE with FREQ=%s requires COUNT or UNTIL (unbounded high-frequency series rejected)", freq)
+			return fmt.Errorf("RRULE with FREQ=SECONDLY or FREQ=MINUTELY requires COUNT or UNTIL (unbounded high-frequency series rejected)")
 		}
 	case "HOURLY":
 		if !hasBound {
@@ -295,6 +296,10 @@ func ValidateRRULE(rule string) error {
 	}
 	return nil
 }
+
+// errInvalidRRULEParts replaces the rrule-go parse error, which can repeat
+// caller text.
+var errInvalidRRULEParts = errors.New("invalid RRULE: use RFC 5545 rule parts, for example FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10")
 
 // validateRRULEParts enforces RFC 5545 section 3.3.10 cardinality: FREQ is
 // required, every rule part occurs at most once, and COUNT and UNTIL are
@@ -309,11 +314,11 @@ func validateRRULEParts(rule string) error {
 		}
 		key, value, ok := strings.Cut(part, "=")
 		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-			return fmt.Errorf("RRULE contains a malformed part")
+			return fmt.Errorf("RRULE parts must use KEY=VALUE with a non-empty key and value")
 		}
 		key = strings.ToUpper(strings.TrimSpace(key))
 		if seen[key] {
-			return fmt.Errorf("RRULE part %s occurs more than once", key)
+			return fmt.Errorf("RRULE must not repeat a rule part")
 		}
 		seen[key] = true
 		if key == "FREQ" {
@@ -370,7 +375,7 @@ func validateRRULEValueForms(rule string, allDay bool) error {
 			}
 		case "BYSECOND", "BYMINUTE", "BYHOUR":
 			if allDay {
-				return fmt.Errorf("all-day RRULE cannot use %s", strings.ToUpper(key))
+				return fmt.Errorf("all-day RRULE cannot use BYSECOND, BYMINUTE, or BYHOUR")
 			}
 		}
 	}
@@ -383,7 +388,7 @@ func validateRRULEForStartContext(ctx context.Context, rule string, start time.T
 	}
 	opt, err := rrule.StrToROption(strings.ToUpper(strings.TrimSpace(rule)))
 	if err != nil {
-		return fmt.Errorf("invalid RRULE: %w", err)
+		return errInvalidRRULEParts
 	}
 	if !normalizeRecurrenceSelectorLists(opt) {
 		return fmt.Errorf("RRULE has excessive selector cardinality")
@@ -394,7 +399,9 @@ func validateRRULEForStartContext(ctx context.Context, rule string, start time.T
 	safety, _, _ := checkRecurrenceSelectorSafety(ctx, opt, &seriesRemaining, &aggregateRemaining)
 	switch safety {
 	case recurrenceSelectorsCanceled:
-		return fmt.Errorf("RRULE selector validation was canceled")
+		// A deadline or cancellation stopped the check. The rule can still be
+		// valid.
+		return NewError(CodeTimeout, 0, "RRULE selector validation stopped because the call was canceled or timed out", ctx.Err())
 	case recurrenceSelectorsUnsupported:
 		return fmt.Errorf("RRULE uses an unsupported unsafe selector combination")
 	case recurrenceSelectorsUnreachable:

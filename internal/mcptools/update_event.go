@@ -262,7 +262,7 @@ func updateEventHandler(deps Deps) server.ToolHandlerFunc {
 				"allow_group_scheduled":  update.AllowGroupScheduled,
 			})
 			if err != nil {
-				return deny("validation", err)
+				return deny("idempotency key", icloud.NewError(icloud.CodeInternal, 0, "update parameters could not be hashed", nil))
 			}
 			nsKey = namespacedIdempotencyKey("update_event", idemKey)
 			outcome, conflict, hit, ready := store.beginContext(ctx, nsKey, paramsHash)

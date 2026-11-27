@@ -123,7 +123,7 @@ func validateCreate(in *CreateContactInput) error {
 	}
 	if in.ClientUID != "" {
 		if err := validateUID(in.ClientUID); err != nil {
-			return validationError("client_uid is invalid")
+			return validationError(fmt.Sprintf("client_uid must be a non-empty single line of at most %d bytes without control characters", maxUIDBytes))
 		}
 	}
 	return nil
@@ -345,7 +345,7 @@ func validateAddresses(values []PostalAddress) error {
 			}
 			if part.name == "address type" {
 				if part.value != "" && !validTypeToken(part.value) {
-					return validationError("address type contains an invalid character")
+					return validationError("address type must contain only letters, digits, '-', or '_'")
 				}
 			}
 		}

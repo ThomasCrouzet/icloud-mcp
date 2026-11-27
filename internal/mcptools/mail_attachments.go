@@ -310,7 +310,7 @@ func mailDraftInput(args map[string]any) (maildomain.DraftInput, error) {
 			return maildomain.DraftInput{}, err
 		}
 		for _, address := range values {
-			if err := mailValidateAddress(address); err != nil {
+			if err := mailValidateAddress(field.name, address); err != nil {
 				return maildomain.DraftInput{}, err
 			}
 		}
@@ -325,14 +325,14 @@ func mailDraftInput(args map[string]any) (maildomain.DraftInput, error) {
 		return maildomain.DraftInput{}, err
 	}
 	if len(input.Subject) > maildomain.MaxSubjectBytes || !utf8.ValidString(input.Subject) || mailHasDisallowedControl(input.Subject, false) {
-		return maildomain.DraftInput{}, fmt.Errorf("subject contains invalid or excessive data")
+		return maildomain.DraftInput{}, mailSubjectError()
 	}
 	input.Body, err = mailRequiredString(args, "body")
 	if err != nil {
 		return maildomain.DraftInput{}, err
 	}
 	if len(input.Body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
-		return maildomain.DraftInput{}, fmt.Errorf("body contains invalid or excessive data")
+		return maildomain.DraftInput{}, mailBodyError()
 	}
 	input.Staged, err = mailStringArray(args, "staged", false)
 	if err != nil {
@@ -376,7 +376,7 @@ func mailAttachmentRefs(args map[string]any) ([]maildomain.AttachmentRef, error)
 		allowed := mailKeySet("mailbox", "uid_validity", "uid", "part_id")
 		for key := range object {
 			if _, ok := allowed[key]; !ok {
-				return nil, fmt.Errorf("attachments item %d has an unsupported field", index)
+				return nil, fmt.Errorf("attachments item %d must have only mailbox, uid_validity, uid, and part_id", index)
 			}
 		}
 		identity, err := mailParseIdentity(object)

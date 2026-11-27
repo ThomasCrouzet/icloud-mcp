@@ -41,7 +41,7 @@ func getEventHandler(deps Deps) server.ToolHandlerFunc {
 			return errResult(deps.Redactor, "authorization", err), nil
 		}
 		if err := icloud.ValidateUID(uid); err != nil {
-			return errResult(deps.Redactor, "validation", err), nil
+			return errResult(deps.Redactor, "uid parameter", err), nil
 		}
 		detail, err := deps.Service.GetEvent(ctx, calendarPath, uid)
 		if err != nil {

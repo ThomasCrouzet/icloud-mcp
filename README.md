@@ -170,23 +170,23 @@ exists, this page does not claim that an MCPB host install was performed.
 ### Path A: MCPB bundle (host installation unverified)
 
 1. Download the bundle for your platform from the
-   [`v1.3.0` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v1.3.0):
-   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.0/icloud-mcp-v1.3.0-linux-amd64.mcpb),
-   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.0/icloud-mcp-v1.3.0-linux-arm64.mcpb),
+   [`v1.3.1` release](https://github.com/ThomasCrouzet/icloud-mcp/releases/tag/v1.3.1):
+   [`linux-amd64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.1/icloud-mcp-v1.3.1-linux-amd64.mcpb),
+   [`linux-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.1/icloud-mcp-v1.3.1-linux-arm64.mcpb),
    or
-   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.0/icloud-mcp-v1.3.0-darwin-arm64.mcpb).
+   [`darwin-arm64`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.1/icloud-mcp-v1.3.1-darwin-arm64.mcpb).
 2. Download
-   [`icloud-mcp-v1.3.0-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.0/icloud-mcp-v1.3.0-checksums.txt)
+   [`icloud-mcp-v1.3.1-checksums.txt`](https://github.com/ThomasCrouzet/icloud-mcp/releases/download/v1.3.1/icloud-mcp-v1.3.1-checksums.txt)
    and the matching `.sig` and `.pem` files. Verify the bytes:
 
    ```sh
-   shasum -a 256 -c icloud-mcp-v1.3.0-checksums.txt
+   shasum -a 256 -c icloud-mcp-v1.3.1-checksums.txt
    cosign verify-blob \
-     --certificate icloud-mcp-v1.3.0-linux-amd64.mcpb.pem \
-     --signature icloud-mcp-v1.3.0-linux-amd64.mcpb.sig \
-     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.3.0" \
+     --certificate icloud-mcp-v1.3.1-linux-amd64.mcpb.pem \
+     --signature icloud-mcp-v1.3.1-linux-amd64.mcpb.sig \
+     --certificate-identity "https://github.com/ThomasCrouzet/icloud-mcp/.github/workflows/ci.yml@refs/tags/v1.3.1" \
      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-     icloud-mcp-v1.3.0-linux-amd64.mcpb
+     icloud-mcp-v1.3.1-linux-amd64.mcpb
    ```
 
 3. Open the `.mcpb` file in your MCPB-capable host, or use that host's install
@@ -218,7 +218,7 @@ Download the archive for Linux amd64/arm64 or macOS arm64 from the
 checksum and signature, then extract it:
 
 ```sh
-tar -xzf icloud-mcp-v1.3.0-linux-amd64.tar.gz
+tar -xzf icloud-mcp-v1.3.1-linux-amd64.tar.gz
 ./icloud-mcp -version
 ```
 
@@ -518,8 +518,8 @@ process lifecycle. See the [package map](docs/architecture.md#packages).
 
 ### Direct dependencies
 
-The single Go module has **12 direct requirements**: **11 runtime dependencies**
-and **one explicit test dependency**. Exact versions
+The single Go module has **12 direct requirements**, and all are runtime
+dependencies. Exact versions
 are in [go.mod](go.mod); required notices are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -536,7 +536,7 @@ are in [go.mod](go.mod); required notices are in
 | `github.com/emersion/go-message` | MIME parsing and bounded plain-text handling |
 | `github.com/emersion/go-smtp` | SMTP submission with STARTTLS |
 | `github.com/emersion/go-sasl` | SASL PLAIN authentication after STARTTLS |
-| `github.com/santhosh-tekuri/jsonschema/v6` | Test-only explicit import for conformance checks of published schemas and actual outputs; the validator already exists transitively through the MCP SDK |
+| `github.com/santhosh-tekuri/jsonschema/v6` | Names the failed arguments of an input schema refusal, and checks published schemas and actual outputs in tests; the validator already exists transitively through the MCP SDK |
 
 <a id="license"></a>
 <!-- readme:section license -->

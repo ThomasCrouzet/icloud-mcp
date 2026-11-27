@@ -42,8 +42,7 @@ func newValidateEventTool(defaultLoc *time.Location) mcp.Tool {
 
 func validateEventHandler(deps Deps) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// ctx is intentionally unused: this tool must never touch the network.
-		_ = ctx
+		// This tool never touches the network. ctx bounds only the local checks.
 		title, err := req.RequireString("title")
 		if err != nil {
 			return errResult(deps.Redactor, "title parameter", err), nil
@@ -120,6 +119,9 @@ func validateEventHandler(deps Deps) server.ToolHandlerFunc {
 			in.ClientUID = req.GetString("idempotency_key", "")
 		}
 		res := icloud.ValidateEventInputContext(ctx, in, deps.DefaultLocation)
+		if res.Interrupted != nil {
+			return errResult(deps.Redactor, "validating event", res.Interrupted), nil
+		}
 		return writeJSON(deps.Redactor, res), nil
 	}
 }

@@ -368,10 +368,21 @@ procedures, including full-cache conflicts.
 ## Output model
 
 Calendar text, contact data, and Mail content are untrusted. The stdio reader
-accepts at most 1 MiB in each JSON-RPC frame. Protocol or schema errors can
-reflect caller input. The server passes them through only up to 64 KiB. It
-replaces larger records with bounded local errors. Each serialized MCP result,
+accepts at most 1 MiB in each JSON-RPC frame. Protocol errors can reflect
+caller input. The server passes them through only up to 64 KiB. It replaces
+larger records with bounded local errors. Each serialized MCP result,
 including Calendar, has a 256 KiB limit.
+
+mcp-go checks the input schema before any middleware or handler. Its refusal
+text can repeat caller values. `mcptools.ConfigureSchemaRefusals` adds an
+`OnAfterCallTool` hook that rewrites this refusal into the `validation`
+payload before the response is written. It caches each compiled schema by
+tool name and schema digest. For raw arguments above 64 KiB, it skips the
+second validation and names only missing and unknown arguments.
+
+The function puts its hook first among the `OnAfterCallTool` hooks. mcp-go
+runs `OnSuccess` hooks before them, so do not add an `OnSuccess` hook that
+reads tool results. A test fails if the production server registers one.
 
 Search tools return summary models. Contact results exclude PHOTO and raw vCard.
 Mail results exclude raw MIME, raw headers, HTML, and attachment bodies.
@@ -407,8 +418,8 @@ Each Mail call uses a fresh IMAP or SMTP session.
 ## Direct dependencies
 
 Use Go 1.26.0 or newer. The project has one module and exactly **12** direct
-requirements: 11 runtime dependencies and one test dependency. If you add a
-direct dependency, add its justification here.
+requirements, and all are runtime dependencies. If you add a direct
+dependency, add its justification here.
 
 | Dependency | Exact version | Justification |
 |------------|---------------|---------------|
@@ -423,7 +434,7 @@ direct dependency, add its justification here.
 | `github.com/emersion/go-smtp` | `v0.26.0` | SMTP + STARTTLS |
 | `github.com/emersion/go-sasl` | `v0.0.0-20241020182733-b788ff22d5a6` | SASL PLAIN after STARTTLS |
 | `golang.org/x/text` | `v0.44.0` | RFC 5051-compatible Unicode collation for local Contacts matching |
-| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.3` | Test only: conformance checks of published schemas and actual outputs |
+| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.3` | Names the failed arguments of an input schema refusal. Tests check published schemas and actual outputs. The MCP SDK already links it. |
 
 ## Hand-rolled DAV boundaries
 

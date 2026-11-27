@@ -6,6 +6,91 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-27
+
+This patch release makes the tool error contract exact. Every argument
+rejection returns `validation` before any request. Validation messages name
+the field or argument group and the rule that failed, and repeat no rejected
+value. No default changes, and every profile keeps its tool set. Some message
+texts change; the list is below.
+
+### Changed
+- The Calendar client methods for create and update also reject a CR in a
+  title, location, or notes with `validation` before any request. Notes keep
+  LF. The MCP tools already applied this check, so their behavior does not
+  change. (#249)
+- The jsonschema validator is now a direct runtime import. The MCP SDK already
+  links the same module, so the binary gains no new dependency. (#248)
+
+### Fixed
+- `create_event`, `update_event`, `delete_event`, `search_events`, and
+  `find_free_slots` return `validation` with `retryable: false` for each
+  argument check before a request. The message names the field or argument
+  group. Before, some of these checks returned an error without a code. Examples
+  are a relative calendar path, a NUL in a title, location, notes, or `query`,
+  and an `rrule` that does not parse. (#247)
+- `search_events` and `find_free_slots` now check every argument before they
+  list or search calendars. Before, a check of `query`, `uid`, working hours,
+  `days_of_week`, or the duration could follow a calendar request. (#247)
+- A calendar selection error in `search_events` now starts with `calendars:`,
+  as in `find_free_slots`. A failed calendar listing keeps its own code. (#247)
+- An internal `search_events` cursor signing or encoding error after the
+  calendar selection now starts with `cursor:`, not `cursor parameter:`. It
+  keeps `internal_error`. Other cursor errors keep their prefix. (#247)
+- An MCP input schema refusal now returns the `validation` payload for every
+  tool. Before, it was plain text without a code. (#247)
+- A deadline or cancellation that stops the local RRULE selector check now
+  returns `timeout` with `retryable: false`. `create_event` and
+  `validate_event` both return an error result. Before, `create_event`
+  returned `validation`, and `validate_event` returned a success result that
+  reported the event as invalid. The arguments can be valid. Any other failed
+  check keeps its result: `validation` from `create_event`, and an invalid-event
+  result from `validate_event`. (#247)
+- Calendar validation errors name the field or argument group and the rule
+  that failed. They repeat no rejected value. An example is `by_day must be one
+  of MO, TU, WE, TH, FR, SA, SU`. (#248)
+- Before, some Calendar errors repeated a value: `recurrence_by_day`, an
+  `rrule` part, working hours, an `alarms_minutes` entry, and the bounds of a
+  reversed range. A time in a daylight-saving gap or a second fold was also
+  repeated. (#248)
+- The Contacts unknown parameter check repeats no key. It runs when no input
+  schema refused the key. (#248)
+- An MCP input schema refusal names only declared arguments and says `unknown
+  argument` for an undeclared key. Before, it could repeat a rejected value or
+  an unknown key. The names come from the request keys and the validation
+  result, not from the refusal text. Above 64 KiB of arguments, the message
+  names only missing and unknown arguments. (#248)
+- These validation messages now name the exact argument, the rule, and the
+  accepted form. Clients that match message text must update. (#248)
+  - UID: `UID must not contain '/', '\', '%', or control characters` and
+    `UID must not contain a directory traversal sequence ('..')`. `get_event`
+    and `search_events` add the `uid parameter:` prefix. `create_event` uses
+    the `client_uid:` prefix.
+  - Mail recipients: `to`, `cc`, or `bcc` `must contain only plain
+    addr-specs, for example name@example.com`.
+  - Mail text: `<argument> must be valid UTF-8 of at most <N> bytes without
+    control characters`. `mailbox` and `destination` allow a tab. `body` uses
+    `without NUL`.
+  - `idempotency_key must be at most 255 bytes without CR, LF, or NUL`.
+  - `working_hours_start` or `working_hours_end` `must use HH:MM`, or `must be
+    between 00:00 and 24:00`.
+  - `timezone must be an IANA timezone name, for example Europe/Paris`.
+  - `alarms_minutes must be a comma-separated list of whole minutes from 0 to
+    40320`.
+  - `days_of_week must be a comma-separated list of days: sun to sat, sunday
+    to saturday, or 0 to 6 with 0 for Sunday`.
+  - `url must be an absolute http or https URL`.
+  - `calendar path must not contain '?', '#', NUL, CR, or LF`.
+  - `RRULE parts must use KEY=VALUE with a non-empty key and value`.
+  - `recurrence_id must not be empty`.
+  - Contacts: `<field>.type must contain only letters, digits, '-', or '_'`.
+    The `client_uid` message states its length and character rule.
+  - The `search_contacts` cursor message adds `use start or the exact
+    nextCursor value`.
+  - Mail: `flags must contain only seen, flagged, or answered`, and
+    `attachments item <N> must have only mailbox, uid_validity, uid, and
+    part_id`.
+
 ## [1.3.0] - 2026-11-26
 
 This minor release adds opt-in Mail attachment support without disk access:

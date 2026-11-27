@@ -553,9 +553,12 @@ func mailSendInput(args map[string]any) (maildomain.SendInput, error) {
 		return maildomain.SendInput{}, fmt.Errorf("recipient count must not exceed %d", maildomain.MaxRecipients)
 	}
 	seen := make(map[string]struct{}, len(input.To)+len(input.Cc)+len(input.Bcc))
-	for _, values := range [][]string{input.To, input.Cc, input.Bcc} {
-		for _, address := range values {
-			if err := mailValidateAddress(address); err != nil {
+	for _, field := range []struct {
+		name   string
+		values []string
+	}{{"to", input.To}, {"cc", input.Cc}, {"bcc", input.Bcc}} {
+		for _, address := range field.values {
+			if err := mailValidateAddress(field.name, address); err != nil {
 				return maildomain.SendInput{}, err
 			}
 			key := mailASCIILower(address)
@@ -570,21 +573,21 @@ func mailSendInput(args map[string]any) (maildomain.SendInput, error) {
 		return maildomain.SendInput{}, err
 	}
 	if len(input.Subject) > maildomain.MaxSubjectBytes || !utf8.ValidString(input.Subject) || mailHasDisallowedControl(input.Subject, false) {
-		return maildomain.SendInput{}, fmt.Errorf("subject contains invalid or excessive data")
+		return maildomain.SendInput{}, mailSubjectError()
 	}
 	input.Body, err = mailRequiredString(args, "body")
 	if err != nil {
 		return maildomain.SendInput{}, err
 	}
 	if len(input.Body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
-		return maildomain.SendInput{}, fmt.Errorf("body contains invalid or excessive data")
+		return maildomain.SendInput{}, mailBodyError()
 	}
 	input.IdempotencyKey, _, err = mailOptionalString(args, "idempotency_key")
 	if err != nil {
 		return maildomain.SendInput{}, err
 	}
 	if len(input.IdempotencyKey) > 255 || strings.ContainsAny(input.IdempotencyKey, "\r\n\x00") {
-		return maildomain.SendInput{}, fmt.Errorf("idempotency_key contains invalid or excessive data")
+		return maildomain.SendInput{}, mailIdempotencyKeyError()
 	}
 	input.ArchiveSent, _, err = mailOptionalBool(args, "archive_sent")
 	if err != nil {
@@ -593,15 +596,30 @@ func mailSendInput(args map[string]any) (maildomain.SendInput, error) {
 	return input, nil
 }
 
-func mailValidateAddress(value string) error {
+// mailValidateAddress checks one recipient of the field argument.
+func mailValidateAddress(field, value string) error {
+	invalid := fmt.Errorf("%s must contain only plain addr-specs, for example name@example.com", field)
 	if value == "" || len(value) > 320 || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\x00\r\n") || !utf8.ValidString(value) {
-		return fmt.Errorf("recipients must be valid plain addr-specs")
+		return invalid
 	}
 	parsed, err := stdmail.ParseAddress(value)
 	if err != nil || parsed.Name != "" || parsed.Address != value || !strings.Contains(value, "@") {
-		return fmt.Errorf("recipients must be valid plain addr-specs")
+		return invalid
 	}
 	return nil
+}
+
+// The Mail text rules name the argument and the rule, and repeat no value.
+func mailSubjectError() error {
+	return fmt.Errorf("subject must be valid UTF-8 of at most %d bytes without control characters", maildomain.MaxSubjectBytes)
+}
+
+func mailBodyError() error {
+	return fmt.Errorf("body must be valid UTF-8 of at most %d bytes without NUL", maildomain.MaxSendBodyBytes)
+}
+
+func mailIdempotencyKeyError() error {
+	return fmt.Errorf("idempotency_key must be at most 255 bytes without CR, LF, or NUL")
 }
 
 func mailASCIILower(value string) string {
@@ -623,14 +641,14 @@ func mailRequiredMailbox(args map[string]any, name string) (string, error) {
 		return "", fmt.Errorf("%s cannot be empty", name)
 	}
 	if len(value) > maildomain.MaxMetadataString || !utf8.ValidString(value) || mailHasDisallowedControl(value, true) {
-		return "", fmt.Errorf("%s contains invalid or excessive data", name)
+		return "", fmt.Errorf("%s must be valid UTF-8 of at most %d bytes without control characters other than tab", name, maildomain.MaxMetadataString)
 	}
 	return value, nil
 }
 
 func mailValidateSearchValue(name, value string) error {
 	if len(value) > maildomain.MaxSearchValue || !utf8.ValidString(value) || mailHasDisallowedControl(value, false) {
-		return fmt.Errorf("%s contains invalid or excessive data", name)
+		return fmt.Errorf("%s must be valid UTF-8 of at most %d bytes without control characters", name, maildomain.MaxSearchValue)
 	}
 	return nil
 }
@@ -902,7 +920,7 @@ func replyMessageHandler(deps MailDeps, withAttachments bool) server.ToolHandler
 		body, err := mailRequiredString(args, "body")
 		if err != nil || len(body) > maildomain.MaxSendBodyBytes || !utf8.ValidString(body) || strings.ContainsRune(body, '\x00') {
 			if err == nil {
-				err = fmt.Errorf("body contains invalid or excessive data")
+				err = mailBodyError()
 			}
 			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
 			return mailSendValidationResult(deps, err), nil
@@ -910,7 +928,7 @@ func replyMessageHandler(deps MailDeps, withAttachments bool) server.ToolHandler
 		key, _, err := mailOptionalString(args, "idempotency_key")
 		if err != nil || len(key) > 255 || strings.ContainsAny(key, "\r\n\x00") {
 			if err == nil {
-				err = fmt.Errorf("idempotency_key contains invalid or excessive data")
+				err = mailIdempotencyKeyError()
 			}
 			mailAudit(deps, tool, "submission", mailIdentityResource(identity), "denied")
 			return mailSendValidationResult(deps, err), nil

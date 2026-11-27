@@ -225,6 +225,7 @@ func newMCPServer(red *security.Redactor, plan mcptools.CapabilityPlan) *server.
 		server.WithToolHandlerMiddleware(mcptools.RecoverRedactMiddleware(red)),
 	)
 	mcptools.ConfigureMailNumberValidation(s)
+	mcptools.ConfigureSchemaRefusals(s, red)
 	return s
 }
 

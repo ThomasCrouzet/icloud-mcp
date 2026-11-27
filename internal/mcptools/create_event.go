@@ -218,6 +218,9 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		}
 		// Local validate for status/url/uid/recurrence/alarms before network.
 		vr := icloud.ValidateEventInputContext(ctx, input, deps.DefaultLocation)
+		if vr.Interrupted != nil {
+			return deny("validating event", vr.Interrupted)
+		}
 		if !vr.OK {
 			return deny("validation", fmt.Errorf("%s", joinErrors(vr.Errors)))
 		}
@@ -245,7 +248,7 @@ func createEventHandler(deps Deps) server.ToolHandlerFunc {
 		if timezone != "" {
 			loc, lerr := time.LoadLocation(timezone)
 			if lerr != nil {
-				return deny("timezone parameter", fmt.Errorf("invalid timezone %q", timezone))
+				return deny("timezone parameter", fmt.Errorf("timezone must be an IANA timezone name, for example Europe/Paris"))
 			}
 			// A TZID write stores a bare wall time, so both bounds must survive
 			// the first-fold resolution the reader applies. A second-fold
@@ -344,10 +347,10 @@ func parseAlarmsMinutesList(s string) ([]icloud.AlarmSpec, error) {
 		}
 		n, err := strconv.Atoi(part)
 		if err != nil {
-			return nil, fmt.Errorf("invalid alarms_minutes entry")
+			return nil, fmt.Errorf("alarms_minutes must be a comma-separated list of whole minutes from 0 to %d", maxAlarmMinutesBefore)
 		}
 		if n < 0 || n > maxAlarmMinutesBefore {
-			return nil, fmt.Errorf("alarms_minutes entry %d out of range 0..%d", n, maxAlarmMinutesBefore)
+			return nil, fmt.Errorf("alarms_minutes entries must be between 0 and %d", maxAlarmMinutesBefore)
 		}
 		if n == 0 {
 			continue

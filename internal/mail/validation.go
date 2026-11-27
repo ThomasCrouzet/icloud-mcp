@@ -122,14 +122,14 @@ func validateMailbox(value string) error {
 		return validationError("mailbox cannot be empty")
 	}
 	if len(value) > MaxMetadataString || !utf8.ValidString(value) || hasDisallowedControl(value, true) {
-		return validationError("mailbox contains invalid or excessive data")
+		return validationError(fmt.Sprintf("mailbox must be valid UTF-8 of at most %d bytes without control characters other than tab", MaxMetadataString))
 	}
 	return nil
 }
 
 func validateSearchValue(name, value string) error {
 	if len(value) > MaxSearchValue || !utf8.ValidString(value) || hasDisallowedControl(value, false) {
-		return validationError(name + " contains invalid or excessive data")
+		return validationError(fmt.Sprintf("%s must be valid UTF-8 of at most %d bytes without control characters", name, MaxSearchValue))
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func validateFlags(input SetFlagsInput) error {
 	seen := make(map[MessageFlag]struct{}, len(input.Flags))
 	for _, flag := range input.Flags {
 		if flag != FlagSeen && flag != FlagFlagged && flag != FlagAnswered {
-			return validationError("flags contain an unsupported value")
+			return validationError("flags must contain only seen, flagged, or answered")
 		}
 		if _, duplicate := seen[flag]; duplicate {
 			return validationError("flags contain a duplicate value")

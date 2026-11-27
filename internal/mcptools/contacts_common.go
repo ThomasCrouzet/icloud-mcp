@@ -81,7 +81,7 @@ func parseContactsArgs(req mcp.CallToolRequest, allowed ...string) (contactsRawA
 	}
 	for name := range args {
 		if _, ok := allowedSet[name]; !ok {
-			return nil, fmt.Errorf("unknown parameter %q", name)
+			return nil, fmt.Errorf("arguments contain an unknown parameter")
 		}
 	}
 	return args, nil
@@ -102,7 +102,7 @@ func parseContactsObject(raw json.RawMessage, path string, allowed ...string) (c
 	}
 	for name := range object {
 		if _, ok := allowedSet[name]; !ok {
-			return nil, fmt.Errorf("unknown parameter %q in %s", name, path)
+			return nil, fmt.Errorf("%s contains an unknown parameter", path)
 		}
 	}
 	return object, nil
@@ -251,7 +251,7 @@ func parseContactsTypedValues(args contactsRawArgs, key string, maxItems, maxVal
 			return nil, true, fmt.Errorf("%s.%w", path, parseErr)
 		}
 		if kind != "" && !validContactsType(kind) {
-			return nil, true, fmt.Errorf("%s.type contains an invalid character", path)
+			return nil, true, fmt.Errorf("%s.type must contain only letters, digits, '-', or '_'", path)
 		}
 		value, _, parseErr := contactsString(object, "value", true, maxValueBytes, true)
 		if parseErr != nil {
@@ -293,7 +293,7 @@ func parseContactsAddresses(args contactsRawArgs, key string) ([]contacts.Postal
 			}
 		}
 		if parts["type"] != "" && !validContactsType(parts["type"]) {
-			return nil, true, fmt.Errorf("%s.type contains an invalid character", path)
+			return nil, true, fmt.Errorf("%s.type must contain only letters, digits, '-', or '_'", path)
 		}
 		values = append(values, contacts.PostalAddress{
 			Type:            parts["type"],

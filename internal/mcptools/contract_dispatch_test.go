@@ -49,6 +49,7 @@ func newContractRuntime(t *testing.T, p contractProfile, configure ...func(*cont
 	red := security.NewRedactor("synthetic-contract-secret")
 	s := server.NewMCPServer("contract-dispatch", "test", server.WithToolCapabilities(false), server.WithInputSchemaValidation(), server.WithStrictInputSchemaDefault(), server.WithRecovery(), server.WithToolHandlerMiddleware(RecoverRedactMiddleware(red)))
 	ConfigureMailNumberValidation(s)
+	ConfigureSchemaRefusals(s, red)
 	RegisterUnified(s, Deps{Service: calendar, ContactsService: f.contactTrace, MailService: f.mail.service(t), Redactor: red, Audit: security.NewAuditLogger(io.Discard), DefaultLocation: time.UTC, ResourceScopes: mustScopes(t, scopes)}, p.plan)
 	f.client, err = client.NewInProcessClient(s)
 	if err != nil {

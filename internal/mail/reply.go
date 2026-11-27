@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -52,7 +53,7 @@ func (s *Client) ReplyMessage(ctx context.Context, input ReplyInput) (SendResult
 		return SendResult{}, validationError("mode must be sender or reply_all")
 	}
 	if len(input.Body) > MaxSendBodyBytes || !utf8.ValidString(input.Body) || strings.ContainsRune(input.Body, '\x00') {
-		return SendResult{}, validationError("body contains invalid or excessive data")
+		return SendResult{}, validationError(fmt.Sprintf("body must be valid UTF-8 of at most %d bytes without NUL", MaxSendBodyBytes))
 	}
 	if err := validateSendIdempotencyKey(input.IdempotencyKey); err != nil {
 		return SendResult{}, err
