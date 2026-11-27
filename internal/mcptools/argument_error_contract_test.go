@@ -9,8 +9,20 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/ThomasCrouzet/icloud-mcp/internal/config"
 	"github.com/ThomasCrouzet/icloud-mcp/internal/icloud"
 )
+
+// contractAllOnPlan enables every capability token, so the plan registers
+// every tool. A new tool behind a new token must also be added here.
+func contractAllOnPlan() CapabilityPlan {
+	return NewCapabilityPlanFromConfig(false, config.CapabilitySet{
+		CalendarRead: true, CalendarWrite: true, CalendarDelete: true,
+		ContactsRead: true, ContactsWrite: true, ContactsDelete: true,
+		MailRead: true, MailMutate: true, MailTrash: true, MailSend: true, MailArchive: true,
+		MailAttachmentsRead: true, MailAttachmentsSend: true, MailDrafts: true,
+	})
+}
 
 // argumentErrorCase is one schema-valid argument that a handler must reject
 // before any request. field must occur in the error message.
@@ -28,6 +40,10 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 		return contractMerge(contractBusinessFixtures()[tool].base, values)
 	}
 	identity := map[string]any{"mailbox": "INBOX", "uid_validity": 9, "uid": 2}
+	part := contractMerge(identity, map[string]any{"part_id": "2"})
+	badRef := []any{contractMerge(part, map[string]any{"mailbox": "IN\x01BOX"})}
+	stage := map[string]any{"filename": "notes.txt", "content_type": "text/plain", "data": "aGVsbG8="}
+	draft := map[string]any{"to": []any{"recipient@example.invalid"}, "body": "Synthetic draft body"}
 	return map[string][]argumentErrorCase{
 		"icloud_capabilities":   nil,
 		"calendar_capabilities": nil,
@@ -124,9 +140,27 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 		},
 		"send_message": {
 			{"recipient", "recipient", set("send_message", map[string]any{"to": []any{"not an address"}})},
+			{"subject CR", "subject", set("send_message", map[string]any{"subject": "a\rb"})},
+			{"attachment mailbox control", "mailbox", set("send_message", map[string]any{"attachments": badRef})},
 		},
 		"reply_message": {
 			{"mailbox control", "mailbox", set("reply_message", map[string]any{"mailbox": "IN\x01BOX"})},
+			{"body NUL", "body", set("reply_message", map[string]any{"body": "a\x00b"})},
+			{"attachment mailbox control", "mailbox", set("reply_message", map[string]any{"attachments": badRef})},
+		},
+		"get_attachment": {
+			{"mailbox control", "mailbox", contractMerge(part, map[string]any{"mailbox": "IN\x01BOX"})},
+		},
+		"stage_attachment": {
+			{"bad base64", "data", contractMerge(stage, map[string]any{"data": "!!!!"})},
+			{"filename path separator", "filename", contractMerge(stage, map[string]any{"filename": "a/b.txt"})},
+			{"first chunk without filename", "filename", contractOmit(stage, "filename")},
+		},
+		"create_draft": {
+			{"recipient", "recipient", contractMerge(draft, map[string]any{"to": []any{"not an address"}})},
+			{"subject CR", "subject", contractMerge(draft, map[string]any{"subject": "a\rb"})},
+			{"body NUL", "body", contractMerge(draft, map[string]any{"body": "a\x00b"})},
+			{"attachment mailbox control", "mailbox", contractMerge(draft, map[string]any{"attachments": badRef})},
 		},
 	}
 }
@@ -135,7 +169,10 @@ func argumentErrorCases() map[string][]argumentErrorCase {
 // handler-level argument rejection: code validation, not retryable, the field
 // in the message, and no backend request.
 func TestArgumentErrorsUseValidationCode(t *testing.T) {
-	universe := newContractRuntime(t, contractProfile{plan: NewCapabilityPlan(false, true, true, true, true)})
+	universe := newContractRuntime(t, contractProfile{plan: contractAllOnPlan()})
+	if got, want := len(universe.tools), contractAllOnPlan().ToolCount(); got != want {
+		t.Fatalf("all-on universe lists %d tools, want %d", got, want)
+	}
 	cases := argumentErrorCases()
 	names := make([]string, 0, len(universe.tools))
 	for name := range universe.tools {
@@ -150,7 +187,7 @@ func TestArgumentErrorsUseValidationCode(t *testing.T) {
 			}
 			for _, test := range toolCases {
 				t.Run(test.name, func(t *testing.T) {
-					f := newContractRuntime(t, contractProfile{plan: NewCapabilityPlan(false, true, true, true, true)})
+					f := newContractRuntime(t, contractProfile{plan: contractAllOnPlan()})
 					args := contractClone(test.args)
 					for key, value := range args {
 						if text, ok := value.(string); ok && text == "$book" {

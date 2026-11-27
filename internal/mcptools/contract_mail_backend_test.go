@@ -105,7 +105,8 @@ func (b *contractMailBackend) service(t *testing.T) *maildomain.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := maildomain.NewService(maildomain.Config{Address: "fixture@icloud.com", Password: "synthetic-contract-secret", RecipientPolicy: policy, EnableSentCopy: true, ArchiveScope: []string{"Sent"}},
+	svc, err := maildomain.NewService(maildomain.Config{Address: "fixture@icloud.com", Password: "synthetic-contract-secret", RecipientPolicy: policy, EnableSentCopy: true, ArchiveScope: []string{"Sent"},
+		EnableAttachmentRead: true, EnableAttachmentSend: true, EnableDrafts: true, DraftsMailbox: "Drafts"},
 		func(context.Context) (net.Conn, error) {
 			b.mu.Lock()
 			b.imapDials++
