@@ -205,7 +205,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			if cursorToken != "" {
 				position, generation, reason, verifyErr := cursorCodec.verify(cursorToken, cursorQuery)
 				if verifyErr != nil {
-					return errResult(deps.Redactor, "cursor parameter", verifyErr), nil
+					return errResult(deps.Redactor, "cursor", verifyErr), nil
 				}
 				if reason != "" {
 					return errResult(deps.Redactor, "validation", searchCursorValidationError(
@@ -416,7 +416,7 @@ func searchEventsHandlerWithCodec(deps Deps, cursorCodec *searchCursorCodec) ser
 			if lastIndex+1 < total && cursorGeneration != "" {
 				token, mintErr := cursorCodec.mint(cursorQuery, rows[lastIndex].digest, cursorGeneration)
 				if mintErr != nil {
-					return errResult(deps.Redactor, "cursor parameter", mintErr), nil
+					return errResult(deps.Redactor, "cursor", mintErr), nil
 				}
 				resp.NextCursor = token
 				resp.Truncated = true

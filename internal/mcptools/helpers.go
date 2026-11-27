@@ -133,6 +133,8 @@ func localValidationTimeout(ctx context.Context) error {
 // before any request: "validation", "validation error", or "<field>
 // parameter". A failure that can occur after a request must use an operation
 // context, such as "searching events", so that it does not get this code.
+// TestParameterContextsPrecedeRequests enforces the rule for "<field>
+// parameter" contexts.
 func isArgumentContext(context string) bool {
 	return context == "validation" || context == "validation error" || strings.HasSuffix(context, " parameter")
 }
