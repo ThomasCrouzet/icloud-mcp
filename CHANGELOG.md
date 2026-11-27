@@ -35,8 +35,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returns `timeout` with `retryable: false`. `create_event` and
   `validate_event` both return an error result. Before, `create_event`
   returned `validation`, and `validate_event` returned a success result that
-  reported the event as invalid. The arguments can be valid. A failed check
-  that does not depend on the call context still returns `validation`. (#247)
+  reported the event as invalid. The arguments can be valid. Any other failed
+  check keeps its result: `validation` from `create_event`, and an invalid-event
+  result from `validate_event`. (#247)
 - Calendar validation errors name the field or argument group and the rule
   that failed. They repeat no rejected value. An example is `by_day must be one
   of MO, TU, WE, TH, FR, SA, SU`. (#248)

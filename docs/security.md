@@ -415,8 +415,10 @@ include operation-specific reconciliation.
 
 A tool validation error names the field or argument group and the rule that
 failed. It does not repeat the rejected value or a time derived from it. It can name a valid IANA
-timezone. An MCP input schema refusal follows the same rule. It names only
-declared arguments and says `unknown argument` for an undeclared key.
+timezone. An MCP input schema refusal also repeats no value. It names only
+declared arguments and says `unknown argument` for an undeclared key. It does
+not state the schema rule. Above 64 KiB of arguments, it names only missing
+and unknown arguments.
 
 Errors exclude raw HTTP, XML, IMAP, SMTP, and MIME data. They also exclude
 identity, password, secret file path, and recipient policy values.

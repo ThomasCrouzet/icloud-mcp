@@ -41,6 +41,8 @@ the rule that failed. It does not repeat the rejected value. A failure after a
 request, such as a failed calendar listing, keeps its own code. The MCP input
 schema check runs before the tool and returns the same payload. Its message
 names only declared arguments and says `unknown argument` for an undeclared key.
+It does not state the schema rule. Above 64 KiB of arguments, it names only
+missing and unknown arguments.
 
 `search_events` cursor failures use `validation` with a bounded
 `details.cursor` reason. The reasons are `malformed`, `signature`, `expired`,

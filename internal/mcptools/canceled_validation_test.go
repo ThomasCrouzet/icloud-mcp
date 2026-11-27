@@ -89,7 +89,7 @@ func TestCanceledContextKeepsArgumentErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if text := resultText(t, validated); validated.IsError || !strings.Contains(text, "url scheme must be http or https") || strings.Contains(text, "deadline") {
+		if text := resultText(t, validated); validated.IsError || !strings.Contains(text, "url scheme must be http or https") || strings.Contains(text, "RRULE selector validation") {
 			t.Fatalf("validate_event rrule=%q: %s, want an invalid-event result for url only", rule, text)
 		}
 		if svc.CreateCallCount != 0 {
