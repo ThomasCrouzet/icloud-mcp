@@ -284,26 +284,33 @@ func TestSchemaRefusalsUseValidationCode(t *testing.T) {
 	set := func(tool string, values map[string]any) map[string]any {
 		return contractMerge(contractBusinessFixtures()[tool].base, values)
 	}
+	const summary = "validation: " + schemaRefusalSummary + ": "
 	for _, test := range []struct {
 		name, tool string
 		args       map[string]any
-		want       []string
+		want       string
 	}{
-		{"wrong type", "create_event", set("create_event", map[string]any{"title": 123}), []string{"invalid value for title"}},
-		{"wrong item type", "send_message", set("send_message", map[string]any{"to": []any{7}}), []string{"invalid value for to"}},
-		{"pattern mismatch", "get_contact", map[string]any{"address_book": echoMarker, "uid": "contact"}, []string{"invalid value for address_book"}},
-		{"date pattern", "search_messages", set("search_messages", map[string]any{"since": echoMarker + "1"}), []string{"invalid value for since"}},
-		{"enum", "create_event", set("create_event", map[string]any{"status": echoMarker}), []string{"invalid value for status"}},
-		{"bound", "find_free_slots", set("find_free_slots", map[string]any{"duration_minutes": 98765}), []string{"invalid value for duration_minutes"}},
-		{"length", "search_events", set("search_events", map[string]any{"query": strings.Repeat(echoMarker, 30)}), []string{"invalid value for query"}},
-		{"unknown key", "search_events", set("search_events", map[string]any{echoMarker: true}), []string{"unknown argument"}},
-		{"unknown nested key", "create_contact", set("create_contact", map[string]any{"name": map[string]any{echoMarker: "x"}}), []string{"invalid value for name", "unknown argument"}},
-		{"missing required", "get_event", map[string]any{"calendar": contractCalendar}, []string{"missing required argument uid"}},
-		{"missing all required", "search_events", map[string]any{}, []string{"missing required argument end, start"}},
-		{"mixed", "create_event", map[string]any{"title": 5, "start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z", echoMarker: 1}, []string{"missing required argument calendar", "invalid value for title", "unknown argument"}},
+		{"wrong type", "create_event", set("create_event", map[string]any{"title": 123}), "invalid value for title"},
+		{"wrong item type", "send_message", set("send_message", map[string]any{"to": []any{7}}), "invalid value for to"},
+		{"pattern mismatch", "get_contact", map[string]any{"address_book": echoMarker, "uid": "contact"}, "invalid value for address_book"},
+		{"date pattern", "search_messages", set("search_messages", map[string]any{"since": echoMarker + "1"}), "invalid value for since"},
+		{"enum", "create_event", set("create_event", map[string]any{"status": echoMarker}), "invalid value for status"},
+		{"bound", "find_free_slots", set("find_free_slots", map[string]any{"duration_minutes": 98765}), "invalid value for duration_minutes"},
+		{"length", "search_events", set("search_events", map[string]any{"query": strings.Repeat(echoMarker, 30)}), "invalid value for query"},
+		{"unknown key", "search_events", set("search_events", map[string]any{echoMarker: true}), "unknown argument"},
+		{"unknown nested key", "create_contact", set("create_contact", map[string]any{"name": map[string]any{echoMarker: "x"}}), "invalid value for name; unknown argument"},
+		{"missing required", "get_event", map[string]any{"calendar": contractCalendar}, "missing required argument uid"},
+		{"missing all required", "search_events", map[string]any{}, "missing required argument end, start"},
+		{"mixed", "create_event", map[string]any{"title": 5, "start": "2026-07-01T10:00:00Z", "end": "2026-07-01T11:00:00Z", echoMarker: 1}, "missing required argument calendar; invalid value for title; unknown argument"},
+		{"several invalid", "set_message_flags", map[string]any{"mailbox": "INBOX", "uid_validity": 1.5, "uid": -1, "operation": "add", "flags": []any{echoMarker}}, "invalid value for flags, uid, uid_validity"},
+		{"several types", "search_events", map[string]any{"start": 1, "end": []any{"x"}, "query": map[string]any{"a": 1}}, "invalid value for end, query, start"},
+		{"crafted location separators", "get_contact", map[string]any{"address_book": echoMarker + "; /uid: boom; /calendar: x", "uid": "contact"}, "invalid value for address_book"},
+		{"crafted declared name", "search_messages", map[string]any{"mailbox": "INBOX", "since": echoMarker + "; /mailbox: injected"}, "invalid value for since"},
+		{"crafted unknown rule", "get_contact", map[string]any{"address_book": echoMarker + ": additional properties 'x' not allowed", "uid": "contact"}, "invalid value for address_book"},
+		{"crafted unknown key", "get_contact", map[string]any{"address_book": "$book", "uid": "contact", echoMarker + "; /uid: boom": 1}, "unknown argument"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := newContractRuntime(t, contractProfile{plan: NewCapabilityPlan(false, true, true, true, true)})
+			f := newContractRuntime(t, contractProfile{plan: contractAllOnPlan()})
 			args := contractClone(test.args)
 			for key, value := range args {
 				if text, ok := value.(string); ok && text == "$book" {
@@ -323,11 +330,8 @@ func TestSchemaRefusalsUseValidationCode(t *testing.T) {
 			if retryable, present := payload["retryable"]; present && retryable != false {
 				t.Fatalf("schema refusal is retryable: %s", text)
 			}
-			message, _ := payload["message"].(string)
-			for _, want := range test.want {
-				if !strings.Contains(message, want) {
-					t.Fatalf("message lacks %q: %q", want, message)
-				}
+			if message, _ := payload["message"].(string); message != summary+test.want {
+				t.Fatalf("message = %q, want %q", message, summary+test.want)
 			}
 			if strings.Contains(strings.ToUpper(text), echoMarker) || strings.Contains(text, "98765") {
 				t.Fatalf("schema refusal repeats caller input: %s", text)

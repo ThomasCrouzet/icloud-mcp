@@ -1,6 +1,7 @@
 package mcptools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 
 	"github.com/ThomasCrouzet/icloud-mcp/internal/security"
 )
@@ -41,8 +44,7 @@ func ConfigureSchemaRefusals(s *server.MCPServer, red *security.Redactor) {
 		if !ok || request == nil || !isSDKSchemaRefusal(res) {
 			return
 		}
-		detail := strings.TrimPrefix(res.Content[0].(mcp.TextContent).Text, sdkSchemaRefusalPrefix)
-		message := schemaRefusalMessage(s.GetTool(request.Params.Name), request, detail)
+		message := schemaRefusalMessage(s.GetTool(request.Params.Name), request)
 		*res = *errResult(red, "validation", errors.New(message))
 	})
 }
@@ -60,13 +62,19 @@ func isSDKSchemaRefusal(res *mcp.CallToolResult) bool {
 	return strings.HasPrefix(text.Text, sdkSchemaRefusalPrefix) || strings.HasPrefix(text.Text, sdkArgumentsRefusalPrefix)
 }
 
-// schemaRefusalMessage names the declared properties that failed. Missing and
-// unknown keys come from the request itself. Other failed properties come from
-// the first segment of each SDK location, kept only when the tool declares it.
-func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest, detail string) string {
+// schemaRefusalMessage names the declared arguments that failed. It never
+// parses the SDK text, because that text embeds caller values. Missing and
+// unknown keys come from the request keys. Invalid arguments come from the
+// instance locations of a second validation of the same input against the
+// same schema, kept only when the tool declares the first segment.
+func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest) string {
 	properties, required := declaredArguments(tool)
-	args, object := request.Params.Arguments.(map[string]any)
-	if request.Params.Arguments != nil && !object {
+	instance, err := schemaInstance(request.GetRawArguments())
+	if err != nil {
+		return schemaRefusalSummary
+	}
+	args, object := instance.(map[string]any)
+	if !object {
 		return schemaRefusalSummary + ": arguments must be a JSON object"
 	}
 	missing := map[string]bool{}
@@ -82,19 +90,19 @@ func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest,
 		}
 	}
 	invalid := map[string]bool{}
-	for _, part := range strings.Split(detail, "; ") {
-		location, rule, _ := strings.Cut(part, ": ")
-		if strings.Contains(rule, "additional properties") {
-			unknown = true
-		}
-		if !strings.HasPrefix(location, "/") {
-			continue
-		}
-		segment, _, _ := strings.Cut(location[1:], "/")
-		segment = strings.NewReplacer("~1", "/", "~0", "~").Replace(segment)
-		if properties[segment] && !missing[segment] {
-			invalid[segment] = true
-		}
+	var verr *jsonschema.ValidationError
+	if schema := compileInputSchema(tool); schema != nil && errors.As(schema.Validate(instance), &verr) {
+		walkSchemaFailures(verr, func(location []string, failure jsonschema.ErrorKind) {
+			if len(location) == 0 {
+				return
+			}
+			if _, nested := failure.(*kind.AdditionalProperties); nested {
+				unknown = true
+			}
+			if properties[location[0]] && !missing[location[0]] {
+				invalid[location[0]] = true
+			}
+		})
 	}
 	var clauses []string
 	if len(missing) > 0 {
@@ -110,6 +118,68 @@ func schemaRefusalMessage(tool *server.ServerTool, request *mcp.CallToolRequest,
 		return schemaRefusalSummary
 	}
 	return schemaRefusalSummary + ": " + strings.Join(clauses, "; ")
+}
+
+// schemaInstance decodes the arguments as the SDK does. Absent or null
+// arguments are an empty object, and numbers keep their exact form.
+func schemaInstance(raw any) (any, error) {
+	data, ok := raw.(json.RawMessage)
+	if !ok {
+		if raw == nil {
+			return map[string]any{}, nil
+		}
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		data = encoded
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return map[string]any{}, nil
+	}
+	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+}
+
+// compileInputSchema compiles the tool input schema with the validator that
+// the SDK uses. It returns nil when the schema cannot be compiled.
+func compileInputSchema(tool *server.ServerTool) *jsonschema.Schema {
+	if tool == nil {
+		return nil
+	}
+	data := []byte(tool.Tool.RawInputSchema)
+	if len(data) == 0 {
+		encoded, err := json.Marshal(tool.Tool.InputSchema)
+		if err != nil {
+			return nil
+		}
+		data = encoded
+	}
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	const url = "mem:///icloud-mcp/input-schema.json"
+	compiler := jsonschema.NewCompiler()
+	if compiler.AddResource(url, document) != nil {
+		return nil
+	}
+	schema, err := compiler.Compile(url)
+	if err != nil {
+		return nil
+	}
+	return schema
+}
+
+// walkSchemaFailures calls visit for each leaf failure.
+func walkSchemaFailures(verr *jsonschema.ValidationError, visit func([]string, jsonschema.ErrorKind)) {
+	if len(verr.Causes) == 0 {
+		visit(verr.InstanceLocation, verr.ErrorKind)
+		return
+	}
+	for _, cause := range verr.Causes {
+		walkSchemaFailures(cause, visit)
+	}
 }
 
 // declaredArguments returns the top-level property names and the required
