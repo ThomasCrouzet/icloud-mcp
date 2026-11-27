@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-27
+
+This patch release makes the tool error contract exact. Every argument
+rejection returns `validation` before any request. Validation messages name
+the field or argument group and the rule that failed, and repeat no rejected
+value. No default changes, and every profile keeps its tool set. Some message
+texts change; the list is below.
+
 ### Changed
 - The Calendar client methods for create and update also reject a CR in a
   title, location, or notes with `validation` before any request. Notes keep
